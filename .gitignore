@@ -1,0 +1,8 @@
+context/
+CLAUDE.md
+sandbox/.env
+sandbox/node_modules/
+sandbox/artifacts/
+sandbox/cache/
+sandbox/typechain-types/
+sandbox/dist/
