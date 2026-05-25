@@ -44,12 +44,13 @@ async function deploy() {
     poolWbtc.address,
     poolSomi.address,
     mockPlatform.address,
-  ]);
+    1n,
+  ], { value: parseEther("33") });
 
   // Fund arena with enough STT for 30 requests (each = 0.03 + 0.07*3 = 0.24)
   await hre.network.provider.send("hardhat_setBalance", [
     arena.address,
-    "0x" + parseEther("10").toString(16),
+    "0x" + parseEther("43").toString(16),
   ]);
 
   return { arena, mockPlatform, poolWeth, poolWbtc, poolSomi, owner };

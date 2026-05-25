@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import hre from "hardhat";
+import { parseEther } from "viem";
 
 describe("Arena — fundPools", function () {
   async function deploy() {
@@ -18,7 +19,8 @@ describe("Arena — fundPools", function () {
       poolWbtc.address,
       poolSomi.address,
       owner.account.address,  // dummy platform — not exercised in fund tests
-    ]);
+      1n,
+    ], { value: parseEther("33") });
 
     return { arena, usdso, poolWeth, poolWbtc, poolSomi, registry, owner, other };
   }

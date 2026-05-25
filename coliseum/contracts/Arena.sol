@@ -5,6 +5,7 @@ import "./interfaces/IFighterRegistry.sol";
 import "./interfaces/ISpotPool.sol";
 import "./interfaces/IERC20Minimal.sol";
 import "./interfaces/ISomniaAgents.sol";
+import "./interfaces/ISomniaReactivityPrecompile.sol";
 
 contract Arena {
     error NotOwner();
@@ -24,6 +25,11 @@ contract Arena {
     error DuelNotReadyToFinalize();
     error InvalidFighterPair();
     error InvalidPoolForDuel();
+    error ReactivityUnderfunded();
+
+    address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
+    uint256 public constant REACTIVITY_FUND_MIN = 33 ether;
+    uint256 public subscriptionId;
 
     uint64 public constant MAX_EXPIRE_OFFSET_SEC = 7 days;
 
@@ -43,6 +49,7 @@ contract Arena {
     mapping(uint256 => PendingTurn) public pendingTurns;  // requestId → turn
 
     event PoolsFunded(uint256 usdsoPerPool, uint256 totalDeposited);
+    event SubscriptionSkipped(string reason);
     event OrderPlaced(
         address indexed pool,
         uint8 indexed fighterId,
@@ -84,7 +91,7 @@ contract Arena {
     }
 
     uint16 public constant TURNS_PER_DUEL = 15;
-    uint256 public constant TURN_INTERVAL_BLOCKS = 1;
+    uint256 public TURN_INTERVAL_BLOCKS;
 
     mapping(uint256 => Duel) public duels;
     uint256 public nextDuelId = 1;
@@ -116,18 +123,72 @@ contract Arena {
         address _poolWeth,
         address _poolWbtc,
         address _poolSomi,
-        address _platform
-    ) {
+        address _platform,
+        uint256 _turnIntervalBlocks
+    ) payable {
+        if (msg.value < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
         registry = IFighterRegistry(_registry);
         USDSO = _usdso;
         POOL_WETH = _poolWeth;
         POOL_WBTC = _poolWbtc;
         POOL_SOMI = _poolSomi;
         PLATFORM_ADDR = _platform;
+        TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner = msg.sender;
+
+        ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
+            eventTopics: [
+                keccak256("BlockTick(uint64)"),
+                bytes32(0),
+                bytes32(0),
+                bytes32(0)
+            ],
+            origin: address(0),
+            caller: address(0),
+            emitter: SOMNIA_REACTIVITY_PRECOMPILE,
+            handlerContractAddress: address(this),
+            handlerFunctionSelector: this.onEvent.selector,
+            priorityFeePerGas: 2_000_000_000,
+            maxFeePerGas: 20_000_000_000,
+            gasLimit: 3_000_000,
+            isGuaranteed: false,
+            isCoalesced: false
+        });
+
+        bytes memory callData = abi.encodeWithSelector(
+            ISomniaReactivityPrecompile.subscribe.selector,
+            data
+        );
+        (bool ok, bytes memory ret) = SOMNIA_REACTIVITY_PRECOMPILE.call(callData);
+        if (ok && ret.length >= 32) {
+            subscriptionId = abi.decode(ret, (uint256));
+        } else {
+            subscriptionId = 0;
+            emit SubscriptionSkipped("precompile unavailable");
+        }
     }
 
     receive() external payable {}
+
+    function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
+        if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;
+        if (eventTopics.length < 2) return;
+        uint64 blockNumber = uint64(uint256(eventTopics[1]));
+        if (blockNumber % TURN_INTERVAL_BLOCKS != 0) return;
+        if (activeDuelId == 0) return;
+        _runTurn();
+    }
+
+    function _runTurn() internal {
+        if (activeDuelId == 0) return;
+        Duel storage duel = duels[activeDuelId];
+        if (duel.status != DuelStatus.Active) return;
+        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
+        if (duel.completedCallbacks >= TURNS_PER_DUEL * 2) return;
+        duel.lastTurnBlock = block.number;
+        _requestFighterMove(activeDuelId, duel.fighterA);
+        _requestFighterMove(activeDuelId, duel.fighterB);
+    }
 
     function _placeOrderForFighter(
         uint256 duelId,
@@ -146,20 +207,15 @@ contract Arena {
 
         uint64 expireTimestampNs = (uint64(block.timestamp) + expireOffsetSec) * 1_000_000_000;
 
-        (ok, orderId) = ISpotPool(pool).placeOrder(
-            isBid,
-            0,
-            price,
-            quantity,
-            expireTimestampNs,
-            orderType,
-            0,
-            address(0),
-            0
-        );
-
-        if (!ok) {
-            emit OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, "silent reject");
+        try ISpotPool(pool).placeOrder(isBid, 0, price, quantity, expireTimestampNs, orderType, 0, address(0), 0) returns (bool success, uint128 returnedId) {
+            if (!success) {
+                emit OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, "silent reject");
+                return (false, 0);
+            }
+            ok = true;
+            orderId = returnedId;
+        } catch {
+            emit OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, "pool reverted");
             return (false, 0);
         }
 
@@ -270,47 +326,47 @@ contract Arena {
         Request memory  /* details */
     ) external {
         if (msg.sender != PLATFORM_ADDR) revert OnlyPlatform();
-        PendingTurn memory turn = pendingTurns[requestId];
-        if (!turn.exists) {
+        PendingTurn memory pt = pendingTurns[requestId];
+        if (!pt.exists) {
             emit FighterMoveFailed(0, 0, "unknown request");
             return;
         }
         delete pendingTurns[requestId];
 
         if (status != ResponseStatus.Success || responses.length == 0) {
-            duels[turn.duelId].completedCallbacks += 1;
-            emit FighterMoveFailed(turn.duelId, turn.fighterId, "no consensus");
+            duels[pt.duelId].completedCallbacks += 1;
+            emit FighterMoveFailed(pt.duelId, pt.fighterId, "no consensus");
             return;
         }
 
         if (responses[0].result.length != 32) {
-            duels[turn.duelId].completedCallbacks += 1;
-            emit FighterMoveFailed(turn.duelId, turn.fighterId, "bad encoding");
+            duels[pt.duelId].completedCallbacks += 1;
+            emit FighterMoveFailed(pt.duelId, pt.fighterId, "bad encoding");
             return;
         }
         int256 raw = abi.decode(responses[0].result, (int256));
         if (raw < 0 || raw > 6) {
-            duels[turn.duelId].completedCallbacks += 1;
-            emit FighterMoveFailed(turn.duelId, turn.fighterId, "out of range");
+            duels[pt.duelId].completedCallbacks += 1;
+            emit FighterMoveFailed(pt.duelId, pt.fighterId, "out of range");
             return;
         }
         FighterAction action = FighterAction(uint8(uint256(raw)));
-        (bool ok, uint128 orderId) = _executeFighterAction(turn.duelId, turn.fighterId, action);
-        duels[turn.duelId].completedCallbacks += 1;
+        (bool ok, uint128 orderId) = _executeFighterAction(pt.duelId, pt.fighterId, action);
+        duels[pt.duelId].completedCallbacks += 1;
         if (!ok) {
-            emit FighterMoveFailed(turn.duelId, turn.fighterId, "exec failed");
+            emit FighterMoveFailed(pt.duelId, pt.fighterId, "exec failed");
             return;
         }
-        emit FighterMove(turn.duelId, turn.fighterId, action, orderId);
+        emit FighterMove(pt.duelId, pt.fighterId, action, orderId);
     }
 
     function expireTurn(uint256 requestId) external onlyOwner {
-        PendingTurn memory turn = pendingTurns[requestId];
-        if (!turn.exists) revert UnknownRequest();
-        if (block.timestamp <= turn.deadline) revert NotYetExpired();
+        PendingTurn memory pt = pendingTurns[requestId];
+        if (!pt.exists) revert UnknownRequest();
+        if (block.timestamp <= pt.deadline) revert NotYetExpired();
         delete pendingTurns[requestId];
-        duels[turn.duelId].completedCallbacks += 1;
-        emit FighterMoveFailed(turn.duelId, turn.fighterId, "timed out");
+        duels[pt.duelId].completedCallbacks += 1;
+        emit FighterMoveFailed(pt.duelId, pt.fighterId, "timed out");
     }
 
     // TEST ONLY — remove before mainnet (not removing in Phase 3 since v1 is testnet-only).
@@ -366,14 +422,7 @@ contract Arena {
     }
 
     function turn() external {
-        if (activeDuelId == 0) return;
-        Duel storage duel = duels[activeDuelId];
-        if (duel.status != DuelStatus.Active) return;
-        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
-        if (duel.completedCallbacks >= TURNS_PER_DUEL * 2) return;
-        duel.lastTurnBlock = block.number;
-        _requestFighterMove(activeDuelId, duel.fighterA);
-        _requestFighterMove(activeDuelId, duel.fighterB);
+        _runTurn();
     }
 
     function finalizeDuel(uint256 duelId) external {

@@ -14,7 +14,8 @@ async function deploy() {
   const bookmaker = await hre.viem.deployContract("Bookmaker", [
     mockArena.address,
     usdso.address,
-  ]);
+    1n,
+  ], { value: parseEther("33") });
 
   const mintAmount = parseEther("1000");
   for (const acc of [bettor1, bettor2, bettor3]) {

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "./interfaces/IArena.sol";
 import "./interfaces/IBookmaker.sol";
 import "./interfaces/IERC20Minimal.sol";
+import "./interfaces/ISomniaReactivityPrecompile.sol";
 
 contract Bookmaker is IBookmaker {
     error NotOwner();
@@ -17,6 +18,12 @@ contract Bookmaker is IBookmaker {
     error InvalidWinner();
     error InsufficientBookmakerBalance(uint256 required, uint256 actual);
     error NothingToWithdraw();
+    error ReactivityUnderfunded();
+
+    address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
+    uint256 public constant REACTIVITY_FUND_MIN = 33 ether;
+    uint256 public subscriptionId;
+    uint256 public TURN_INTERVAL_BLOCKS;
 
     // fighterId in bets is a relative index: 0 = fighterA, 1 = fighterB (NOT the global fighter id)
     struct Bet {
@@ -40,6 +47,7 @@ contract Bookmaker is IBookmaker {
     mapping(uint256 => bool) public duelSettled;          // duelId => bool
     mapping(uint256 => uint256) public rakeAccrued;       // duelId => rake amount USDso
 
+    event SubscriptionSkipped(string reason);
     event OddsInitialized(uint256 indexed duelId, uint16 oddsA, uint16 oddsB);
     event BetPlaced(uint256 indexed duelId, uint8 indexed fighterId, address indexed bettor, uint256 stake, uint16 oddsAtPlacementBps, uint256 betIndex);
     event OddsUpdated(uint256 indexed duelId, uint16 oddsA, uint16 oddsB);
@@ -51,10 +59,57 @@ contract Bookmaker is IBookmaker {
         _;
     }
 
-    constructor(address _arena, address _usdso) {
+    constructor(address _arena, address _usdso, uint256 _turnIntervalBlocks) payable {
+        if (msg.value < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
         arena = IArena(_arena);
         usdso = IERC20Minimal(_usdso);
+        TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner = msg.sender;
+
+        ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
+            eventTopics: [
+                keccak256("BlockTick(uint64)"),
+                bytes32(0),
+                bytes32(0),
+                bytes32(0)
+            ],
+            origin: address(0),
+            caller: address(0),
+            emitter: SOMNIA_REACTIVITY_PRECOMPILE,
+            handlerContractAddress: address(this),
+            handlerFunctionSelector: this.onEvent.selector,
+            priorityFeePerGas: 2_000_000_000,
+            maxFeePerGas: 20_000_000_000,
+            gasLimit: 3_000_000,
+            isGuaranteed: false,
+            isCoalesced: false
+        });
+
+        bytes memory callData = abi.encodeWithSelector(
+            ISomniaReactivityPrecompile.subscribe.selector,
+            data
+        );
+        (bool ok, bytes memory ret) = SOMNIA_REACTIVITY_PRECOMPILE.call(callData);
+        if (ok && ret.length >= 32) {
+            subscriptionId = abi.decode(ret, (uint256));
+        } else {
+            subscriptionId = 0;
+            emit SubscriptionSkipped("precompile unavailable");
+        }
+    }
+
+    receive() external payable {}
+
+    function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
+        if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;
+        if (eventTopics.length < 2) return;
+        uint64 blockNumber = uint64(uint256(eventTopics[1]));
+        if (blockNumber % TURN_INTERVAL_BLOCKS != 0) return;
+        _onBlockTick(blockNumber);
+    }
+
+    function _onBlockTick(uint64 /*blockNumber*/) internal {
+        // v1.1: LLM-driven odds update scheduled for next phase
     }
 
     function initializeOdds(uint256 duelId, uint16 oddsA, uint16 oddsB) external onlyOwner {
@@ -168,8 +223,5 @@ contract Bookmaker is IBookmaker {
         if (!ok) revert TransferFailed();
     }
 
-    // Implements IBookmaker — placeholder for Phase 5 wiring
-    function notifyDuelResolved(uint256, uint8) external pure {
-        // no-op: Phase 5 will extend behaviour
-    }
+    function notifyDuelResolved(uint256, uint8) external pure {}
 }

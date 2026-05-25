@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import hre from "hardhat";
+import { parseEther } from "viem";
 
 describe("Arena — dreamDEX placeOrder", function () {
   const PRICE = 1n * 10n ** 18n;
@@ -25,7 +26,8 @@ describe("Arena — dreamDEX placeOrder", function () {
       poolWbtc.address,
       poolSomi.address,
       owner.account.address,  // dummy platform — not exercised in dreamdex tests
-    ]);
+      1n,
+    ], { value: parseEther("33") });
 
     const ownerAddr = owner.account.address;
     const perPool = 100n * 10n ** 18n;

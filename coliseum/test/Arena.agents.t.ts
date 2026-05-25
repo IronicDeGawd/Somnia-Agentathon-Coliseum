@@ -53,12 +53,13 @@ describe("Arena — Somnia Agents integration", function () {
       poolWbtc.address,
       poolSomi.address,
       mockPlatform.address,
-    ]);
+      1n,
+    ], { value: parseEther("33") });
 
-    // Fund arena with 1 STT for agent deposits (floor 0.03 + topup 0.21 = 0.24)
+    // Fund arena with enough STT for agent deposits (floor 0.03 + topup 0.21 = 0.24; 33 already set via constructor)
     await hre.network.provider.send("hardhat_setBalance", [
       arena.address,
-      "0x" + parseEther("1").toString(16),
+      "0x" + parseEther("34").toString(16),
     ]);
 
     return { arena, mockPlatform, registry, owner };

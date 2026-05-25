@@ -4,5 +4,6 @@ artifacts/
 typechain-types/
 .env
 coverage/
-deployments/*.local.json
+deployments/somnia.json
+deployments/testnet.json
 dist/
