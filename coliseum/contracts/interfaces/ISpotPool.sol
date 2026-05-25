@@ -25,4 +25,6 @@ interface ISpotPool {
     function cancelOrder(uint128 orderId) external;
 
     function getPoolParams() external view returns (uint256 tickSize, uint256 minQuantity, uint256 lotSize);
+
+    function getMarkPrice() external view returns (uint256);
 }

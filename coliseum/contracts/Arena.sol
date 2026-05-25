@@ -19,6 +19,11 @@ contract Arena {
     error RequestTimedOut();
     error NotYetExpired();
     error InsufficientStt();
+    error DuelAlreadyActive();
+    error DuelNotActive();
+    error DuelNotReadyToFinalize();
+    error InvalidFighterPair();
+    error InvalidPoolForDuel();
 
     uint64 public constant MAX_EXPIRE_OFFSET_SEC = 7 days;
 
@@ -61,6 +66,29 @@ contract Arena {
     event FighterMoveRequested(uint256 indexed duelId, uint8 indexed fighterId, uint256 indexed requestId);
     event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, FighterAction action, uint128 orderId);
     event FighterMoveFailed(uint256 indexed duelId, uint8 indexed fighterId, string reason);
+    event DuelStarted(uint256 indexed duelId, uint8 fighterA, uint8 fighterB, address pool, uint256 startBlock);
+    event TurnAdvanced(uint256 indexed duelId, uint16 completedCallbacks, uint256 blockNumber);
+    event DuelResolved(uint256 indexed duelId, uint8 indexed winnerId, uint256 fighterAValueUsdso, uint256 fighterBValueUsdso);
+
+    enum DuelStatus { None, Pending, Active, Finalizing, Resolved }
+
+    struct Duel {
+        uint8       fighterA;
+        uint8       fighterB;
+        uint256     startBlock;
+        uint256     lastTurnBlock;
+        uint16      completedCallbacks;
+        DuelStatus  status;
+        address     pool;
+        uint256     initialUsdsoPerFighter;
+    }
+
+    uint16 public constant TURNS_PER_DUEL = 15;
+    uint256 public constant TURN_INTERVAL_BLOCKS = 1;
+
+    mapping(uint256 => Duel) public duels;
+    uint256 public nextDuelId = 1;
+    uint256 public activeDuelId;
 
     address public immutable USDSO;
     address public immutable POOL_WETH;
@@ -250,21 +278,25 @@ contract Arena {
         delete pendingTurns[requestId];
 
         if (status != ResponseStatus.Success || responses.length == 0) {
+            duels[turn.duelId].completedCallbacks += 1;
             emit FighterMoveFailed(turn.duelId, turn.fighterId, "no consensus");
             return;
         }
 
         if (responses[0].result.length != 32) {
+            duels[turn.duelId].completedCallbacks += 1;
             emit FighterMoveFailed(turn.duelId, turn.fighterId, "bad encoding");
             return;
         }
         int256 raw = abi.decode(responses[0].result, (int256));
         if (raw < 0 || raw > 6) {
+            duels[turn.duelId].completedCallbacks += 1;
             emit FighterMoveFailed(turn.duelId, turn.fighterId, "out of range");
             return;
         }
         FighterAction action = FighterAction(uint8(uint256(raw)));
         (bool ok, uint128 orderId) = _executeFighterAction(turn.duelId, turn.fighterId, action);
+        duels[turn.duelId].completedCallbacks += 1;
         if (!ok) {
             emit FighterMoveFailed(turn.duelId, turn.fighterId, "exec failed");
             return;
@@ -277,6 +309,7 @@ contract Arena {
         if (!turn.exists) revert UnknownRequest();
         if (block.timestamp <= turn.deadline) revert NotYetExpired();
         delete pendingTurns[requestId];
+        duels[turn.duelId].completedCallbacks += 1;
         emit FighterMoveFailed(turn.duelId, turn.fighterId, "timed out");
     }
 
@@ -301,6 +334,68 @@ contract Arena {
     function cancelOrder(address pool, uint128 orderId) external onlyOwner {
         if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI) revert InvalidPool(pool);
         ISpotPool(pool).cancelOrder(orderId);
+    }
+
+    function startDuel(
+        uint8 fighterA,
+        uint8 fighterB,
+        address pool,
+        uint256 initialUsdsoPerFighter
+    ) external onlyOwner returns (uint256 duelId) {
+        if (activeDuelId != 0 && duels[activeDuelId].status != DuelStatus.Resolved) revert DuelAlreadyActive();
+        uint8 count = registry.FIGHTER_COUNT();
+        if (fighterA == fighterB || fighterA >= count || fighterB >= count) revert InvalidFighterPair();
+        if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI) revert InvalidPoolForDuel();
+        if (initialUsdsoPerFighter == 0) revert ZeroAmount();
+
+        duelId = nextDuelId++;
+        duels[duelId] = Duel({
+            fighterA: fighterA,
+            fighterB: fighterB,
+            startBlock: block.number,
+            lastTurnBlock: block.number,
+            completedCallbacks: 0,
+            status: DuelStatus.Active,
+            pool: pool,
+            initialUsdsoPerFighter: initialUsdsoPerFighter
+        });
+        activeDuelId = duelId;
+        fighterBalances[pool][duelId][fighterA].quoteTokenAmount = initialUsdsoPerFighter;
+        fighterBalances[pool][duelId][fighterB].quoteTokenAmount = initialUsdsoPerFighter;
+        emit DuelStarted(duelId, fighterA, fighterB, pool, block.number);
+    }
+
+    function turn() external {
+        if (activeDuelId == 0) return;
+        Duel storage duel = duels[activeDuelId];
+        if (duel.status != DuelStatus.Active) return;
+        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
+        if (duel.completedCallbacks >= TURNS_PER_DUEL * 2) return;
+        duel.lastTurnBlock = block.number;
+        _requestFighterMove(activeDuelId, duel.fighterA);
+        _requestFighterMove(activeDuelId, duel.fighterB);
+    }
+
+    function finalizeDuel(uint256 duelId) external {
+        Duel storage duel = duels[duelId];
+        if (duel.status != DuelStatus.Active) revert DuelNotActive();
+        if (duel.completedCallbacks < TURNS_PER_DUEL * 2) revert DuelNotReadyToFinalize();
+
+        duel.status = DuelStatus.Finalizing;
+
+        address pool = duel.pool;
+        uint256 markPrice = ISpotPool(pool).getMarkPrice();
+
+        PoolBalance memory balA = fighterBalances[pool][duelId][duel.fighterA];
+        PoolBalance memory balB = fighterBalances[pool][duelId][duel.fighterB];
+
+        uint256 valueA = balA.quoteTokenAmount + (balA.baseTokenAmount * markPrice / 1e18);
+        uint256 valueB = balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / 1e18);
+
+        uint8 winner = valueA >= valueB ? duel.fighterA : duel.fighterB;
+        duel.status = DuelStatus.Resolved;
+        activeDuelId = 0;
+        emit DuelResolved(duelId, winner, valueA, valueB);
     }
 
     function fundPools(uint256 usdsoPerPool) external onlyOwner {

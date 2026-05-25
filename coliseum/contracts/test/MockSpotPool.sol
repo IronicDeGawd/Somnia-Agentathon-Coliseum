@@ -84,6 +84,10 @@ contract MockSpotPool {
         return (1e15, 1e15, 1e15);
     }
 
+    function getMarkPrice() external view returns (uint256) {
+        return markPrice;
+    }
+
     function getOrdersCount() external view returns (uint256) {
         return orders.length;
     }
