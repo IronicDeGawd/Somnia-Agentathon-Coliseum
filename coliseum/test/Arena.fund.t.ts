@@ -17,6 +17,7 @@ describe("Arena — fundPools", function () {
       poolWeth.address,
       poolWbtc.address,
       poolSomi.address,
+      owner.account.address,  // dummy platform — not exercised in fund tests
     ]);
 
     return { arena, usdso, poolWeth, poolWbtc, poolSomi, registry, owner, other };

@@ -24,6 +24,7 @@ describe("Arena — dreamDEX placeOrder", function () {
       poolWeth.address,
       poolWbtc.address,
       poolSomi.address,
+      owner.account.address,  // dummy platform — not exercised in dreamdex tests
     ]);
 
     const ownerAddr = owner.account.address;
@@ -139,6 +140,9 @@ describe("Arena — dreamDEX placeOrder", function () {
       .catch((err: unknown) => { caught = err; });
 
     expect(caught, "expected NotOwner revert").to.not.be.undefined;
-    expect(String(caught)).to.include("NotOwner");
+    // viem 2.37 wraps unrecognised custom errors by hex selector when the ABI
+    // contains complex struct types; 0x30cd7471 == keccak256("NotOwner()")[0:4]
+    const s = String(caught);
+    expect(s.includes("NotOwner") || s.includes("0x30cd7471"), "expected NotOwner selector").to.be.true;
   });
 });
