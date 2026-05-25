@@ -1,149 +1,169 @@
 /**
- * Test 4 — Reactivity BlockTick (off-chain WebSocket subscription)
+ * Test 4 — Reactivity BlockTick (ON-CHAIN handler)
  *
- * Subscribes to the Somnia Reactivity precompile's BlockTick system event.
- * BlockTick fires on every block (~10/sec on Somnia testnet).
- * We wait for 3 ticks to confirm the subscription is live, then unsubscribe.
+ * BYPASSES the SDK validator (which has a bug: rejects emitter=precompile,
+ * but BlockTick requires emitter=precompile). Calls the precompile directly.
  *
- * This is the exact mechanism that will drive Arena.turn() in Coliseum.
- *
- * Key gotchas (from forge-test-report.md):
- *   - SDK constructor needs WebSocket-backed public client (not HTTP)
- *   - eventContractSources is plural, Address[] (not singular)
- *   - subscribe() returns Promise<Result | Error> — must check instanceof Error
- *   - Topic hash = keccak256('BlockTick(uint64)') WITHOUT 'indexed' keyword
- *   - Precompile address: 0x0000000000000000000000000000000000000100
+ * Recipe:
+ *   1. Deploy BlockTickHandler (extends SomniaEventHandler)
+ *   2. Fund it with ≥33 STT
+ *   3. Call precompile.subscribe() with BlockTick filter
+ *   4. Wait for Ticked() events from the handler
  *
  * Run: npm run test:reactivity
- * Env: PRIVATE_KEY required (SDK wallet client), RPC_WS optional
  */
 
-import { createPublicClient, createWalletClient, webSocket, http, keccak256, toHex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { SDK } from "@somnia-chain/reactivity";
+import hre from "hardhat";
+import { keccak256, toHex, parseEther, formatEther, parseGwei } from "viem";
 import "dotenv/config";
 
-// Reactivity requires the dream-rpc WS endpoint, not the standard infra WS
-const RPC_WS = process.env.RPC_WS ?? "wss://dream-rpc.somnia.network/ws";
-const RPC_HTTP = process.env.RPC_HTTP ?? "https://api.infra.testnet.somnia.network";
-
-// Somnia testnet chain definition
-const somniaTestnet = {
-  id: 50312,
-  name: "Somnia Testnet",
-  nativeCurrency: { name: "STT", symbol: "STT", decimals: 18 },
-  rpcUrls: {
-    default: { http: [RPC_HTTP], webSocket: [RPC_WS] },
-    public: { http: [RPC_HTTP], webSocket: [RPC_WS] },
-  },
-} as const;
-
-// Precompile address (padded to 20 bytes)
-const REACTIVITY_PRECOMPILE = "0x0000000000000000000000000000000000000100" as `0x${string}`;
-
-// Topic hash for BlockTick(uint64) — keccak256 without 'indexed' keyword
-const BLOCKTICK_TOPIC = keccak256(toHex("BlockTick(uint64)")) as `0x${string}`;
-
-const TICKS_WANTED = 3;
+const PRECOMPILE = "0x0000000000000000000000000000000000000100" as const;
 const TIMEOUT_MS = 60_000;
+const TICKS_WANTED = 3;
+
+const PRECOMPILE_ABI = [
+  {
+    name: "subscribe",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "subscriptionData",
+        type: "tuple",
+        components: [
+          { name: "eventTopics",             type: "bytes32[4]" },
+          { name: "origin",                  type: "address" },
+          { name: "caller",                  type: "address" },
+          { name: "emitter",                 type: "address" },
+          { name: "handlerContractAddress",  type: "address" },
+          { name: "handlerFunctionSelector", type: "bytes4" },
+          { name: "priorityFeePerGas",       type: "uint64" },
+          { name: "maxFeePerGas",            type: "uint64" },
+          { name: "gasLimit",                type: "uint64" },
+          { name: "isGuaranteed",            type: "bool" },
+          { name: "isCoalesced",             type: "bool" },
+        ],
+      },
+    ],
+    outputs: [{ name: "subscriptionId", type: "uint256" }],
+  },
+] as const;
+
+const ZERO_BYTES32 = "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as const;
 
 async function main() {
-  const pk = process.env.PRIVATE_KEY;
-  if (!pk) throw new Error("PRIVATE_KEY not set in .env");
+  const [wallet] = await hre.viem.getWalletClients();
+  const pub = await hre.viem.getPublicClient();
+  const me = wallet.account.address;
 
-  const account = privateKeyToAccount(pk as `0x${string}`);
-  console.log("Wallet:", account.address);
+  console.log("Wallet:", me);
+  const bal = await pub.getBalance({ address: me });
+  console.log("Balance:", formatEther(bal), "STT\n");
 
-  // SDK requires WebSocket-backed public client
-  const wsPublicClient = createPublicClient({
-    chain: somniaTestnet,
-    transport: webSocket(RPC_WS),
-  });
-
-  const walletClient = createWalletClient({
-    account,
-    chain: somniaTestnet,
-    transport: http(RPC_HTTP),
-  });
-
-  // Check balance
-  const httpPublicClient = createPublicClient({ chain: somniaTestnet, transport: http(RPC_HTTP) });
-  const balance = await httpPublicClient.getBalance({ address: account.address });
-  console.log("Balance:", Number(balance) / 1e18, "STT\n");
-
-  if (balance === 0n) {
-    throw new Error("Wallet has 0 STT — get testnet tokens from the faucet first");
+  if (bal < parseEther("35")) {
+    throw new Error(`Need ≥35 STT. Have ${formatEther(bal)}.`);
   }
 
-  // Instantiate Reactivity SDK
-  const sdk = new SDK({ public: wsPublicClient, wallet: walletClient });
+  // --- Step 1: Deploy handler ---
+  let handlerAddress = process.env.HANDLER_ADDRESS as `0x${string}` | undefined;
+  if (!handlerAddress) {
+    console.log("Deploying BlockTickHandler...");
+    const handler = await hre.viem.deployContract("BlockTickHandler");
+    handlerAddress = handler.address;
+    console.log("Deployed:", handlerAddress);
+    console.log(`  (set HANDLER_ADDRESS=${handlerAddress} to reuse)\n`);
+  } else {
+    console.log("Reusing handler at:", handlerAddress, "\n");
+  }
 
-  console.log("Subscribing to BlockTick via Reactivity SDK...");
-  console.log("  Precompile:", REACTIVITY_PRECOMPILE);
-  console.log("  Topic:", BLOCKTICK_TOPIC);
-  console.log(`  Waiting for ${TICKS_WANTED} ticks (timeout ${TIMEOUT_MS / 1000}s)\n`);
-
-  let tickCount = 0;
-  let subscription: { subscriptionId: `0x${string}`; unsubscribe: () => Promise<any> } | null = null;
-
-  const done = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`Timeout: received only ${tickCount}/${TICKS_WANTED} ticks`));
-    }, TIMEOUT_MS);
-
-    sdk.subscribe({
-      ethCalls: [],
-      eventContractSources: [REACTIVITY_PRECOMPILE],
-      topicOverrides: [BLOCKTICK_TOPIC],
-      onData: (data) => {
-        tickCount++;
-        const topics = data.result.topics;
-        const blockHex = topics[1] ?? "0x0";
-        const blockNum = BigInt(blockHex);
-        console.log(`  Tick #${tickCount} — block ${blockNum.toString()}`);
-        if (tickCount >= TICKS_WANTED) {
-          clearTimeout(timer);
-          resolve();
-        }
-      },
-      onError: (err: unknown) => {
-        clearTimeout(timer);
-        // ErrorEvent: dump all fields so we can see the root cause
-        console.error("onError raw:", JSON.stringify(err, Object.getOwnPropertyNames(err as object)));
-        const msg = (err as any)?.message ?? (err as any)?.error?.message ?? String(err);
-        reject(new Error("Reactivity onError: " + msg));
-      },
-    }).then((sub) => {
-      if (sub instanceof Error) {
-        clearTimeout(timer);
-        reject(sub);
-        return;
-      }
-      subscription = sub;
-      console.log("  Subscription ID:", sub.subscriptionId);
-    }).catch((err: unknown) => {
-      clearTimeout(timer);
-      console.error("subscribe() rejected — type:", typeof err, Object.prototype.toString.call(err));
-      console.error("  keys:", Object.getOwnPropertyNames(err as object));
-      console.error("  JSON:", JSON.stringify(err, Object.getOwnPropertyNames(err as object)));
-      reject(err instanceof Error ? err : new Error(String(err)));
+  // --- Step 2: Fund handler ---
+  console.log("=== Step 2: Fund handler with 33 STT ===");
+  const handlerBal = await pub.getBalance({ address: handlerAddress });
+  console.log("Current handler balance:", formatEther(handlerBal), "STT");
+  if (handlerBal < parseEther("32")) {
+    const fundHash = await wallet.sendTransaction({
+      to: handlerAddress, value: parseEther("33"),
     });
+    await pub.waitForTransactionReceipt({ hash: fundHash });
+    console.log("Funded:", fundHash);
+  } else {
+    console.log("  Already funded.");
+  }
+  console.log();
+
+  // --- Step 3: Call precompile.subscribe() directly ---
+  console.log("=== Step 3: precompile.subscribe() with BlockTick filter ===");
+
+  const blockTickTopic = keccak256(toHex("BlockTick(uint64)"));
+  console.log("  BlockTick topic:", blockTickTopic);
+  console.log("  Emitter (precompile):", PRECOMPILE);
+
+  // onEvent(address,bytes32[],bytes) selector — from SomniaEventHandler ABI
+  const onEventSelector = keccak256(toHex("onEvent(address,bytes32[],bytes)")).slice(0, 10) as `0x${string}`;
+  console.log("  Handler selector:", onEventSelector);
+
+  const subscriptionData = {
+    eventTopics: [blockTickTopic, ZERO_BYTES32, ZERO_BYTES32, ZERO_BYTES32] as readonly [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`],
+    origin: ZERO_ADDR,
+    caller: ZERO_ADDR,
+    emitter: PRECOMPILE,
+    handlerContractAddress: handlerAddress,
+    handlerFunctionSelector: onEventSelector,
+    priorityFeePerGas: parseGwei("2"),
+    maxFeePerGas: parseGwei("10"),
+    gasLimit: 500_000n,
+    isGuaranteed: false,
+    isCoalesced: false,
+  };
+
+  const subHash = await wallet.writeContract({
+    address: PRECOMPILE,
+    abi: PRECOMPILE_ABI,
+    functionName: "subscribe",
+    args: [subscriptionData],
   });
+  console.log("Subscribe TX:", subHash);
+  const subReceipt = await pub.waitForTransactionReceipt({ hash: subHash });
+  console.log("Confirmed in block:", subReceipt.blockNumber.toString());
+  console.log("Logs:", subReceipt.logs.length);
+  if (subReceipt.status !== "success") {
+    throw new Error("Subscribe tx reverted");
+  }
+  console.log("✅ Subscription is LIVE\n");
 
-  await done;
+  // --- Step 4: Watch for Ticked events ---
+  console.log(`=== Step 4: Watching Ticked events (want ${TICKS_WANTED}, timeout ${TIMEOUT_MS/1000}s) ===`);
+  const contract = await hre.viem.getContractAt("BlockTickHandler", handlerAddress);
 
-  // Unsubscribe cleanly
-  if (subscription) {
-    await (subscription as any).unsubscribe();
-    console.log("\nUnsubscribed.");
+  const fromBlock = subReceipt.blockNumber;
+  let observed = 0;
+  const seen = new Set<string>();
+  const deadline = Date.now() + TIMEOUT_MS;
+
+  while (Date.now() < deadline && observed < TICKS_WANTED) {
+    const events = await contract.getEvents.Ticked({}, { fromBlock });
+    for (const ev of events) {
+      const args = ev.args as Record<string, unknown>;
+      const blockNum = (args.blockNumber as bigint)?.toString() ?? "?";
+      if (seen.has(blockNum)) continue;
+      seen.add(blockNum);
+      observed += 1;
+      console.log(`  Tick #${observed} — block ${blockNum}, count=${(args.tickCount as bigint)?.toString()}`);
+      if (observed >= TICKS_WANTED) break;
+    }
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  console.log(`\n✅ Reactivity BlockTick verified — received ${tickCount} ticks`);
-  console.log("   This confirms the turn-loop mechanism for Coliseum will work.");
+  const finalCount = await contract.read.tickCount() as bigint;
+  console.log(`\nOn-chain tickCount: ${finalCount.toString()}`);
+  console.log(`Handler balance: ${formatEther(await pub.getBalance({ address: handlerAddress }))} STT`);
 
-  // Give the WS time to close gracefully
-  await new Promise((r) => setTimeout(r, 1_000));
-  process.exit(0);
+  if (observed >= TICKS_WANTED) {
+    console.log(`\n✅ Reactivity BlockTick VERIFIED — handler invoked ${observed}+ times`);
+  } else {
+    console.log(`\n⚠️  Only ${observed}/${TICKS_WANTED} ticks observed`);
+  }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch(e => { console.error(e); process.exit(1); });

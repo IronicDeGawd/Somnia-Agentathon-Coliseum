@@ -9,28 +9,21 @@
     "test:agent": "hardhat run scripts/01-llm-inference.ts --network somnia",
     "test:dreamdex": "hardhat run scripts/02-dreamdex-order.ts --network somnia",
     "test:ws": "ts-node scripts/03-dreamdex-ws.ts",
-    "test:reactivity": "ts-node scripts/04-reactivity-blocktick.ts"
-  },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "5.0.0",
-    "@nomicfoundation/hardhat-viem": "2.0.6",
-    "hardhat": "^2.28.0",
-    "typescript": "5.8.3",
-    "ts-node": "10.9.2",
-    "dotenv": "16.5.0"
-  },
-  "dependencies": {
-    "@somnia-chain/reactivity": "0.1.10",
-    "viem": "~2.37.8",
-    "ws": "^8.18.0"
+    "test:reactivity": "hardhat run scripts/04-reactivity-blocktick.ts --network somnia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "5.0.0",
     "@nomicfoundation/hardhat-viem": "2.0.6",
     "@types/ws": "^8.5.13",
+    "dotenv": "16.5.0",
     "hardhat": "^2.28.0",
-    "typescript": "5.8.3",
     "ts-node": "10.9.2",
-    "dotenv": "16.5.0"
+    "typescript": "5.8.3"
+  },
+  "dependencies": {
+    "@somnia-chain/reactivity": "^0.1.10",
+    "@somnia-chain/reactivity-contracts": "^0.2.0",
+    "viem": "~2.37.8",
+    "ws": "^8.18.0"
   }
 }
