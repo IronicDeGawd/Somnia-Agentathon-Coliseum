@@ -1,0 +1,25 @@
+{
+  "network": "localhost",
+  "block": "24",
+  "deployer": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "contracts": {
+    "FighterRegistry": {
+      "address": "0x59b670e9fa9d0a427751af201d676719a970857b"
+    },
+    "Arena": {
+      "address": "0x4ed7c70f96b99c776995fb64377f0d4ab3b0e1c1",
+      "subscriptionId": "0",
+      "turnIntervalBlocks": "1"
+    },
+    "Bookmaker": {
+      "address": "0x322813fd9a801c5507c9de605d63cea4f2ce6c44"
+    }
+  },
+  "external": {
+    "usdso": "0x959922be3caee4b8cd9a407cc3ac1c251c2007b1",
+    "poolWeth": "0x9a9f2ccfde556a7e9ff0848998aa4a0cfd8863ae",
+    "poolWbtc": "0x68b1d87f95878fe05b998f19b66f4baba5de1aed",
+    "poolSomi": "0x3aa5ebb10dc797cac828524e59a333d0a371443c",
+    "platform": "0xc6e7df5e7b4f2a278906862b61205850344d4e7d"
+  }
+}
