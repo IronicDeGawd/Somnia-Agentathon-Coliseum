@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "compile": "hardhat compile",
+    "get:usdso": "hardhat run scripts/00-get-usdso.ts --network somnia",
     "test:agent": "hardhat run scripts/01-llm-inference.ts --network somnia",
     "test:dreamdex": "hardhat run scripts/02-dreamdex-order.ts --network somnia",
     "test:ws": "ts-node scripts/03-dreamdex-ws.ts",

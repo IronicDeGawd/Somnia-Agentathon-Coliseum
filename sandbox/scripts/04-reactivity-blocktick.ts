@@ -23,7 +23,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { SDK } from "@somnia-chain/reactivity";
 import "dotenv/config";
 
-const RPC_WS = process.env.RPC_WS ?? "wss://api.infra.testnet.somnia.network";
+// Reactivity requires the dream-rpc WS endpoint, not the standard infra WS
+const RPC_WS = process.env.RPC_WS ?? "wss://dream-rpc.somnia.network/ws";
 const RPC_HTTP = process.env.RPC_HTTP ?? "https://api.infra.testnet.somnia.network";
 
 // Somnia testnet chain definition
@@ -97,20 +98,20 @@ async function main() {
       onData: (data) => {
         tickCount++;
         const topics = data.result.topics;
-        // topics[1] = encoded blockNumber (indexed uint64)
-        const blockHex = topics[1] ?? "0x";
+        const blockHex = topics[1] ?? "0x0";
         const blockNum = BigInt(blockHex);
-
         console.log(`  Tick #${tickCount} — block ${blockNum.toString()}`);
-
         if (tickCount >= TICKS_WANTED) {
           clearTimeout(timer);
           resolve();
         }
       },
-      onError: (err) => {
+      onError: (err: unknown) => {
         clearTimeout(timer);
-        reject(err);
+        // ErrorEvent: dump all fields so we can see the root cause
+        console.error("onError raw:", JSON.stringify(err, Object.getOwnPropertyNames(err as object)));
+        const msg = (err as any)?.message ?? (err as any)?.error?.message ?? String(err);
+        reject(new Error("Reactivity onError: " + msg));
       },
     }).then((sub) => {
       if (sub instanceof Error) {
@@ -120,6 +121,12 @@ async function main() {
       }
       subscription = sub;
       console.log("  Subscription ID:", sub.subscriptionId);
+    }).catch((err: unknown) => {
+      clearTimeout(timer);
+      console.error("subscribe() rejected — type:", typeof err, Object.prototype.toString.call(err));
+      console.error("  keys:", Object.getOwnPropertyNames(err as object));
+      console.error("  JSON:", JSON.stringify(err, Object.getOwnPropertyNames(err as object)));
+      reject(err instanceof Error ? err : new Error(String(err)));
     });
   });
 
