@@ -315,8 +315,63 @@ contract Arena {
             return (false, 0);
         }
 
-        // IOC (orderType=2) — no PostOnly accounting needed for Phase 3
-        return _placeOrderForFighter(duelId, fighterId, pool, isBid, 1e18, 1e15, 2, 3600);
+        // Read the opposite side of the book to price an at-market FOK.
+        // FOK guarantees full fill or full revert — no partial-fill accounting drift.
+        OrderBookLevel[] memory levels;
+        try ISpotPool(pool).getBookLevels(!isBid, 1) returns (OrderBookLevel[] memory l) {
+            levels = l;
+        } catch {
+            emit OrderRejected(pool, fighterId, duelId, isBid, 0, 0, 1, "book read failed");
+            return (false, 0);
+        }
+        if (levels.length == 0 || levels[0].quantity == 0) {
+            emit OrderRejected(pool, fighterId, duelId, isBid, 0, 0, 1, "empty book");
+            return (false, 0);
+        }
+
+        uint256 price = levels[0].price;
+        uint256 available = levels[0].quantity;
+
+        PoolBalance storage bal = fighterBalances[pool][duelId][fighterId];
+        uint256 desired;
+        if (isBid) {
+            if (bal.quoteTokenAmount == 0) {
+                emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
+                return (false, 0);
+            }
+            desired = (bal.quoteTokenAmount * 1e18) / price;
+        } else {
+            if (bal.baseTokenAmount == 0) {
+                emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no base balance");
+                return (false, 0);
+            }
+            desired = bal.baseTokenAmount;
+        }
+
+        uint256 quantity = desired < available ? desired : available;
+        if (quantity == 0) {
+            emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "zero quantity");
+            return (false, 0);
+        }
+
+        // orderType 1 = FOK
+        (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600);
+        if (ok) {
+            uint256 quoteCost = (price * quantity) / 1e18;
+            if (isBid) {
+                if (quoteCost > bal.quoteTokenAmount) quoteCost = bal.quoteTokenAmount;
+                bal.quoteTokenAmount -= quoteCost;
+                bal.baseTokenAmount += quantity;
+            } else {
+                if (quantity > bal.baseTokenAmount) {
+                    bal.baseTokenAmount = 0;
+                } else {
+                    bal.baseTokenAmount -= quantity;
+                }
+                bal.quoteTokenAmount += quoteCost;
+            }
+        }
+        return (ok, orderId);
     }
 
     function handleFighterResponse(

@@ -157,11 +157,13 @@ async function main() {
 
   // 4. Fund pools (testnet only, deployer must hold USDso and approve arena first)
   if (!IS_LOCAL) {
-    console.log("\nFunding pools with 50 USDso each...");
+    const perPool = parseEther(process.env.USDSO_PER_POOL ?? "50");
+    const total = perPool * 3n;
+    console.log(`\nFunding pools with ${formatEther(perPool)} USDso each (${formatEther(total)} total)...`);
     const usdsoContract = await hre.viem.getContractAt("MockERC20", addresses.usdso);
-    const approveTx = await usdsoContract.write.approve([arena.address, parseEther("150")]);
+    const approveTx = await usdsoContract.write.approve([arena.address, total]);
     await publicClient.waitForTransactionReceipt({ hash: approveTx });
-    const fundTx = await arena.write.fundPools([parseEther("50")]);
+    const fundTx = await arena.write.fundPools([perPool]);
     await publicClient.waitForTransactionReceipt({ hash: fundTx });
     console.log("  Pools funded.");
   }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "../interfaces/ISpotPool.sol";
+
 interface IERC20Pull {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
@@ -90,5 +92,24 @@ contract MockSpotPool {
 
     function getOrdersCount() external view returns (uint256) {
         return orders.length;
+    }
+
+    // --- Book level mocking ---
+    // _bookLevels[isBid] = list of levels; index 0 = best (highest bid / lowest ask)
+    mapping(bool => OrderBookLevel[]) private _bookLevels;
+
+    function setBookLevel(bool isBid, uint256 price, uint256 quantity) external {
+        delete _bookLevels[isBid];
+        _bookLevels[isBid].push(OrderBookLevel({ price: price, quantity: quantity }));
+    }
+
+    function getBookLevels(bool isBid, uint64 numLevels) external view returns (OrderBookLevel[] memory) {
+        uint256 n = _bookLevels[isBid].length;
+        if (n > numLevels) n = numLevels;
+        OrderBookLevel[] memory out = new OrderBookLevel[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = _bookLevels[isBid][i];
+        }
+        return out;
     }
 }

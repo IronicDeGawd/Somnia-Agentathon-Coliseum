@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+struct OrderBookLevel {
+    uint256 price;
+    uint256 quantity;
+}
+
 interface ISpotPool {
     function deposit(address token, uint256 amount) external;
 
@@ -27,4 +32,6 @@ interface ISpotPool {
     function getPoolParams() external view returns (uint256 tickSize, uint256 minQuantity, uint256 lotSize);
 
     function getMarkPrice() external view returns (uint256);
+
+    function getBookLevels(bool isBid, uint64 numLevels) external view returns (OrderBookLevel[] memory);
 }
