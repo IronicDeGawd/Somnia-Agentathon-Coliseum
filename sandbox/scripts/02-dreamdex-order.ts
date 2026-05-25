@@ -28,18 +28,20 @@ const SPOT_POOL = "0xD180195da5459C7a0DEA188ed61216ec43682b50" as const;
 // Minimal ABIs — only what this test needs
 const POOL_ABI = [
   {
+    // CANONICAL signature from docs.dreamdex.io/developers/contracts/functions
+    // Returns 7 fields starting with baseToken, quoteToken — NOT the OrderBookParameters 3-tuple.
     name: "getPoolParams",
     type: "function",
     stateMutability: "view",
     inputs: [],
     outputs: [
-      { name: "tickSize", type: "uint256" },
-      { name: "minQuantity", type: "uint256" },
-      { name: "lotSize", type: "uint256" },
-      { name: "takerFeeBpsTimes1k", type: "uint256" },
-      { name: "makerFeeBpsTimes1k", type: "uint256" },
-      { name: "feeRecipient", type: "address" },
-      { name: "maxBuilderFeeBpsTimes1k", type: "uint256" },
+      { name: "baseToken_",          type: "address" },
+      { name: "quoteToken_",         type: "address" },
+      { name: "makerFeeBpsTimes1k_", type: "uint256" },
+      { name: "takerFeeBpsTimes1k_", type: "uint256" },
+      { name: "tickSize_",           type: "uint256" },
+      { name: "minQuantity_",        type: "uint256" },
+      { name: "lotSize_",            type: "uint256" },
     ],
   },
   {
@@ -50,14 +52,22 @@ const POOL_ABI = [
     outputs: [{ name: "", type: "uint256" }],
   },
   {
+    // Canonical: returns OrderId[] (uint128 array), NOT Order[]
     name: "getOwnOpenOrders",
     type: "function",
     stateMutability: "view",
     inputs: [],
+    outputs: [{ name: "", type: "uint128[]" }],
+  },
+  {
+    name: "getOrder",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "orderId", type: "uint128" }],
     outputs: [
       {
         name: "",
-        type: "tuple[]",
+        type: "tuple",
         components: [
           { name: "orderId", type: "uint128" },
           { name: "isBid", type: "bool" },
@@ -109,20 +119,6 @@ const POOL_ABI = [
     inputs: [{ name: "token", type: "address" }, { name: "amount", type: "uint256" }],
     outputs: [],
   },
-  {
-    name: "quoteToken",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-  },
-  {
-    name: "baseToken",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-  },
 ] as const;
 
 const ERC20_ABI = [
@@ -165,31 +161,22 @@ async function main() {
   const nativeBal = await publicClient.getBalance({ address: me });
   console.log("STT balance:", formatUnits(nativeBal, 18), "STT\n");
 
-  // --- Step 1: Pool params ---
+  // --- Step 1: Pool params (canonical 7-field shape) ---
   console.log("=== Step 1: getPoolParams() ===");
   const params = await publicClient.readContract({
     address: SPOT_POOL,
     abi: POOL_ABI,
     functionName: "getPoolParams",
   });
-  const [tickSize, minQuantity, lotSize] = params as [bigint, bigint, bigint, bigint, bigint, string, bigint];
-  console.log("tickSize:", tickSize.toString(), "(raw USDso units)");
-  console.log("minQuantity:", minQuantity.toString(), "(raw WETH units)");
-  console.log("lotSize:", lotSize.toString(), "(raw WETH units)");
-
-  // Fetch token addresses
-  const quoteToken = await publicClient.readContract({
-    address: SPOT_POOL,
-    abi: POOL_ABI,
-    functionName: "quoteToken",
-  }) as `0x${string}`;
-  const baseToken = await publicClient.readContract({
-    address: SPOT_POOL,
-    abi: POOL_ABI,
-    functionName: "baseToken",
-  }) as `0x${string}`;
+  // [baseToken, quoteToken, makerFee, takerFee, tickSize, minQuantity, lotSize]
+  const [baseToken, quoteToken, , , tickSize, minQuantity, lotSize] =
+    params as readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint];
+  console.log("Base token (WETH):", baseToken);
   console.log("Quote token (USDso):", quoteToken);
-  console.log("Base token (WETH):", baseToken, "\n");
+  console.log("tickSize:", tickSize.toString(), `(${Number(tickSize)/1e18} USDso)`);
+  console.log("minQuantity:", minQuantity.toString(), `(${Number(minQuantity)/1e18} WETH)`);
+  console.log("lotSize:", lotSize.toString(), `(${Number(lotSize)/1e18} WETH)`);
+  console.log();
 
   // Token info
   const [usdsoSymbol, rawDecimals] = await Promise.all([
@@ -259,8 +246,30 @@ async function main() {
   // Price: very low bid (tickSize × 10) to guarantee PostOnly doesn't immediately fill
   const rawPrice = tickSize * 10n;
 
+  // CRITICAL — testnet pool rejects expireTimestampNs=0 despite docs saying "0 = no expiry"
+  const expireNs = BigInt(Math.floor(Date.now() / 1000) + 3600) * 1_000_000_000n;
+
   console.log("Order: isBid=true, price=", rawPrice.toString(), "quantity=", rawQuantity.toString());
   console.log("       orderType=3 (PostOnly), selfMatchingOption=0 (CancelTaker)");
+  console.log("       expireNs=", expireNs.toString(), "(now + 1h)");
+
+  // --- Simulate first to avoid silent reject ---
+  console.log("Simulating via eth_call...");
+  const sim = await publicClient.simulateContract({
+    account: wallet.account,
+    address: SPOT_POOL, abi: POOL_ABI,
+    functionName: "placeOrder",
+    args: [
+      true, 0n, rawPrice, rawQuantity, expireNs, 3, 0,
+      "0x0000000000000000000000000000000000000000", 0n,
+    ],
+  });
+  const [simSuccess, simOrderId] = sim.result as [boolean, bigint];
+  console.log(`  simulate: success=${simSuccess}, orderId=${simOrderId.toString()}`);
+  if (!simSuccess) {
+    console.log("⚠️  Simulation says success=false — aborting broadcast.");
+    return;
+  }
 
   const orderTx = await wallet.writeContract({
     address: SPOT_POOL,
@@ -271,11 +280,11 @@ async function main() {
       0n,             // userData
       rawPrice,       // price raw quote units
       rawQuantity,    // quantity raw base units
-      0n,             // expireTimestampNs (0 = no expiry)
+      expireNs,       // testnet REQUIRES non-zero
       3,              // orderType: PostOnly
       0,              // selfMatchingOption: CancelTaker
-      "0x0000000000000000000000000000000000000000", // builder (must be zero in v1.0)
-      0n,             // builderFeeBpsTimes1k (uint96 → bigint)
+      "0x0000000000000000000000000000000000000000", // builder
+      0n,             // builderFeeBpsTimes1k
     ],
   });
   const orderReceipt = await publicClient.waitForTransactionReceipt({ hash: orderTx });
@@ -287,26 +296,31 @@ async function main() {
 
   // --- Step 6: Verify via getOwnOpenOrders ---
   console.log("\n=== Step 6: getOwnOpenOrders() ===");
-  const openOrders = await publicClient.readContract({
+  const orderIds = await publicClient.readContract({
     address: SPOT_POOL, abi: POOL_ABI, functionName: "getOwnOpenOrders",
-  }) as any[];
-  console.log("Open orders:", openOrders.length);
+  }) as bigint[];
+  console.log("Open orders:", orderIds.length);
 
-  if (openOrders.length === 0) {
-    console.log("⚠️  No open orders found. Order may have been silently rejected (price too low for PostOnly?).");
-    console.log("   Withdrawing deposit and exiting.");
+  if (orderIds.length === 0) {
+    console.log("⚠️  No open orders found despite simSuccess=true. Investigate.");
   } else {
-    const order = openOrders[0];
-    console.log("  orderId:", order.orderId.toString());
+    const orderId = orderIds[0];
+    console.log("  orderId:", orderId.toString());
+
+    // Fetch full order details via getOrder(orderId)
+    const order = await publicClient.readContract({
+      address: SPOT_POOL, abi: POOL_ABI,
+      functionName: "getOrder", args: [orderId],
+    }) as any;
     console.log("  isBid:", order.isBid);
-    console.log("  price:", order.price.toString());
-    console.log("  quantityRemaining:", order.quantityRemaining.toString());
+    console.log("  price:", order.price.toString(), `(${Number(order.price)/1e18} USDso)`);
+    console.log("  quantityRemaining:", order.quantityRemaining.toString(), `(${Number(order.quantityRemaining)/1e18} WETH)`);
 
     // --- Step 7: Cancel ---
     console.log("\n=== Step 7: cancelOrder() ===");
     const cancelTx = await wallet.writeContract({
       address: SPOT_POOL, abi: POOL_ABI,
-      functionName: "cancelOrder", args: [order.orderId],
+      functionName: "cancelOrder", args: [orderId],
     });
     await publicClient.waitForTransactionReceipt({ hash: cancelTx });
     console.log("Cancelled:", cancelTx);
