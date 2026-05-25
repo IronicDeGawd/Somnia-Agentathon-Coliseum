@@ -40,4 +40,10 @@ contract MockERC20 {
         balanceOf[to] += amount;
         return true;
     }
+
+    function burn(address from, uint256 amount) external {
+        require(balanceOf[from] >= amount, "insufficient");
+        balanceOf[from] -= amount;
+        totalSupply -= amount;
+    }
 }
