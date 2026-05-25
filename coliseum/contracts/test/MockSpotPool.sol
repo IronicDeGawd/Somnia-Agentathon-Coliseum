@@ -6,8 +6,30 @@ interface IERC20Pull {
 }
 
 contract MockSpotPool {
+    struct Order {
+        bool isBid;
+        uint256 price;
+        uint256 quantity;
+        uint8 orderType;
+        bool cancelled;
+    }
+
     // user => token => balance
     mapping(address => mapping(address => uint256)) private _balances;
+
+    Order[] public orders;
+    uint128 public nextOrderId;
+
+    bool private _nextShouldReject;
+    uint256 public markPrice;
+
+    function setNextOrderShouldReject(bool reject) external {
+        _nextShouldReject = reject;
+    }
+
+    function setMarkPrice(uint256 price) external {
+        markPrice = price;
+    }
 
     function deposit(address token, uint256 amount) external {
         require(
@@ -31,24 +53,38 @@ contract MockSpotPool {
     }
 
     function placeOrder(
-        bool,
+        bool isBid,
         uint64,
-        uint256,
-        uint256,
+        uint256 price,
+        uint256 quantity,
         uint64,
-        uint8,
+        uint8 orderType,
         uint8,
         address,
         uint96
-    ) external pure returns (bool, uint128) {
-        revert("not implemented");
+    ) external returns (bool, uint128) {
+        if (_nextShouldReject) {
+            _nextShouldReject = false;
+            return (false, 0);
+        }
+
+        uint128 orderId = nextOrderId;
+        orders.push(Order({ isBid: isBid, price: price, quantity: quantity, orderType: orderType, cancelled: false }));
+        nextOrderId++;
+
+        return (true, orderId);
     }
 
-    function cancelOrder(uint128) external pure {
-        revert("not implemented");
+    function cancelOrder(uint128 orderId) external {
+        require(orderId < nextOrderId, "MockSpotPool: unknown orderId");
+        orders[orderId].cancelled = true;
     }
 
     function getPoolParams() external pure returns (uint256, uint256, uint256) {
-        revert("not implemented");
+        return (1e15, 1e15, 1e15);
+    }
+
+    function getOrdersCount() external view returns (uint256) {
+        return orders.length;
     }
 }
