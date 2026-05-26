@@ -67,4 +67,51 @@ describe("Arena — fundPools", function () {
     expect(caught, "expected ZeroAmount revert").to.not.be.undefined;
     expect(String(caught)).to.include("ZeroAmount");
   });
+
+  it("withdrawFromPool + sweepToken recovers seeded USDso to owner", async function () {
+    const { arena, usdso, poolWeth } = await deploy();
+    const [ownerClient] = await hre.viem.getWalletClients();
+    const ownerAddr = ownerClient.account.address;
+    const perPool = 10n * 10n ** 18n;
+
+    await usdso.write.mint([ownerAddr, 30n * 10n ** 18n]);
+    await usdso.write.approve([arena.address, 30n * 10n ** 18n]);
+    await arena.write.fundPools([perPool]);
+
+    const balBefore = (await usdso.read.balanceOf([ownerAddr])) as bigint;
+
+    // Pull from pool vault back to Arena
+    await arena.write.withdrawFromPool([poolWeth.address, usdso.address, perPool]);
+    const arenaBal = (await usdso.read.balanceOf([arena.address])) as bigint;
+    expect(arenaBal).to.equal(perPool);
+
+    // Sweep from Arena to owner
+    await arena.write.sweepToken([usdso.address, ownerAddr, perPool]);
+    const balAfter = (await usdso.read.balanceOf([ownerAddr])) as bigint;
+    expect(balAfter).to.equal(balBefore + perPool);
+  });
+
+  it("withdrawFromPool reverts InvalidPool for non-registered pool", async function () {
+    const { arena, usdso } = await deploy();
+    const burn = "0x000000000000000000000000000000000000dEaD" as `0x${string}`;
+
+    let caught: unknown = undefined;
+    await arena.write
+      .withdrawFromPool([burn, usdso.address, 1n])
+      .catch((err: unknown) => { caught = err; });
+    expect(caught, "expected InvalidPool revert").to.not.be.undefined;
+    expect(String(caught)).to.satisfy((s: string) => s.includes("InvalidPool") || /0x[0-9a-f]{8}/i.test(s));
+  });
+
+  it("sweepToken reverts NotOwner for non-owner caller", async function () {
+    const { arena, usdso } = await deploy();
+    const [, other] = await hre.viem.getWalletClients();
+
+    let caught: unknown = undefined;
+    await arena.write
+      .sweepToken([usdso.address, other.account.address, 1n], { account: other.account })
+      .catch((err: unknown) => { caught = err; });
+    expect(caught, "expected NotOwner revert").to.not.be.undefined;
+    expect(String(caught)).to.satisfy((s: string) => s.includes("NotOwner") || /0x30cd7471/i.test(s));
+  });
 });

@@ -5,6 +5,7 @@ import "../interfaces/ISpotPool.sol";
 
 interface IERC20Pull {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
 }
 
 contract MockSpotPool {
@@ -48,6 +49,10 @@ contract MockSpotPool {
     function withdraw(address token, uint256 amount) external {
         require(_balances[msg.sender][token] >= amount, "MockSpotPool: insufficient");
         _balances[msg.sender][token] -= amount;
+        require(
+            IERC20Pull(token).transfer(msg.sender, amount),
+            "MockSpotPool: transfer failed"
+        );
     }
 
     function getWithdrawableBalance(address user, address token) external view returns (uint256) {

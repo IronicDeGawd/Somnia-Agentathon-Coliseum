@@ -1,3 +1,15 @@
+// ============================================================================
+// REDEPLOY REQUIRED BEFORE PRODUCTION
+// ----------------------------------------------------------------------------
+// The currently-live testnet Arena (deployments/somnia.json) was deployed
+// BEFORE the vault recovery patch. Its seeded pool USDso is permanently
+// stuck — Arena has no withdrawFromPool / sweepToken on that version.
+//
+// This script now includes those owner functions. The next time you deploy
+// to testnet you get the recovery path. Until then, treat any USDso you
+// fundPools into the old Arena as burned.
+// ============================================================================
+
 import hre from "hardhat";
 import { parseEther, formatEther } from "viem";
 import fs from "fs";

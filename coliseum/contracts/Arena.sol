@@ -76,6 +76,8 @@ contract Arena {
     event DuelStarted(uint256 indexed duelId, uint8 fighterA, uint8 fighterB, address pool, uint256 startBlock);
     event TurnAdvanced(uint256 indexed duelId, uint16 completedCallbacks, uint256 blockNumber);
     event DuelResolved(uint256 indexed duelId, uint8 indexed winnerId, uint256 fighterAValueUsdso, uint256 fighterBValueUsdso);
+    event VaultWithdrawn(address indexed pool, address indexed token, uint256 amount);
+    event TokenSwept(address indexed token, address indexed to, uint256 amount);
 
     enum DuelStatus { None, Pending, Active, Finalizing, Resolved }
 
@@ -519,5 +521,21 @@ contract Arena {
         }
 
         emit PoolsFunded(usdsoPerPool, usdsoPerPool * 3);
+    }
+
+    // Pull seeded vault funds out of a pool back into Arena's own ERC20 balance.
+    // Pair with sweepToken to send the recovered tokens to the owner.
+    function withdrawFromPool(address pool, address token, uint256 amount) external onlyOwner {
+        if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI) revert InvalidPool(pool);
+        if (amount == 0) revert ZeroAmount();
+        ISpotPool(pool).withdraw(token, amount);
+        emit VaultWithdrawn(pool, token, amount);
+    }
+
+    function sweepToken(address token, address to, uint256 amount) external onlyOwner {
+        if (amount == 0) revert ZeroAmount();
+        bool ok = IERC20Minimal(token).transfer(to, amount);
+        if (!ok) revert TransferFailed();
+        emit TokenSwept(token, to, amount);
     }
 }
