@@ -20,6 +20,7 @@ describe("Arena — fundPools", function () {
       poolSomi.address,
       owner.account.address,  // dummy platform — not exercised in fund tests
       1n,
+      [18, 18, 18],
     ], { value: parseEther("33") });
 
     return { arena, usdso, poolWeth, poolWbtc, poolSomi, registry, owner, other };

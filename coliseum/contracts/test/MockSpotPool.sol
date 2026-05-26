@@ -87,8 +87,31 @@ contract MockSpotPool {
         orders[orderId].cancelled = true;
     }
 
-    function getPoolParams() external pure returns (uint256, uint256, uint256) {
-        return (1e15, 1e15, 1e15);
+    // Stored params so tests can tune per-pool minQuantity/lotSize/tickSize behavior.
+    address private _baseToken;
+    address private _quoteToken;
+    uint256 private _tickSize = 1e15;
+    uint256 private _minQuantity = 0;          // default 0 so existing tests' tiny orders still go through
+    uint256 private _lotSize = 1;              // default 1 to disable lot alignment
+
+    function setPoolParams(address baseToken, address quoteToken, uint256 tickSize, uint256 minQuantity, uint256 lotSize) external {
+        _baseToken = baseToken;
+        _quoteToken = quoteToken;
+        _tickSize = tickSize;
+        _minQuantity = minQuantity;
+        _lotSize = lotSize;
+    }
+
+    function getPoolParams() external view returns (
+        address baseToken,
+        address quoteToken,
+        uint256 makerFeeBpsTimes1k,
+        uint256 takerFeeBpsTimes1k,
+        uint256 tickSize,
+        uint256 minQuantity,
+        uint256 lotSize
+    ) {
+        return (_baseToken, _quoteToken, 0, 0, _tickSize, _minQuantity, _lotSize);
     }
 
     function getMarkPrice() external view returns (uint256) {

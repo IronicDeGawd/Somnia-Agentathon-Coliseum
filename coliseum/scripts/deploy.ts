@@ -131,7 +131,10 @@ async function main() {
   writeManifest({ network, deployer, contracts: { FighterRegistry: { address: registry.address } }, external: addresses });
 
   // 2. Arena
-  console.log("Deploying Arena...");
+  // Per-pool base-token decimals (verified via scripts/inspect-pools.ts):
+  // WETH = 18, WBTC = 8, SOMI = 18. Local mocks all use 18.
+  const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
+  console.log(`Deploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)})`);
   const arena = await hre.viem.deployContract(
     "Arena",
     [
@@ -142,6 +145,7 @@ async function main() {
       addresses.poolSomi,
       addresses.platform,
       turnIntervalBlocks,
+      baseDecimals,
     ],
     { value: reactivityFund }
   );
@@ -171,7 +175,16 @@ async function main() {
   if (!IS_LOCAL) {
     const perPool = parseEther(process.env.USDSO_PER_POOL ?? "50");
     const total = perPool * 3n;
-    console.log(`\nFunding pools with ${formatEther(perPool)} USDso each (${formatEther(total)} total)...`);
+    // Per scripts/inspect-pools.ts (2026-05-26): min affordable orders are
+    // WETH ~$2.10, WBTC ~$7.69, SOMI ~$0.17. Each fighter gets perPool / 2 of vault
+    // capacity, so to enable WBTC trades the per-pool seed must be >= ~16 USDso.
+    const WBTC_MIN_PER_POOL = parseEther("16");
+    if (perPool < WBTC_MIN_PER_POOL) {
+      console.log(`\nWARNING: USDSO_PER_POOL=${formatEther(perPool)} is below ~16 USDso —`);
+      console.log(`  fighters will skip WBTC trades ("below minQuantity"). WETH + SOMI will still work.`);
+      console.log(`  Set USDSO_PER_POOL=20 (or higher) for full 3-market trading.\n`);
+    }
+    console.log(`Funding pools with ${formatEther(perPool)} USDso each (${formatEther(total)} total)...`);
     const usdsoContract = await hre.viem.getContractAt("MockERC20", addresses.usdso);
     const approveTx = await usdsoContract.write.approve([arena.address, total]);
     await publicClient.waitForTransactionReceipt({ hash: approveTx });

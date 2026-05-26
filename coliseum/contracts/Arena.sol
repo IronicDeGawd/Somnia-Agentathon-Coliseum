@@ -116,6 +116,17 @@ contract Arena {
     // poolAddress => duelId => fighterId => balance
     mapping(address => mapping(uint256 => mapping(uint8 => PoolBalance))) public fighterBalances;
 
+    /// @notice Per-pool ABI metadata cached at construction (decimals from constructor args,
+    ///         minQuantity/lotSize/tickSize fetched via getPoolParams). Used by
+    ///         _executeFighterAction to size FOK orders correctly.
+    struct PoolMeta {
+        uint8 baseDecimals;
+        uint256 minQuantity;
+        uint256 lotSize;
+        uint256 tickSize;
+    }
+    mapping(address => PoolMeta) public poolMeta;
+
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
@@ -128,7 +139,8 @@ contract Arena {
         address _poolWbtc,
         address _poolSomi,
         address _platform,
-        uint256 _turnIntervalBlocks
+        uint256 _turnIntervalBlocks,
+        uint8[3] memory _baseDecimals  // [WETH, WBTC, SOMI] — passed in to avoid querying baseToken.decimals() in constructor
     ) payable {
         if (msg.value < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
         registry = IFighterRegistry(_registry);
@@ -140,7 +152,34 @@ contract Arena {
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner = msg.sender;
 
+        // Cache pool metadata. Wrapped in try/catch so local hardhat (no real pool) still deploys.
+        _cachePoolMeta(_poolWeth, _baseDecimals[0]);
+        _cachePoolMeta(_poolWbtc, _baseDecimals[1]);
+        _cachePoolMeta(_poolSomi, _baseDecimals[2]);
+
         subscriptionId = _subscribeReactivity();
+    }
+
+    function _cachePoolMeta(address pool, uint8 baseDecimals) internal {
+        try ISpotPool(pool).getPoolParams() returns (
+            address, address, uint256, uint256,
+            uint256 tickSize, uint256 minQty, uint256 lotSize
+        ) {
+            poolMeta[pool] = PoolMeta({
+                baseDecimals: baseDecimals,
+                minQuantity: minQty,
+                lotSize: lotSize,
+                tickSize: tickSize
+            });
+        } catch {
+            // Fallback for local hardhat — let the mock or future setter populate it.
+            poolMeta[pool] = PoolMeta({
+                baseDecimals: baseDecimals,
+                minQuantity: 0,
+                lotSize: 1,
+                tickSize: 1
+            });
+        }
     }
 
     receive() external payable {}
@@ -359,6 +398,10 @@ contract Arena {
         uint256 price = levels[0].price;
         uint256 available = levels[0].quantity;
 
+        // Pool ABI metadata (decimals, minQuantity, lotSize, tickSize) — cached at construction.
+        PoolMeta memory meta = poolMeta[pool];
+        uint256 baseUnit = 10 ** uint256(meta.baseDecimals);
+
         PoolBalance storage bal = fighterBalances[pool][duelId][fighterId];
         uint256 desired;
         if (isBid) {
@@ -374,7 +417,8 @@ contract Arena {
                 emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "vault drained");
                 return (false, 0);
             }
-            desired = (effectiveQuote * 1e18) / price;
+            // base = quote * 10^baseDecimals / price (USDso has 18 decimals, price is in raw quote units)
+            desired = (effectiveQuote * baseUnit) / price;
         } else {
             if (bal.baseTokenAmount == 0) {
                 emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no base balance");
@@ -384,15 +428,31 @@ contract Arena {
         }
 
         uint256 quantity = desired < available ? desired : available;
+        // Align DOWN to lotSize (avoids "not a multiple of lot" rejects)
+        if (meta.lotSize > 0) {
+            quantity = (quantity / meta.lotSize) * meta.lotSize;
+        }
         if (quantity == 0) {
             emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "zero quantity");
             return (false, 0);
+        }
+        // Enforce pool minimum order size
+        if (quantity < meta.minQuantity) {
+            emit OrderRejected(pool, fighterId, duelId, isBid, price, quantity, 1, "below minQuantity");
+            return (false, 0);
+        }
+        // Align price to tickSize (round UP for bid so we still cross the ask; DOWN for ask)
+        if (meta.tickSize > 0) {
+            price = isBid
+                ? ((price + meta.tickSize - 1) / meta.tickSize) * meta.tickSize
+                : (price / meta.tickSize) * meta.tickSize;
         }
 
         // orderType 1 = FOK
         (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600);
         if (ok) {
-            uint256 quoteCost = (price * quantity) / 1e18;
+            // quote = price * quantity / 10^baseDecimals (price is in 18-decimal quote per base unit)
+            uint256 quoteCost = (price * quantity) / baseUnit;
             if (isBid) {
                 if (quoteCost > bal.quoteTokenAmount) quoteCost = bal.quoteTokenAmount;
                 bal.quoteTokenAmount -= quoteCost;
@@ -536,10 +596,11 @@ contract Arena {
         for (uint256 i = 0; i < 3; i++) {
             address pool = allPools[i];
             uint256 markPrice = _midMarkPrice(pool);
+            uint256 baseUnit = 10 ** uint256(poolMeta[pool].baseDecimals);
             PoolBalance memory balA = fighterBalances[pool][duelId][duel.fighterA];
             PoolBalance memory balB = fighterBalances[pool][duelId][duel.fighterB];
-            valueA += balA.quoteTokenAmount + (balA.baseTokenAmount * markPrice / 1e18);
-            valueB += balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / 1e18);
+            valueA += balA.quoteTokenAmount + (balA.baseTokenAmount * markPrice / baseUnit);
+            valueB += balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / baseUnit);
         }
 
         uint8 winner = valueA >= valueB ? duel.fighterA : duel.fighterB;

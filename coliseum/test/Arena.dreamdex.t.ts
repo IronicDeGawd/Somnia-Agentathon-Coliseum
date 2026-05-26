@@ -27,6 +27,7 @@ describe("Arena — dreamDEX placeOrder", function () {
       poolSomi.address,
       owner.account.address,  // dummy platform — not exercised in dreamdex tests
       1n,
+      [18, 18, 18],
     ], { value: parseEther("33") });
 
     const ownerAddr = owner.account.address;

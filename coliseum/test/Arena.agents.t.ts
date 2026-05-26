@@ -54,6 +54,7 @@ describe("Arena — Somnia Agents integration", function () {
       poolSomi.address,
       mockPlatform.address,
       1n,
+      [18, 18, 18],
     ], { value: parseEther("33") });
 
     // Fund arena with enough STT for agent deposits (floor 0.03 + topup 0.21 = 0.24; 33 already set via constructor)

@@ -45,6 +45,7 @@ async function deploy() {
     poolSomi.address,
     mockPlatform.address,
     1n,
+    [18, 18, 18],
   ], { value: parseEther("33") });
 
   // Fund arena with enough STT for 30 requests (each = 0.03 + 0.07*3 = 0.24)
