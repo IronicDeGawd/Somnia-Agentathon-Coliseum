@@ -78,6 +78,8 @@ contract Arena {
     event DuelResolved(uint256 indexed duelId, uint8 indexed winnerId, uint256 fighterAValueUsdso, uint256 fighterBValueUsdso);
     event VaultWithdrawn(address indexed pool, address indexed token, uint256 amount);
     event TokenSwept(address indexed token, address indexed to, uint256 amount);
+    event Resubscribed(uint256 indexed newSubscriptionId);
+    event NativeWithdrawn(address indexed to, uint256 amount);
 
     enum DuelStatus { None, Pending, Active, Finalizing, Resolved }
 
@@ -138,6 +140,12 @@ contract Arena {
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner = msg.sender;
 
+        subscriptionId = _subscribeReactivity();
+    }
+
+    receive() external payable {}
+
+    function _subscribeReactivity() internal returns (uint256 newId) {
         ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
             eventTopics: [
                 keccak256("BlockTick(uint64)"),
@@ -163,14 +171,31 @@ contract Arena {
         );
         (bool ok, bytes memory ret) = SOMNIA_REACTIVITY_PRECOMPILE.call(callData);
         if (ok && ret.length >= 32) {
-            subscriptionId = abi.decode(ret, (uint256));
+            newId = abi.decode(ret, (uint256));
         } else {
-            subscriptionId = 0;
+            newId = 0;
             emit SubscriptionSkipped("precompile unavailable");
         }
     }
 
-    receive() external payable {}
+    /// @notice Re-subscribe to BlockTick after the precompile auto-removed the prior subscription
+    ///         (happens when this contract's balance drops below SUBSCRIPTION_OWNER_MINIMUM_BALANCE).
+    ///         Caller must ensure this contract holds >= 32 STT before calling — top up via `receive()`.
+    function resubscribe() external onlyOwner returns (uint256 newId) {
+        if (address(this).balance < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
+        newId = _subscribeReactivity();
+        subscriptionId = newId;
+        emit Resubscribed(newId);
+    }
+
+    /// @notice Sweep native STT out of this contract back to the owner. Pair with topup flows
+    ///         when retiring an Arena instance.
+    function withdrawNative(address to, uint256 amount) external onlyOwner {
+        if (amount == 0) revert ZeroAmount();
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+        emit NativeWithdrawn(to, amount);
+    }
 
     function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
         if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;

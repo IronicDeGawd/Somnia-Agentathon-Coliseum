@@ -89,12 +89,12 @@ async function main() {
   console.log("STT balance:", formatUnits(sttBal, 18), "STT");
   console.log("USDso balance before:", formatUnits(usdso0, 18), "USDso\n");
 
-  // --- Sell 50 STT → USDso via IOC ---
+  // --- Sell N STT → USDso via IOC ---
   // isBid=false = sell base (SOMI/STT), receive quote (USDso)
-  // Best bid (via WS): ~0.1727 USDso/SOMI. Floor price 0.16 crosses safely.
+  // Best bid (via WS): ~0.1727 USDso/SOMI. Floor price 0.15 crosses safely.
   // IOC fills what it can at or above this price, cancels the rest.
-  // quantity = msg.value = 50 STT in raw wei
-  const sellAmount  = parseEther("50");       // 50 STT
+  // quantity = msg.value in raw wei. Override with SELL_AMOUNT env var.
+  const sellAmount  = parseEther(process.env.SELL_AMOUNT ?? "50");
   const limitPrice  = parseEther("0.15");     // floor — well below best bid
   const quantity    = sellAmount;             // same as msg.value for native pool
   // CRITICAL: testnet rejects expireTimestampNs=0 despite docs claiming "0 = no expiry"

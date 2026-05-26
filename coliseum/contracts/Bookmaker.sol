@@ -53,6 +53,8 @@ contract Bookmaker is IBookmaker {
     event OddsUpdated(uint256 indexed duelId, uint16 oddsA, uint16 oddsB);
     event BetsSettled(uint256 indexed duelId, uint8 indexed winnerId, uint256 totalPayout, uint256 rake);
     event RakeWithdrawn(uint256 indexed duelId, address indexed to, uint256 amount);
+    event Resubscribed(uint256 indexed newSubscriptionId);
+    event NativeWithdrawn(address indexed to, uint256 amount);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -66,6 +68,12 @@ contract Bookmaker is IBookmaker {
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner = msg.sender;
 
+        subscriptionId = _subscribeReactivity();
+    }
+
+    receive() external payable {}
+
+    function _subscribeReactivity() internal returns (uint256 newId) {
         ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
             eventTopics: [
                 keccak256("BlockTick(uint64)"),
@@ -91,14 +99,28 @@ contract Bookmaker is IBookmaker {
         );
         (bool ok, bytes memory ret) = SOMNIA_REACTIVITY_PRECOMPILE.call(callData);
         if (ok && ret.length >= 32) {
-            subscriptionId = abi.decode(ret, (uint256));
+            newId = abi.decode(ret, (uint256));
         } else {
-            subscriptionId = 0;
+            newId = 0;
             emit SubscriptionSkipped("precompile unavailable");
         }
     }
 
-    receive() external payable {}
+    function resubscribe() external returns (uint256 newId) {
+        if (msg.sender != owner) revert NotOwner();
+        if (address(this).balance < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
+        newId = _subscribeReactivity();
+        subscriptionId = newId;
+        emit Resubscribed(newId);
+    }
+
+    function withdrawNative(address to, uint256 amount) external {
+        if (msg.sender != owner) revert NotOwner();
+        if (amount == 0) revert ZeroStake();
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+        emit NativeWithdrawn(to, amount);
+    }
 
     function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
         if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;

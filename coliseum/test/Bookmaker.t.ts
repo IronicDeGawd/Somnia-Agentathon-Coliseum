@@ -258,4 +258,47 @@ describe("Bookmaker", function () {
       expect(String(caught)).to.include("NothingToWithdraw");
     });
   });
+
+  describe("resubscribe + withdrawNative", function () {
+    it("withdrawNative transfers STT to recipient", async function () {
+      const { bookmaker, rakeRecipient } = await deploy();
+      const pub = await hre.viem.getPublicClient();
+
+      const before = await pub.getBalance({ address: rakeRecipient.account.address });
+      await bookmaker.write.withdrawNative([rakeRecipient.account.address, parseEther("5")]);
+      const after = await pub.getBalance({ address: rakeRecipient.account.address });
+      expect(after - before).to.equal(parseEther("5"));
+    });
+
+    it("withdrawNative reverts NotOwner for non-owner", async function () {
+      const { bookmaker, bettor1 } = await deploy();
+      let caught: unknown;
+      await bookmaker.write
+        .withdrawNative([bettor1.account.address, parseEther("1")], { account: bettor1.account })
+        .catch((e: unknown) => { caught = e; });
+      expect(caught, "expected NotOwner revert").to.not.be.undefined;
+      expect(String(caught)).to.satisfy((s: string) => s.includes("NotOwner") || /0x30cd7471/i.test(s));
+    });
+
+    it("resubscribe reverts ReactivityUnderfunded when balance < 32 STT", async function () {
+      const { bookmaker } = await deploy();
+      const [owner] = await hre.viem.getWalletClients();
+      await bookmaker.write.withdrawNative([owner.account.address, parseEther("33")]);
+
+      let caught: unknown;
+      await bookmaker.write.resubscribe().catch((e: unknown) => { caught = e; });
+      expect(caught, "expected ReactivityUnderfunded revert").to.not.be.undefined;
+      expect(String(caught)).to.include("ReactivityUnderfunded");
+    });
+
+    it("resubscribe succeeds when funded (precompile missing locally → newId 0)", async function () {
+      const { bookmaker } = await deploy();
+      const pub = await hre.viem.getPublicClient();
+      const tx = await bookmaker.write.resubscribe();
+      const receipt = await pub.waitForTransactionReceipt({ hash: tx });
+      expect(receipt.status).to.equal("success");
+      const subId = (await bookmaker.read.subscriptionId()) as bigint;
+      expect(subId).to.equal(0n);
+    });
+  });
 });

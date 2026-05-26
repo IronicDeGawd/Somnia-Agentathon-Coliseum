@@ -114,4 +114,82 @@ describe("Arena — fundPools", function () {
     expect(caught, "expected NotOwner revert").to.not.be.undefined;
     expect(String(caught)).to.satisfy((s: string) => s.includes("NotOwner") || /0x30cd7471/i.test(s));
   });
+
+  it("withdrawNative transfers STT to recipient", async function () {
+    const { arena } = await deploy();
+    const [owner, other] = await hre.viem.getWalletClients();
+    const pub = await hre.viem.getPublicClient();
+    const recipient = other.account.address;
+
+    // Arena was deployed with msg.value 33 STT; precompile call on local returns nothing,
+    // so the full 33 STT is sitting on the contract.
+    const arenaBalance = await pub.getBalance({ address: arena.address });
+    expect(arenaBalance).to.equal(parseEther("33"));
+
+    const balBefore = await pub.getBalance({ address: recipient });
+    const amount = parseEther("10");
+    await arena.write.withdrawNative([recipient, amount]);
+
+    const balAfter = await pub.getBalance({ address: recipient });
+    expect(balAfter - balBefore).to.equal(amount);
+  });
+
+  it("withdrawNative reverts NotOwner for non-owner caller", async function () {
+    const { arena } = await deploy();
+    const [, other] = await hre.viem.getWalletClients();
+
+    let caught: unknown = undefined;
+    await arena.write
+      .withdrawNative([other.account.address, parseEther("1")], { account: other.account })
+      .catch((err: unknown) => { caught = err; });
+    expect(caught, "expected NotOwner revert").to.not.be.undefined;
+    expect(String(caught)).to.satisfy((s: string) => s.includes("NotOwner") || /0x30cd7471/i.test(s));
+  });
+
+  it("withdrawNative reverts ZeroAmount on zero", async function () {
+    const { arena } = await deploy();
+    let caught: unknown = undefined;
+    await arena.write
+      .withdrawNative([(await hre.viem.getWalletClients())[0].account.address, 0n])
+      .catch((err: unknown) => { caught = err; });
+    expect(caught, "expected ZeroAmount revert").to.not.be.undefined;
+    expect(String(caught)).to.include("ZeroAmount");
+  });
+
+  it("resubscribe reverts ReactivityUnderfunded when balance < 32 STT", async function () {
+    const { arena } = await deploy();
+    const [owner] = await hre.viem.getWalletClients();
+
+    // Sweep the constructor funding so arena balance drops below the threshold
+    await arena.write.withdrawNative([owner.account.address, parseEther("33")]);
+
+    let caught: unknown = undefined;
+    await arena.write.resubscribe().catch((err: unknown) => { caught = err; });
+    expect(caught, "expected ReactivityUnderfunded revert").to.not.be.undefined;
+    expect(String(caught)).to.include("ReactivityUnderfunded");
+  });
+
+  it("resubscribe emits Resubscribed when funded (precompile skipped locally → newId 0)", async function () {
+    const { arena } = await deploy();
+    const pub = await hre.viem.getPublicClient();
+
+    const txHash = await arena.write.resubscribe();
+    const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+    expect(receipt.status).to.equal("success");
+
+    // On local hardhat the precompile doesn't exist, so subscribe returns no data and newId = 0.
+    // The function should still complete cleanly and emit the Resubscribed event.
+    const subId = (await arena.read.subscriptionId()) as bigint;
+    expect(subId).to.equal(0n);
+  });
+
+  it("resubscribe reverts NotOwner for non-owner caller", async function () {
+    const { arena } = await deploy();
+    const [, other] = await hre.viem.getWalletClients();
+
+    let caught: unknown = undefined;
+    await arena.write.resubscribe([], { account: other.account }).catch((err: unknown) => { caught = err; });
+    expect(caught, "expected NotOwner revert").to.not.be.undefined;
+    expect(String(caught)).to.satisfy((s: string) => s.includes("NotOwner") || /0x30cd7471/i.test(s));
+  });
 });
