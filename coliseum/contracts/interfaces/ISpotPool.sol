@@ -29,9 +29,14 @@ interface ISpotPool {
 
     function cancelOrder(uint128 orderId) external;
 
-    function getPoolParams() external view returns (uint256 tickSize, uint256 minQuantity, uint256 lotSize);
+    // Real pool returns 7 fields per dreamdex-contracts.md.
+    // We don't use this in Arena; declaration kept for completeness — DO NOT call without
+    // updating the return tuple to match the real ABI.
+    // function getPoolParams() external view returns (...);
 
-    function getMarkPrice() external view returns (uint256);
+    // NOTE: getMarkPrice() does NOT exist on the real dreamDEX testnet pool.
+    // Use getBookLevels(true,1) + getBookLevels(false,1) and compute midpoint.
+    // function getMarkPrice() external view returns (uint256);
 
     function getBookLevels(bool isBid, uint64 numLevels) external view returns (OrderBookLevel[] memory);
 }

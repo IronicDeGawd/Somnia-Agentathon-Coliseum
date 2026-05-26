@@ -366,7 +366,15 @@ contract Arena {
                 emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
             }
-            desired = (bal.quoteTokenAmount * 1e18) / price;
+            // Cap virtual budget by what Arena's REAL vault on this pool can afford so the
+            // FOK can settle. Vault is shared between two fighters, so split half/half.
+            uint256 vaultQuote = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO) / 2;
+            uint256 effectiveQuote = bal.quoteTokenAmount < vaultQuote ? bal.quoteTokenAmount : vaultQuote;
+            if (effectiveQuote == 0) {
+                emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "vault drained");
+                return (false, 0);
+            }
+            desired = (effectiveQuote * 1e18) / price;
         } else {
             if (bal.baseTokenAmount == 0) {
                 emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no base balance");
@@ -498,8 +506,14 @@ contract Arena {
             initialUsdsoPerFighter: initialUsdsoPerFighter
         });
         activeDuelId = duelId;
-        fighterBalances[pool][duelId][fighterA].quoteTokenAmount = initialUsdsoPerFighter;
-        fighterBalances[pool][duelId][fighterB].quoteTokenAmount = initialUsdsoPerFighter;
+
+        // Seed virtual quote balance on ALL three pools so the LLM can pick any of the 6 actions.
+        // Per-pool budget = initialUsdsoPerFighter so a fighter can spend up to that on each market.
+        address[3] memory allPools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        for (uint256 i = 0; i < 3; i++) {
+            fighterBalances[allPools[i]][duelId][fighterA].quoteTokenAmount = initialUsdsoPerFighter;
+            fighterBalances[allPools[i]][duelId][fighterB].quoteTokenAmount = initialUsdsoPerFighter;
+        }
         emit DuelStarted(duelId, fighterA, fighterB, pool, block.number);
     }
 
@@ -514,19 +528,41 @@ contract Arena {
 
         duel.status = DuelStatus.Finalizing;
 
-        address pool = duel.pool;
-        uint256 markPrice = ISpotPool(pool).getMarkPrice();
-
-        PoolBalance memory balA = fighterBalances[pool][duelId][duel.fighterA];
-        PoolBalance memory balB = fighterBalances[pool][duelId][duel.fighterB];
-
-        uint256 valueA = balA.quoteTokenAmount + (balA.baseTokenAmount * markPrice / 1e18);
-        uint256 valueB = balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / 1e18);
+        // Sum each fighter's USDso-equivalent across ALL pools they may have traded on.
+        // Mark price for each pool = midpoint of best bid and best ask via getBookLevels.
+        address[3] memory allPools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        uint256 valueA = 0;
+        uint256 valueB = 0;
+        for (uint256 i = 0; i < 3; i++) {
+            address pool = allPools[i];
+            uint256 markPrice = _midMarkPrice(pool);
+            PoolBalance memory balA = fighterBalances[pool][duelId][duel.fighterA];
+            PoolBalance memory balB = fighterBalances[pool][duelId][duel.fighterB];
+            valueA += balA.quoteTokenAmount + (balA.baseTokenAmount * markPrice / 1e18);
+            valueB += balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / 1e18);
+        }
 
         uint8 winner = valueA >= valueB ? duel.fighterA : duel.fighterB;
         duel.status = DuelStatus.Resolved;
         activeDuelId = 0;
         emit DuelResolved(duelId, winner, valueA, valueB);
+    }
+
+    /// @dev Returns (bestBid + bestAsk) / 2 as the mark price. Falls back to whichever
+    ///      side is populated, or 0 if both sides are empty. Used by finalizeDuel.
+    function _midMarkPrice(address pool) internal view returns (uint256) {
+        uint256 bid = 0;
+        uint256 ask = 0;
+        try ISpotPool(pool).getBookLevels(true, 1) returns (OrderBookLevel[] memory bids) {
+            if (bids.length > 0) bid = bids[0].price;
+        } catch {}
+        try ISpotPool(pool).getBookLevels(false, 1) returns (OrderBookLevel[] memory asks) {
+            if (asks.length > 0) ask = asks[0].price;
+        } catch {}
+        if (bid > 0 && ask > 0) return (bid + ask) / 2;
+        if (bid > 0) return bid;
+        if (ask > 0) return ask;
+        return 0;
     }
 
     function fundPools(uint256 usdsoPerPool) external onlyOwner {
