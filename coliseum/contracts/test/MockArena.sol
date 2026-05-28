@@ -17,12 +17,17 @@ contract MockArena {
         uint8   status;
         uint256 initialUsdsoPerFighter;
         bool    fundsRecovered;
+        uint8   winnerSlot;
     }
 
     mapping(uint256 => DuelData) private _duels;
 
     function setDuelStatus(uint256 duelId, uint8 status) external {
         _duels[duelId].status = status;
+    }
+
+    function setWinnerSlot(uint256 duelId, uint8 slot) external {
+        _duels[duelId].winnerSlot = slot;
     }
 
     function setActiveDuelId(uint256 duelId) external {
@@ -40,7 +45,8 @@ contract MockArena {
         uint8   poolMask,
         uint8   status,
         uint256 initialUsdsoPerFighter,
-        bool    fundsRecovered
+        bool    fundsRecovered,
+        uint8   winnerSlot
     ) {
         DuelData storage d = _duels[duelId];
         return (
@@ -54,7 +60,8 @@ contract MockArena {
             d.poolMask,
             d.status,
             d.initialUsdsoPerFighter,
-            d.fundsRecovered
+            d.fundsRecovered,
+            d.winnerSlot
         );
     }
 }

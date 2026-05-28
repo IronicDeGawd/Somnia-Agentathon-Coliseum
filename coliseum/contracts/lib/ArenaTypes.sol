@@ -47,6 +47,7 @@ library ArenaTypes {
         uint256     initialUsdsoPerFighter;
         uint8[2]    lastAction;       // last FighterAction per fighter (0=Hold initially)
         bool        fundsRecovered;   // true once creator has called recoverFunds
+        uint8       winnerSlot;       // 0=fighterA slot won, 1=fighterB slot won, 255=unset
     }
 
     struct PoolBalance {
@@ -144,4 +145,10 @@ library ArenaTypes {
     event SubscriptionSkipped(string reason);
     event FeesWithdrawn(address indexed to, uint256 amount);
     event DuelFundsRecovered(uint256 indexed duelId, address indexed creator, uint256 amount);
+    /// @notice Emitted when an active pool has zero mark price at finalize time.
+    ///         Indicates the duel result for that asset is unreliable (no liquidity).
+    event DuelDegenerate(uint256 indexed duelId, address indexed pool, string reason);
+    /// @notice Mark price snapshot recorded at the end of each turn. Used by
+    ///         emergencyFinalize to prevent owner-timed price manipulation.
+    event MarkPriceSnapshot(uint256 indexed duelId, address indexed pool, uint256 markPrice, uint16 turnNum);
 }

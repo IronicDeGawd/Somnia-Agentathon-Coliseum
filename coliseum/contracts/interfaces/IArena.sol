@@ -5,9 +5,10 @@ interface IArena {
     function activeDuelId() external view returns (uint256);
     function nextDuelId()   external view returns (uint256);
 
-    // Field order matches Arena.Duel struct:
+    // Field order matches Arena.Duel struct (12 fields, lastAction array omitted from getter):
     //   fighterA, fighterB, creator, startBlock, lastTurnBlock,
-    //   completedCallbacks, turns, poolMask, status, initialUsdsoPerFighter, fundsRecovered
+    //   completedCallbacks, turns, poolMask, status, initialUsdsoPerFighter,
+    //   fundsRecovered, winnerSlot
     function duels(uint256 duelId) external view returns (
         uint8   fighterA,
         uint8   fighterB,
@@ -19,7 +20,8 @@ interface IArena {
         uint8   poolMask,
         uint8   status,
         uint256 initialUsdsoPerFighter,
-        bool    fundsRecovered
+        bool    fundsRecovered,
+        uint8   winnerSlot
     );
 
     function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns) external returns (uint256 duelId);

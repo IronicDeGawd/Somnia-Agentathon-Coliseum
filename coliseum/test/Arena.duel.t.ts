@@ -1,8 +1,11 @@
 import { expect } from "chai";
 import hre from "hardhat";
-import { parseEther, getAddress, maxUint256 } from "viem";
+import { parseEther, getAddress, maxUint256, keccak256, toBytes } from "viem";
 
 const HANDLE_SELECTOR = "0xc4e34fdd" as `0x${string}`;
+
+// keccak256("DuelResolved(uint256,uint8,uint256,uint256)")
+const DUEL_RESOLVED_SIG = keccak256(toBytes("DuelResolved(uint256,uint8,uint256,uint256)"));
 
 // DuelStatus: Active=1, Finalizing=2, Resolved=3 (None removed, Pending removed)
 const DuelStatus = {
@@ -127,7 +130,7 @@ describe("Arena — Duel lifecycle", function () {
     const finalizeReceipt = await publicClient.getTransactionReceipt({ hash: finalizeTx });
     expect(finalizeReceipt.status).to.equal("success");
 
-    const resolvedLog = finalizeReceipt.logs.find((l) => l.topics.length === 3);
+    const resolvedLog = finalizeReceipt.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
     expect(resolvedLog, "expected DuelResolved log").to.not.be.undefined;
 
     const winnerId = parseInt(resolvedLog!.topics[2]!, 16);
@@ -296,7 +299,7 @@ describe("Arena — Duel lifecycle", function () {
     const tx = await arena.write.finalizeDuel([duelId]);
     const receipt = await publicClient.getTransactionReceipt({ hash: tx });
 
-    const resolvedLog = receipt.logs.find((l) => l.topics.length === 3);
+    const resolvedLog = receipt.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
     expect(resolvedLog).to.not.be.undefined;
     const winnerId = parseInt(resolvedLog!.topics[2]!, 16);
     expect(winnerId).to.equal(FIGHTER_A);

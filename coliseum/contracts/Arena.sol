@@ -57,6 +57,12 @@ contract Arena is ArenaVault {
 
     mapping(uint256 => ArenaTypes.PendingTurn) public pendingTurns;  // requestId → turn
 
+    /// @notice Mark price snapshot per duel per pool, written at the start of each turn.
+    ///         emergencyFinalize uses this instead of live prices to prevent owner-timed
+    ///         price manipulation. Normal finalizeDuel still uses live prices (safe because
+    ///         all callbacks are complete — no further trading can move the book).
+    mapping(uint256 => mapping(address => uint256)) public duelMarkSnapshots;
+
     // ─── Constructor ─────────────────────────────────────────────────────────
 
     constructor(
@@ -110,9 +116,28 @@ contract Arena is ArenaVault {
         if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
         if (duel.completedCallbacks >= duel.turns * 2) return;
         duel.lastTurnBlock = block.number;
+
+        // Snapshot mark prices on every active pool BEFORE any LLM requests.
+        // emergencyFinalize will use these snapshots instead of live prices.
+        _snapshotMarkPrices(activeDuelId, duel);
+
         _requestFighterMove(activeDuelId, duel.fighterA);
         _requestFighterMove(activeDuelId, duel.fighterB);
         emit ArenaTypes.TurnAdvanced(activeDuelId, duel.completedCallbacks, block.number);
+    }
+
+    function _snapshotMarkPrices(uint256 duelId, ArenaTypes.Duel storage duel) internal {
+        address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
+        uint16 turnNum = duel.completedCallbacks / 2 + 1;
+        for (uint256 i = 0; i < 3; i++) {
+            if (duel.poolMask & bits[i] == 0) continue;
+            uint256 mp = ArenaUtils.midMarkPrice(pools[i]);
+            if (mp > 0) {
+                duelMarkSnapshots[duelId][pools[i]] = mp;
+                emit ArenaTypes.MarkPriceSnapshot(duelId, pools[i], mp, turnNum);
+            }
+        }
     }
 
     // ─── Duel lifecycle ───────────────────────────────────────────────────────
@@ -171,7 +196,8 @@ contract Arena is ArenaVault {
             status:                  ArenaTypes.DuelStatus.Active,
             initialUsdsoPerFighter:  initialUsdsoPerFighter,
             lastAction:              [uint8(0), uint8(0)],
-            fundsRecovered:          false
+            fundsRecovered:          false,
+            winnerSlot:              type(uint8).max  // 255 = unset until resolved
         });
         activeDuelId = duelId;
 
@@ -188,25 +214,27 @@ contract Arena is ArenaVault {
     }
 
     /// @notice Finalize a completed duel. Anyone can call once all callbacks are in.
+    ///         Uses live mark prices — safe because all turns are done and any further
+    ///         book manipulation can't change which fighter holds which base tokens.
     function finalizeDuel(uint256 duelId) external {
         ArenaTypes.Duel storage duel = duels[duelId];
         if (duel.status != ArenaTypes.DuelStatus.Active) revert ArenaTypes.DuelNotActive();
         if (duel.completedCallbacks < duel.turns * 2) revert ArenaTypes.DuelNotReadyToFinalize();
-        _resolveDuel(duelId, duel);
+        _resolveDuel(duelId, duel, false);
     }
 
-    /// @notice Safety valve: owner can force-resolve a duel that has been stuck for
-    ///         EMERGENCY_FINALIZE_BLOCKS without a turn advancing. Protects depositors
-    ///         from funds being locked indefinitely if the LLM platform goes silent.
+    /// @notice Safety valve: owner can force-resolve a duel stuck for EMERGENCY_FINALIZE_BLOCKS
+    ///         without a turn advancing. Uses snapshot mark prices (recorded each turn) instead
+    ///         of live prices, so the owner can't time the call to manipulate the outcome.
     function emergencyFinalize(uint256 duelId) external onlyOwner {
         ArenaTypes.Duel storage duel = duels[duelId];
         if (duel.status != ArenaTypes.DuelStatus.Active) revert ArenaTypes.DuelNotActive();
         if (block.number < duel.lastTurnBlock + EMERGENCY_FINALIZE_BLOCKS)
             revert ArenaTypes.DuelNotReadyToFinalize();
-        _resolveDuel(duelId, duel);
+        _resolveDuel(duelId, duel, true);
     }
 
-    function _resolveDuel(uint256 duelId, ArenaTypes.Duel storage duel) internal {
+    function _resolveDuel(uint256 duelId, ArenaTypes.Duel storage duel, bool useSnapshot) internal {
         duel.status = ArenaTypes.DuelStatus.Finalizing;
 
         address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
@@ -217,7 +245,18 @@ contract Arena is ArenaVault {
         for (uint256 i = 0; i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
             address pool = pools[i];
-            uint256 markPrice = ArenaUtils.midMarkPrice(pool);
+            uint256 markPrice = useSnapshot
+                ? duelMarkSnapshots[duelId][pool]
+                : ArenaUtils.midMarkPrice(pool);
+
+            // Zero mark price means no liquidity. Emit a clear warning so off-chain
+            // observers know the result for this asset is unreliable. We still proceed
+            // (base tokens contribute 0 to portfolio value) so the duel can resolve and
+            // depositors can recoverFunds — locking the duel forever would be worse.
+            if (markPrice == 0) {
+                emit ArenaTypes.DuelDegenerate(duelId, pool, "zero mark price at finalize");
+            }
+
             uint256 baseUnit  = 10 ** uint256(poolMeta[pool].baseDecimals);
             ArenaTypes.PoolBalance memory balA = fighterBalances[pool][duelId][duel.fighterA];
             ArenaTypes.PoolBalance memory balB = fighterBalances[pool][duelId][duel.fighterB];
@@ -225,10 +264,13 @@ contract Arena is ArenaVault {
             valueB += balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / baseUnit);
         }
 
-        uint8 winner = valueA >= valueB ? duel.fighterA : duel.fighterB;
+        // Store both the slot (0/1) and emit the registry fighter id in the event.
+        uint8 slot = valueA >= valueB ? 0 : 1;
+        uint8 winnerFighterId = slot == 0 ? duel.fighterA : duel.fighterB;
+        duel.winnerSlot = slot;
         duel.status = ArenaTypes.DuelStatus.Resolved;
         activeDuelId = 0;
-        emit ArenaTypes.DuelResolved(duelId, winner, valueA, valueB);
+        emit ArenaTypes.DuelResolved(duelId, winnerFighterId, valueA, valueB);
     }
 
     /// @notice Duel creator withdraws their USDso back after the duel resolves.
