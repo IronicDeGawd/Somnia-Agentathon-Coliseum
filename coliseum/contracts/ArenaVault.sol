@@ -155,9 +155,16 @@ abstract contract ArenaVault {
 
     // ─── Platform fees ────────────────────────────────────────────────────────
 
-    /// @notice Withdraw accumulated platform fees to a recipient.
+    /// @notice Withdraw accumulated platform fees to a recipient. Caps the transfer
+    ///         at the contract's actual USDso balance — `accruedFees` is an
+    ///         accounting counter that can drift slightly above the real balance
+    ///         due to rounding in fighter-balance math when pots get traded into
+    ///         base tokens that don't round-trip cleanly back to quote.
     function withdrawFees(address to) external onlyOwner {
         uint256 amount = accruedFees;
+        if (amount == 0) revert ArenaTypes.ZeroAmount();
+        uint256 bal = IERC20Minimal(USDSO).balanceOf(address(this));
+        if (bal < amount) amount = bal;
         if (amount == 0) revert ArenaTypes.ZeroAmount();
         accruedFees = 0;
         bool ok = IERC20Minimal(USDSO).transfer(to, amount);
