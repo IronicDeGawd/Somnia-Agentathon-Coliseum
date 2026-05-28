@@ -92,6 +92,7 @@ contract Arena {
         DuelStatus  status;
         address     pool;
         uint256     initialUsdsoPerFighter;
+        uint8[2]    lastAction;  // last FighterAction taken per fighter (0=Hold initially)
     }
 
     uint16 public constant TURNS_PER_DUEL = 15;
@@ -298,34 +299,62 @@ contract Arena {
         }
     }
 
-    function _buildMarketSummary(uint256 duelId) internal pure returns (string memory) {
-        // Phase 5 will enrich this with live price/volume data
-        bytes memory buf = new bytes(32);
-        uint256 tmp = duelId;
+    function _uint256ToString(uint256 v) internal pure returns (string memory) {
+        if (v == 0) return "0";
+        bytes memory buf = new bytes(78);
         uint256 len = 0;
-        if (tmp == 0) {
-            buf[0] = "0";
-            len = 1;
-        } else {
-            while (tmp > 0) {
-                buf[len++] = bytes1(uint8(48 + (tmp % 10)));
-                tmp /= 10;
-            }
-            // reverse
-            for (uint256 i = 0; i < len / 2; i++) {
-                bytes1 t = buf[i];
-                buf[i] = buf[len - 1 - i];
-                buf[len - 1 - i] = t;
-            }
-        }
-        bytes memory numBytes = new bytes(len);
-        for (uint256 i = 0; i < len; i++) numBytes[i] = buf[i];
-        return string.concat("duel ", string(numBytes), " active");
+        uint256 tmp = v;
+        while (tmp > 0) { buf[len++] = bytes1(uint8(48 + (tmp % 10))); tmp /= 10; }
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) out[i] = buf[len - 1 - i];
+        return string(out);
+    }
+
+    function _actionName(uint8 a) internal pure returns (string memory) {
+        if (a == 1) return "BuyWBTC";
+        if (a == 2) return "SellWBTC";
+        if (a == 3) return "BuyWETH";
+        if (a == 4) return "SellWETH";
+        if (a == 5) return "BuySOMI";
+        if (a == 6) return "SellSOMI";
+        return "Hold";
+    }
+
+    function _vaultLine(string memory label, address pool, uint256 duelId, uint8 fighterId) internal view returns (string memory) {
+        PoolBalance memory bal = fighterBalances[pool][duelId][fighterId];
+        PoolMeta memory meta = poolMeta[pool];
+        uint256 baseUnit = 10 ** meta.baseDecimals;
+        // quote (USDso 18-dec) → display as integer USDso
+        uint256 usdso = bal.quoteTokenAmount / 1e18;
+        // base units → display with up to 4 decimal places
+        uint256 baseWhole = bal.baseTokenAmount / baseUnit;
+        uint256 baseFrac = (bal.baseTokenAmount % baseUnit) * 10000 / baseUnit;
+        string memory canTrade = (bal.quoteTokenAmount >= (meta.minQuantity * _midMarkPrice(pool)) / baseUnit) ? "" : " [skip-no-funds]";
+        return string.concat(
+            label, ": ", _uint256ToString(usdso), " USDso / ",
+            _uint256ToString(baseWhole), ".", _uint256ToString(baseFrac), " base",
+            canTrade
+        );
+    }
+
+    function _buildMarketSummary(uint256 duelId, uint8 fighterId) internal view returns (string memory) {
+        Duel storage duel = duels[duelId];
+        uint16 turnNum = duel.completedCallbacks / 2 + 1;
+        string memory lastAct = _actionName(duel.lastAction[fighterId]);
+        return string.concat(
+            "duel ", _uint256ToString(duelId),
+            " turn ", _uint256ToString(turnNum), "/", _uint256ToString(TURNS_PER_DUEL),
+            ". last action: ", lastAct,
+            ". ", _vaultLine("WETH", POOL_WETH, duelId, fighterId),
+            ". ", _vaultLine("WBTC", POOL_WBTC, duelId, fighterId),
+            ". ", _vaultLine("SOMI", POOL_SOMI, duelId, fighterId),
+            ". Pick 0=Hold 1=BuyWBTC 2=SellWBTC 3=BuyWETH 4=SellWETH 5=BuySOMI 6=SellSOMI."
+        );
     }
 
     function _requestFighterMove(uint256 duelId, uint8 fighterId) internal returns (uint256 requestId) {
         IFighterRegistry.Fighter memory f = registry.getFighter(fighterId);
-        string memory marketSummary = _buildMarketSummary(duelId);
+        string memory marketSummary = _buildMarketSummary(duelId, fighterId);
         bytes memory payload = abi.encodeWithSelector(
             ILLMInferenceAgent.inferNumber.selector,
             marketSummary,
@@ -507,6 +536,7 @@ contract Arena {
             emit FighterMoveFailed(pt.duelId, pt.fighterId, "exec failed");
             return;
         }
+        duels[pt.duelId].lastAction[pt.fighterId] = uint8(action);
         emit FighterMove(pt.duelId, pt.fighterId, action, orderId);
     }
 
@@ -563,7 +593,8 @@ contract Arena {
             completedCallbacks: 0,
             status: DuelStatus.Active,
             pool: pool,
-            initialUsdsoPerFighter: initialUsdsoPerFighter
+            initialUsdsoPerFighter: initialUsdsoPerFighter,
+            lastAction: [uint8(0), uint8(0)]
         });
         activeDuelId = duelId;
 
