@@ -46,6 +46,7 @@ library ArenaTypes {
         DuelStatus  status;
         uint256     initialUsdsoPerFighter;
         uint8[2]    lastAction;       // last FighterAction per fighter (0=Hold initially)
+        bool        fundsRecovered;   // true once creator has called recoverFunds
     }
 
     struct PoolBalance {
@@ -91,6 +92,8 @@ library ArenaTypes {
     error NotDuelCreator();
     error DuelNotResolved();
     error NothingToRecover();
+    error AlreadyRecovered();
+    error CannotSweepUSDso();
 
     // ─── Events ──────────────────────────────────────────────────────────────
 

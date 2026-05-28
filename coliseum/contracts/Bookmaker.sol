@@ -181,7 +181,7 @@ contract Bookmaker is IBookmaker {
         if (duelSettled[duelId]) revert DuelAlreadySettled();
 
         // Only settle once the duel is resolved on-chain (DuelStatus.Resolved == 2)
-        (, , , , , , , , uint8 status, ) = arena.duels(duelId);
+        (, , , , , , , , uint8 status, , ) = arena.duels(duelId);
         if (status != 2) revert DuelInactive();
 
         uint256 totalLosingStake = 0;

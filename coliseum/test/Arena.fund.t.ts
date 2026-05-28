@@ -69,7 +69,41 @@ describe("Arena — fundPools", function () {
     expect(String(caught)).to.include("ZeroAmount");
   });
 
-  it("withdrawFromPool + sweepToken recovers seeded USDso to owner", async function () {
+  it("sweepToken blocks USDso to protect user duel deposits", async function () {
+    const { arena, usdso } = await deploy();
+    const [ownerClient] = await hre.viem.getWalletClients();
+    const ownerAddr = ownerClient.account.address;
+    const amount = 10n * 10n ** 18n;
+
+    // Put some USDso into Arena
+    await usdso.write.mint([arena.address, amount]);
+
+    let caught: unknown = undefined;
+    await arena.write
+      .sweepToken([usdso.address, ownerAddr, amount])
+      .catch((e: unknown) => { caught = e; });
+
+    expect(caught, "expected CannotSweepUSDso revert").to.not.be.undefined;
+    expect(String(caught)).to.include("CannotSweepUSDso");
+  });
+
+  it("sweepToken works on non-USDso tokens", async function () {
+    const { arena } = await deploy();
+    const [ownerClient] = await hre.viem.getWalletClients();
+    const ownerAddr = ownerClient.account.address;
+
+    // Deploy an unrelated ERC20 and put some into Arena
+    const otherToken = await hre.viem.deployContract("MockERC20", ["OTHER", "OTHER"]);
+    const amount = 5n * 10n ** 18n;
+    await otherToken.write.mint([arena.address, amount]);
+
+    const balBefore = (await otherToken.read.balanceOf([ownerAddr])) as bigint;
+    await arena.write.sweepToken([otherToken.address, ownerAddr, amount]);
+    const balAfter = (await otherToken.read.balanceOf([ownerAddr])) as bigint;
+    expect(balAfter).to.equal(balBefore + amount);
+  });
+
+  it("withdrawFromPool pulls seeded USDso back into Arena", async function () {
     const { arena, usdso, poolWeth } = await deploy();
     const [ownerClient] = await hre.viem.getWalletClients();
     const ownerAddr = ownerClient.account.address;
@@ -79,17 +113,10 @@ describe("Arena — fundPools", function () {
     await usdso.write.approve([arena.address, 30n * 10n ** 18n]);
     await arena.write.fundPools([perPool]);
 
-    const balBefore = (await usdso.read.balanceOf([ownerAddr])) as bigint;
-
     // Pull from pool vault back to Arena
     await arena.write.withdrawFromPool([poolWeth.address, usdso.address, perPool]);
     const arenaBal = (await usdso.read.balanceOf([arena.address])) as bigint;
     expect(arenaBal).to.equal(perPool);
-
-    // Sweep from Arena to owner
-    await arena.write.sweepToken([usdso.address, ownerAddr, perPool]);
-    const balAfter = (await usdso.read.balanceOf([ownerAddr])) as bigint;
-    expect(balAfter).to.equal(balBefore + perPool);
   });
 
   it("withdrawFromPool reverts InvalidPool for non-registered pool", async function () {

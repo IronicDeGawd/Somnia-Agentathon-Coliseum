@@ -16,6 +16,7 @@ contract MockArena {
         uint8   poolMask;
         uint8   status;
         uint256 initialUsdsoPerFighter;
+        bool    fundsRecovered;
     }
 
     mapping(uint256 => DuelData) private _duels;
@@ -38,7 +39,8 @@ contract MockArena {
         uint16  turns,
         uint8   poolMask,
         uint8   status,
-        uint256 initialUsdsoPerFighter
+        uint256 initialUsdsoPerFighter,
+        bool    fundsRecovered
     ) {
         DuelData storage d = _duels[duelId];
         return (
@@ -51,7 +53,8 @@ contract MockArena {
             d.turns,
             d.poolMask,
             d.status,
-            d.initialUsdsoPerFighter
+            d.initialUsdsoPerFighter,
+            d.fundsRecovered
         );
     }
 }

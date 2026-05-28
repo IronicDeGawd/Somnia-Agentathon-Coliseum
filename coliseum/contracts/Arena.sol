@@ -96,7 +96,10 @@ contract Arena is ArenaVault {
         _runTurn();
     }
 
-    function turn() external {
+    /// @notice Manual turn advance, owner-only. Reactivity `onEvent` drives turns automatically;
+    ///         this is a fallback for when the subscription is down. Public access would let an
+    ///         attacker time turns to sandwich pool manipulation around LLM context reads.
+    function turn() external onlyOwner {
         _runTurn();
     }
 
@@ -167,7 +170,8 @@ contract Arena is ArenaVault {
             poolMask:                mask,
             status:                  ArenaTypes.DuelStatus.Active,
             initialUsdsoPerFighter:  initialUsdsoPerFighter,
-            lastAction:              [uint8(0), uint8(0)]
+            lastAction:              [uint8(0), uint8(0)],
+            fundsRecovered:          false
         });
         activeDuelId = duelId;
 
@@ -228,24 +232,50 @@ contract Arena is ArenaVault {
     }
 
     /// @notice Duel creator withdraws their USDso back after the duel resolves.
-    ///         Pulls withdrawable balance from each active pool back into Arena, then
-    ///         transfers the full recovered amount to the creator.
+    ///         Pulls the per-duel entitled amount (sum of both fighters' tracked
+    ///         quoteTokenAmount on each active pool) from the shared pool vault and
+    ///         transfers it to the creator. Per-duel accounting prevents one duel's
+    ///         creator from draining funds belonging to another duel.
+    ///
+    /// @dev    Sets fundsRecovered=true BEFORE any external call (Checks-Effects-Interactions)
+    ///         to close the reentrancy window. Base-token balances are not recovered —
+    ///         only USDso quote balances accumulated during trading.
     function recoverFunds(uint256 duelId) external {
         ArenaTypes.Duel storage duel = duels[duelId];
         if (duel.status != ArenaTypes.DuelStatus.Resolved) revert ArenaTypes.DuelNotResolved();
         if (duel.creator != msg.sender) revert ArenaTypes.NotDuelCreator();
+        if (duel.fundsRecovered) revert ArenaTypes.AlreadyRecovered();
+
+        // Effects: mark recovered BEFORE external calls (CEI).
+        duel.fundsRecovered = true;
 
         address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
-        uint256 recovered = 0;
 
+        // Per-duel entitlement = sum of both fighters' tracked quote balances across
+        // active pools at resolution time. This is what the duel started with minus
+        // any base-token holdings (which stay in the pool).
+        uint256 entitled = 0;
         for (uint256 i = 0; i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
+            entitled += fighterBalances[pools[i]][duelId][duel.fighterA].quoteTokenAmount;
+            entitled += fighterBalances[pools[i]][duelId][duel.fighterB].quoteTokenAmount;
+        }
+        if (entitled == 0) revert ArenaTypes.NothingToRecover();
+
+        // Cap entitled by what the contract can actually pull across active pools
+        // (in case some funds are still locked in open orders).
+        uint256 recovered = 0;
+        for (uint256 i = 0; i < 3; i++) {
+            if (duel.poolMask & bits[i] == 0) continue;
+            if (recovered >= entitled) break;
             address pool = pools[i];
             uint256 withdrawable = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO);
             if (withdrawable == 0) continue;
-            ISpotPool(pool).withdraw(USDSO, withdrawable);
-            recovered += withdrawable;
+            uint256 toPull = entitled - recovered;
+            if (toPull > withdrawable) toPull = withdrawable;
+            ISpotPool(pool).withdraw(USDSO, toPull);
+            recovered += toPull;
         }
 
         if (recovered == 0) revert ArenaTypes.NothingToRecover();
@@ -474,6 +504,9 @@ contract Arena is ArenaVault {
 
         emit ArenaTypes.OrderPlaced(pool, fighterId, duelId, orderId, isBid, price, quantity, orderType);
 
+        // PostOnly (orderType=3) balance update lives here because PostOnly is only ever
+        // reached via debugPlaceOrder (owner-only, test-only). FOK orders (orderType=1) from
+        // _executeFighterAction update balance at the call site — never both, no double-credit.
         if (orderType == 3) {
             if (isBid) {
                 fighterBalances[pool][duelId][fighterId].quoteTokenAmount += price * quantity / 1e18;

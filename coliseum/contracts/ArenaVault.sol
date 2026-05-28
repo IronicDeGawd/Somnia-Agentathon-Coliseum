@@ -110,8 +110,12 @@ abstract contract ArenaVault {
         emit ArenaTypes.VaultWithdrawn(pool, token, amount);
     }
 
-    /// @notice Transfer any ERC20 token held by this contract to a recipient.
+    /// @notice Transfer any non-USDso ERC20 held by this contract to a recipient.
+    ///         USDso is explicitly blocked because the contract holds user duel deposits
+    ///         in its USDso balance; sweeping them would steal from depositors. Use
+    ///         withdrawFees() to extract accumulated platform fees instead.
     function sweepToken(address token, address to, uint256 amount) external onlyOwner {
+        if (token == USDSO) revert ArenaTypes.CannotSweepUSDso();
         if (amount == 0) revert ArenaTypes.ZeroAmount();
         bool ok = IERC20Minimal(token).transfer(to, amount);
         if (!ok) revert ArenaTypes.TransferFailed();
