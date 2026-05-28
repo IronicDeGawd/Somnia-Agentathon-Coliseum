@@ -58,10 +58,12 @@ contract Bookmaker is IBookmaker {
     uint16 public constant RAKE_BPS = 500;           // 5%
     uint16 public constant PAYOUT_FACTOR_BPS = 9500; // 95%
 
-    /// @dev Mirror of ArenaTypes.DuelStatus.Active. Hardcoded because we read the
-    ///      Arena tuple via the IArena interface (no enum import). If ArenaTypes
-    ///      ever changes the Active position, update this constant.
-    uint8 public constant ARENA_STATUS_ACTIVE = 1;
+    /// @dev Mirror of ArenaTypes.DuelStatus. Hardcoded because we read the Arena
+    ///      tuple via the IArena interface (no enum import). The enum is
+    ///      { None=0, Active=1, Finalizing=2, Resolved=3 } — if ArenaTypes ever
+    ///      reorders, update both constants.
+    uint8 public constant ARENA_STATUS_ACTIVE   = 1;
+    uint8 public constant ARENA_STATUS_RESOLVED = 3;
 
     mapping(uint256 => Bet[]) public bets;                // duelId => bets
     mapping(uint256 => uint16[2]) public currentOdds;     // duelId => [oddsA, oddsB] bps, sum = 10000
@@ -130,7 +132,10 @@ contract Bookmaker is IBookmaker {
             // deferred in the per-block reactivity queue.
             priorityFeePerGas: 10_000_000_000,
             maxFeePerGas:      50_000_000_000,
-            gasLimit:          3_000_000,
+            // Bookmaker _onBlockTick builds the LLM prompt by reading both fighters'
+            // system prompts from the registry + balances from Arena. 3M was likely
+            // tight on the LLM-request path. Bumped to 10M.
+            gasLimit:          10_000_000,
             isGuaranteed: false,
             isCoalesced: false
         });
@@ -381,7 +386,7 @@ contract Bookmaker is IBookmaker {
         //   fighterA, fighterB, creator, startBlock, lastTurnBlock, completedCallbacks,
         //   turns, poolMask, status, initialUsdsoPerFighter, fundsRecovered, winnerSlot
         (, , , , , , , , uint8 status, , , uint8 winnerSlot) = arena.duels(duelId);
-        if (status != 2) revert DuelInactive();
+        if (status != ARENA_STATUS_RESOLVED) revert DuelInactive();
         if (winnerSlot > 1) revert InvalidWinner();
         uint8 winnerId = winnerSlot;
 

@@ -187,7 +187,10 @@ abstract contract ArenaVault {
             priorityFeePerGas:       10_000_000_000,
             // maxFeePerGas must be >= priorityFeePerGas + baseFee.
             maxFeePerGas:            50_000_000_000,
-            gasLimit:                3_000_000,
+            // Arena _runTurn does pool snapshots + 2 LLM createRequest calls — heavy
+            // path. 3M gas was tight; reactive txs were silently failing on
+            // out-of-gas with no event. Bumped to 15M (well under the 200M cap).
+            gasLimit:                15_000_000,
             isGuaranteed:            false,
             isCoalesced:             false
         });
