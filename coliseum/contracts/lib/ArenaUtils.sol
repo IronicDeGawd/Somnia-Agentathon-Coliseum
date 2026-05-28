@@ -127,9 +127,22 @@ library ArenaUtils {
             ));
         }
 
-        summary = string.concat(summary, " Pick 0=Hold 1=BuyWBTC 2=SellWBTC 3=BuyWETH 4=SellWETH 5=BuySOMI 6=SellSOMI.");
+        // Build the action list dynamically from the active pool mask so the LLM only
+        // sees options that will actually execute. Hold (0) is always available.
+        summary = string.concat(summary, " Pick 0=Hold");
+        if (duel.poolMask & ArenaTypes.POOL_BIT_WBTC != 0) {
+            summary = string.concat(summary, " 1=BuyWBTC 2=SellWBTC");
+        }
+        if (duel.poolMask & ArenaTypes.POOL_BIT_WETH != 0) {
+            summary = string.concat(summary, " 3=BuyWETH 4=SellWETH");
+        }
+        if (duel.poolMask & ArenaTypes.POOL_BIT_SOMI != 0) {
+            summary = string.concat(summary, " 5=BuySOMI 6=SellSOMI");
+        }
+        summary = string.concat(summary, ". Only those numbers are valid.");
         return summary;
     }
+
 
     function vaultLine(
         string memory label,
