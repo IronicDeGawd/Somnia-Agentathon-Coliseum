@@ -9,7 +9,8 @@
     "test:agent": "hardhat run scripts/01-llm-inference.ts --network somnia",
     "test:dreamdex": "hardhat run scripts/02-dreamdex-order.ts --network somnia",
     "test:ws": "ts-node scripts/03-dreamdex-ws.ts",
-    "test:reactivity": "hardhat run scripts/04-reactivity-blocktick.ts --network somnia"
+    "test:reactivity": "hardhat run scripts/04-reactivity-blocktick.ts --network somnia",
+    "test:reactivity-persist": "hardhat run scripts/05-reactivity-persistence.ts --network somnia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "5.0.0",

@@ -409,16 +409,16 @@ contract Arena {
                 emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
             }
-            // Cap virtual budget by what Arena's REAL vault on this pool can afford so the
-            // FOK can settle. Vault is shared between two fighters, so split half/half.
-            uint256 vaultQuote = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO) / 2;
-            uint256 effectiveQuote = bal.quoteTokenAmount < vaultQuote ? bal.quoteTokenAmount : vaultQuote;
-            if (effectiveQuote == 0) {
-                emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "vault drained");
+            // Size each bid at exactly minQuantity (smallest valid order) so the vault
+            // burns slowly across turns rather than in one large fill. Check the real
+            // vault can cover the cost before placing.
+            uint256 minCost = (meta.minQuantity * price) / baseUnit;
+            uint256 vaultQuote = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO);
+            if (vaultQuote < minCost) {
+                emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "vault below min cost");
                 return (false, 0);
             }
-            // base = quote * 10^baseDecimals / price (USDso has 18 decimals, price is in raw quote units)
-            desired = (effectiveQuote * baseUnit) / price;
+            desired = meta.minQuantity;
         } else {
             if (bal.baseTokenAmount == 0) {
                 emit OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no base balance");
