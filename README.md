@@ -2,240 +2,148 @@
 
 > **Two prompts. One arena. Real trades. Live.**
 >
-> The first agent-vs-agent trading arena on Somnia. Two LLM personalities fight on dreamDEX's zero-fee CLOB. Spectators bet. An LLM bookmaker prices the odds. The whole loop runs on-chain with no servers, no keepers, no humans in the loop.
+> The first agent-vs-agent trading arena on Somnia. Two LLM personalities fight on dreamDEX's zero-fee CLOB. Spectators bet. The whole loop runs on-chain — no servers, no keepers, no humans in the loop.
 
-Built for the **Somnia Agentathon** (May 2026) — *Build the most novel and high-impact agent-driven application on Somnia.*
+Built for the **Somnia Agentathon** (May 2026).
 
 ---
 
-## What it is, in one paragraph
+## What it is
 
-Picture a Twitch fighting-game broadcast where the fighters are LLM personalities ("The Degen", "The Whale") and the fight is *real on-chain trading*. Every 60 seconds, each fighter's brain — a Somnia LLM Inference agent — gets a fresh market snapshot, decides on a move, and executes it as a real order on dreamDEX. After 15 turns, whoever has the highest PnL wins the pot. Spectators bet on the side; an LLM bookmaker prices live odds. **The turn loop is driven by Somnia Reactivity** — no off-chain server, no keeper, no human pushing buttons.
+A duel is real on-chain trading between two AI personalities. Every turn each fighter's brain — a Somnia LLM agent — gets a market snapshot, picks one of seven moves (Hold, Buy/Sell WBTC, Buy/Sell WETH, Buy/Sell SOMI), and the Arena contract places that trade on dreamDEX. After 3, 6, 9, or 15 turns the higher-portfolio fighter wins. Spectators can bet via a separate Bookmaker contract. Turn ticks are driven by Somnia Reactivity — fully autonomous after `startDuel`.
 
-## Why now, why Somnia, why dreamDEX
+## How a duel works
 
-Three primitives lined up at exactly the right time:
+1. **Anyone calls `startDuel(fighterA, fighterB, turns)`** on the Arena contract. The caller deposits USDso — minimum is computed live from the order book (`Arena.minDepositFor(turns)`) plus a 1 USDso platform fee. The Arena pulls the deposit via `transferFrom`.
+2. **Tier mapping** picks which markets the duel uses:
 
-| Primitive | What it does for Coliseum |
-|---|---|
-| **Somnia Agents** | Deterministic on-chain LLMs. Two fighter brains + one bookmaker brain, all running with validator consensus. |
-| **Somnia Reactivity** | Validator-pushed `BlockTick` drives every duel turn. **No off-chain keeper means full autonomy.** |
-| **dreamDEX** | Zero-fee CLOB explicitly built for agents. Fighters can place GTC limit orders, cancel, market-hit — without bleeding fees. |
+   | Turns | Active markets | Approx min deposit |
+   |------:|---------------|--------------------|
+   | 3 | SOMI only | ~$1–2 |
+   | 6 | SOMI + WETH | ~$15 |
+   | 9 | SOMI + WETH + WBTC | ~$90 |
+   | 15 | SOMI + WETH + WBTC | ~$143 |
 
-dreamDEX's intro literally says *"Native agent and algo access… autonomous agents and LLMs are first-class participants."* Coliseum is the canonical use case they were waiting for.
+3. **Each turn** the Reactivity precompile fires `onEvent`, the Arena requests two LLM inferences (one per fighter), each fighter picks a number 0–6, and the Arena places an FOK order on the chosen pool. Mark prices are snapshotted for safety.
+4. **Anyone calls `finalizeDuel(duelId)`** once all callbacks land. The Arena computes each fighter's portfolio value in USDso (quote balance + base × mark price), declares the higher one the winner, and stores `winnerSlot` on-chain (0 = fighterA, 1 = fighterB).
+5. **The creator calls `recoverFunds(duelId)`** to withdraw their entitled USDso (sum of both fighters' quote balances on active pools). Per-duel accounting — one duel's recovery cannot drain another's funds.
 
-## How it scores against the judging criteria
+## Fighter personalities
 
-| Criterion | How Coliseum earns it |
-|---|---|
-| **Functionality** | One Arena + one Bookmaker + one FighterRegistry contract. Deployable, demoable, runs reliably under load (Somnia handles 1M TPS). |
-| **Agent-First Design** | Every duel turn is *literally* two autonomous LLM agents making independent decisions. The bookmaker is itself an agent. Reactivity drives the loop, dreamDEX executes the trades. Maximum agent density. |
-| **Innovation & Technical Creativity** | First agent-vs-agent trading product on Somnia. First product combining Somnia Agents + dreamDEX. The "fight as financial duel" framing is fresh — most agent submissions are oracles or auto-traders. |
-| **Autonomous Performance** | Once a duel starts, zero human input. Reactivity-driven turns, Agent-driven decisions, dreamDEX-executed trades, Bookmaker-set odds, on-chain settlement. The judges can verify it on the explorer. |
+Six hardcoded LLM prompts in `FighterRegistry.sol`:
 
-## The product surface
+| # | Name | Style |
+|---|------|-------|
+| 0 | The Degen | Max-size momentum chaser |
+| 1 | The Whale | Patient, large-conviction trades |
+| 2 | The Scalper | Many small trades, tight spreads |
+| 3 | The Reverter | Mean-revert, fade extremes |
+| 4 | The Surfer | Trend-follow, cut losers fast |
+| 5 | The Contrarian | Opposite of recent flow |
 
-**6 pre-built fighter personalities** — each a tuned LLM system prompt with a distinct trading style:
+Each turn the LLM sees its current vault state, last action, and the active markets for the duel's tier — so a 3-turn SOMI duel only shows the SOMI buy/sell options, not the locked WBTC/WETH ones.
 
-| # | Fighter | Style | Tagline |
-|---|---|---|---|
-| 1 | **The Degen** | Max-size momentum chaser | *"Send it. Always."* |
-| 2 | **The Whale** | Patient, large-conviction trades | *"I'll wait for it."* |
-| 3 | **The Scalper** | Many small trades, tight spreads | *"Death by a thousand cuts."* |
-| 4 | **The Reverter** | Mean-revert, fade extremes | *"All trends end."* |
-| 5 | **The Surfer** | Trend-follow, cut losers fast | *"Ride the wave."* |
-| 6 | **The Contrarian** | Opposite of recent flow | *"Crowd is always wrong."* |
-
-**3 trading pairs on dreamDEX testnet**: SOMI/USDso, WBTC/USDso, WETH/USDso (all settled in USDso).
-
-**Duel mechanics**: 15-minute duels, 60-second turns, vault-funded (so fighters can place limit orders, not just market hits), winner takes the pot minus 5% arena rake.
-
-**Spectator betting**: an LLM Bookmaker agent reads each fighter's prompt + intra-duel PnL each turn and re-prices odds. Spectators bet testnet USDso, get paid at locked-in odds.
-
-## Stack (testnet-only — see §Why testnet below)
-
-| Layer | Component |
-|---|---|
-| Execution venue | **dreamDEX testnet** (SOMI/USDso, WBTC/USDso, WETH/USDso pools) |
-| Agent brain | **Somnia Agents** testnet `0x037Bb9C7…` — LLM Inference + JSON API Agent |
-| Turn loop | **Reactivity BlockTick** (off-chain subscription, free, every ~60s) |
-| Audit feed | Plain Solidity events (`FighterMove`, `OddsUpdate`, `DuelStarted`, `DuelResolved`, `BetSettled`) |
-| Stake currency | **testnet USDso** |
-| Frontend | Next.js 15 + Tailwind + Framer Motion + wagmi + viem, deployed to Vercel |
-
-**Why testnet**: as of May 2026, Reactivity is testnet-only. dreamDEX has live testnet pools. Somnia Agents are on both networks. **Putting everything on testnet lets us use Reactivity as the actual autonomy primitive** (instead of faking it with a keeper). The Reactivity story is worth more than mainnet stakes for the judging criteria.
-
-## The aesthetic
-
-Twitch fighting-game broadcast meets retro-terminal trading floor. Dark-stage palette with hot-magenta vs electric-cyan fighter glow. Pixelify Sans display + JetBrains Mono everywhere else. Bracket-text buttons `[ BET 5 USDSO ]`. CRT terminal vibes. Avatars are tarot-card portrait illustrations, not pixel art.
-
-See `context/plan/coliseum-frontend.md` for the full visual spec.
-
-## Architecture (high-level)
-
-```
-                       USER (browser)
-                            │
-                            ▼
-              ┌──────────────────────────┐
-              │  Next.js Frontend        │
-              │  (wallet + spectator UI) │
-              └──────────────────────────┘
-                  │              │
-        wagmi/viem │              │ native WebSocket
-                  ▼              ▼
-   ┌─────────────────────┐   ┌──────────────────────┐
-   │   Arena contract    │   │  dreamDEX WS API     │
-   │   Bookmaker contract│   │  (orderbook, trades, │
-   │   FighterRegistry   │   │   ohlcv, order)      │
-   └─────────────────────┘   └──────────────────────┘
-            │                          │
-            │ placeOrder / cancel      │
-            ▼                          │
-   ┌─────────────────────┐             │
-   │ dreamDEX SpotPools  │◄────────────┘
-   │ (SOMI/WBTC/WETH)    │
-   └─────────────────────┘
-            ▲
-            │ executes calldata
-            │
-   ┌─────────────────────┐    Reactivity BlockTick (every ~60s)
-   │ Arena.turn()        │◄───────────────────────────────────┐
-   │  ├─ JSON API Agent  │                                    │
-   │  ├─ LLM Inference A │                                    │
-   │  ├─ LLM Inference B │                                    │
-   │  └─ Bookmaker update│                                    │
-   └─────────────────────┘                                    │
-            │                                                  │
-            │ encodeFunctionData + createRequest               │
-            ▼                                                  │
-   ┌─────────────────────┐                                    │
-   │ Somnia Agents       │                                    │
-   │ (LLM Inference,     │                                    │
-   │  JSON API Request)  │                                    │
-   └─────────────────────┘                                    │
-                                                              │
-                            BlockTick subscription ───────────┘
-                            (off-chain TS, free, autonomous)
-```
-
-**No backend server. No keeper. No cron.** Frontend talks directly to chain + dreamDEX WebSocket. Arena.turn() fires from Reactivity.
-
-## What's in this repo
+## Repo layout
 
 ```
 somniaforge-agentathon/
-├── README.md                          # this file
-└── context/
-    ├── plan/
-    │   ├── coliseum.md                  # the canonical implementation plan
-    │   └── coliseum-frontend.md         # the canonical frontend spec
-    ├── research/
-    │   ├── 01-overview.md             # Somnia Agents — what they are
-    │   ├── 02-quickstart.md
-    │   ├── 03-from-solidity.md        # canonical Solidity integration
-    │   ├── 04-receipts.md
-    │   ├── 05-custom-consensus.md
-    │   ├── 06-gas-fees.md             # deposit foot-gun (read before building)
-    │   ├── 07-json-api-request.md     # base agent #1
-    │   ├── 08-llm-inference.md        # base agent #2 (fighter brain)
-    │   ├── 09-llm-parse-website.md    # base agent #3 (unused in v1)
-    │   ├── 10-examples-repo.md
-    │   ├── dreamdex-overview.md       # dreamDEX mental model
-    │   ├── dreamdex-contracts.md      # dreamDEX SpotPool ABI surface
-    │   ├── dreamdex-apis.md           # dreamDEX HTTP + WS APIs
-    │   ├── dreamdex-api.md            # dreamDEX one-page cheatsheet
-    │   └── _raw/                      # raw Playwright scrapes for re-synthesis
-    ├── reference/
-    │   └── somnia-agents-examples-repo/   # cloned emrestay/somnia-agents-examples
-    └── progress.md                    # build log + lessons + resume point
+├── coliseum/                       # main backend
+│   ├── contracts/
+│   │   ├── Arena.sol               # duel orchestrator
+│   │   ├── ArenaVault.sol          # abstract base — fund management + Reactivity
+│   │   ├── Bookmaker.sol           # spectator bet settlement
+│   │   ├── FighterRegistry.sol     # 6 hardcoded fighter prompts
+│   │   ├── Ping.sol                # Reactivity callback handler
+│   │   ├── interfaces/             # ISpotPool, IFighterRegistry, IArena, etc.
+│   │   └── lib/
+│   │       ├── ArenaTypes.sol      # all structs, enums, errors, events
+│   │       └── ArenaUtils.sol      # pure/view helpers, minDepositFor, prompt builder
+│   ├── scripts/                    # deploy + operational scripts
+│   │   ├── deploy.ts               # full system deploy
+│   │   ├── start-duel.ts           # opens a duel — TURNS=3/6/9/15
+│   │   ├── finalize.ts             # finalize a completed duel
+│   │   ├── recover-duel.ts         # creator recovers funds — DUEL_ID=N
+│   │   ├── force-turn.ts           # manual owner-only turn() bootstrap
+│   │   ├── check-arena-state.ts    # diagnostics
+│   │   └── ...
+│   ├── test/                       # 59 passing Hardhat tests
+│   ├── frontend/                   # Next.js 15 (in progress)
+│   └── deployments/somnia.json     # latest testnet addresses
+├── sandbox/                        # primitive validation (sandbox phase)
+│   ├── contracts/                  # MockSpotPool, MultiAgent
+│   └── scripts/                    # force-swap, BlockTick tests, etc.
+└── context/                        # plans, research, progress
+    ├── plan/                       # feature specs
+    ├── research/                   # dreamDEX + Somnia Agents + Reactivity refs
+    ├── progress.md                 # current build status + lessons
+    └── handover.md                 # compact-survival essentials
 ```
 
-## Where to start (for a fresh session)
+## Quick start
 
-1. Read `context/plan/coliseum.md` — the whole plan in one file.
-2. Read `context/plan/coliseum-frontend.md` — the whole UI spec in one file.
-3. Read `context/research/dreamdex-api.md` — one-page cheatsheet for the venue.
-4. Read `context/research/06-gas-fees.md` — single most important Somnia Agents gotcha (deposit floor + per_agent_price × subSize, or runners skip and request times out).
-5. Read `context/progress.md` — current build status, lessons, what's next.
+```bash
+# Install
+pnpm install
 
-## Key contract addresses
+# Test
+cd coliseum && pnpm exec hardhat test           # 59 passing
 
-### Somnia Agents
-| | Mainnet | Testnet |
-|---|---|---|
-| Chain ID | `5031` | `50312` (Shannon) |
-| RPC | `https://api.infra.mainnet.somnia.network` | `https://api.infra.testnet.somnia.network` |
-| **SomniaAgents** | `0x5E5205CF39E766118C01636bED000A54D93163E6` | `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` |
-| Receipts API | `https://receipts.mainnet.agents.somnia.host` | `https://receipts.testnet.agents.somnia.host` |
-| Agent Explorer | `https://agents.somnia.network` | `https://agents.testnet.somnia.network` |
+# Deploy to Somnia testnet (needs ~33 STT + USDso for pool seeding)
+USDSO_PER_POOL=13 pnpm exec hardhat run scripts/deploy.ts --network somnia
 
-### dreamDEX (testnet — what Coliseum uses)
+# Start a 3-turn (cheapest) duel
+TURNS=3 pnpm exec hardhat run scripts/start-duel.ts --network somnia
 
-| Pair | SpotPool |
+# Bootstrap turns (owner-only — Reactivity is flaky on testnet)
+pnpm exec hardhat run scripts/force-turn.ts --network somnia
+
+# Once completedCallbacks == turns * 2
+pnpm exec hardhat run scripts/finalize.ts --network somnia
+DUEL_ID=1 pnpm exec hardhat run scripts/recover-duel.ts --network somnia
+```
+
+## Stack
+
+| Layer | Component |
 |---|---|
-| SOMI/USDso | `0x259fD6559214dd5aD3752322426eA9F9fABEFff4` |
-| WBTC/USDso | `0x3605f28aA7C50e7441211e77Cb0762d49539326C` |
-| WETH/USDso | `0xD180195da5459C7a0DEA188ed61216ec43682b50` |
+| Execution venue | **dreamDEX testnet** — SOMI / WBTC / WETH spot pools, all quoted in USDso |
+| Agent brain | **Somnia Agents** — LLM inference with validator consensus |
+| Turn loop | **Reactivity BlockTick** — validator-pushed turn advancement |
+| Settlement | On-chain, atomic, FOK orders |
+| Frontend | Next.js 15 + Tailwind v4 + wagmi 2 + RainbowKit (in progress) |
 
-### Somnia Agents — confirmed agent IDs (testnet)
+**Testnet-only.** Reactivity is testnet-only as of May 2026; using it as the autonomy primitive is more valuable than mainnet stakes for the Agentathon brief.
 
-| Agent | ID |
+## Security highlights
+
+Backend went through a full audit pass. Notable fixes applied (see commit history on `main`):
+
+- **Per-duel `recoverFunds`** — one duel's creator cannot drain another's funds. Uses tracked quote balances per duel, not the contract's whole vault.
+- **CEI ordering on recovery** — `fundsRecovered` flag flips before any external call; reentrancy can't double-spend.
+- **`sweepToken(USDso, …)` blocked** — owner cannot drain user deposits via the sweep path. Use `withdrawFees(to)` for the platform-fee portion.
+- **`turn()` is `onlyOwner`** — public access would let an attacker time turns around pool manipulation. Reactivity drives normal flow; `turn()` is a manual fallback.
+- **Mark price snapshots** — `emergencyFinalize` reads snapshots stored each turn instead of live prices. Owner cannot time the call to a favorable book state.
+- **On-chain winner** — `Bookmaker.settleBets(duelId)` reads `winnerSlot` from Arena, not a caller argument.
+- **Dynamic action prompt** — LLM only sees actions available for the duel's tier.
+
+## Key addresses (Somnia testnet, chain ID 50312)
+
+| Contract | Address |
 |---|---|
-| JSON API Request | `13174292974160097713` |
-| LLM Inference | `12847293847561029384` |
-| LLM Parse Website | `12875401142070969085` |
+| USDso (quote token) | `0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171` |
+| dreamDEX SOMI/USDso (native) | `0x259fD6559214dd5aD3752322426eA9F9fABEFff4` |
+| dreamDEX WBTC/USDso | `0x3605f28aA7C50e7441211e77Cb0762d49539326C` |
+| dreamDEX WETH/USDso | `0xD180195da5459C7a0DEA188ed61216ec43682b50` |
+| Somnia Agents platform | `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` |
 
-## Cost per duel (testnet)
+Latest deployed Arena and Bookmaker addresses live in `coliseum/deployments/somnia.json`.
 
-| Item | Per duel |
-|---|---|
-| LLM Inference (fighters: 0.24 STT × 2 × 15 turns) | 7.2 STT |
-| LLM Inference (bookmaker: 0.24 STT × 15 turns) | 3.6 STT |
-| JSON API Agent (market data: 0.12 STT × 15) | 1.8 STT |
-| dreamDEX gas (trades) | ~0.5 STT |
-| **Total per duel** | **≈ 13 STT** |
+## Where to read next
 
-15-day hackathon plans for ~30 dev duels + 5 demo duels = ~500 STT. Faucet-able on testnet.
-
-## v1.1 / post-hackathon roadmap
-
-- **SDS composability** — republish duel events to SDS so third-party dApps can build derivatives (Coliseum Index Token, fighter Elo derivatives, season prediction markets)
-- **Mutation / breeding** — winner's prompt evolves based on what worked
-- **User-submitted fighters** — open the registry, anyone mints a fighter NFT with their prompt
-- **Tournaments + seasons** — bracket play, Elo, season prize pool
-- **Mainnet migration** — flip when Reactivity goes mainnet; real USDO stakes
-- **Cross-pair duels** — fighters trade all 3 dreamDEX pairs simultaneously
-- **Streamer mode** — public broadcast pages with chat overlay
-
-## Submission deliverables (per Agentathon rules)
-
-- [x] Working prototype + deployed demo by end of program
-- [ ] Public GitHub repository
-- [ ] 2–5 minute demo video
-- [ ] Submission form filled
-
-## Critical Somnia Agents gotchas (read before building)
-
-1. **`getRequestDeposit()` is NOT the full deposit.** It's only the operations-reserve floor. Pay only this and `perAgentBudget = 0` → runners skip → request times out. **Always add `per_agent_price × subSize` on top.**
-2. **Always implement `receive() external payable`.** Rebates are pushed automatically; without `receive()` the transfer fails silently (`NativeTransferFailed` event) and funds get stuck.
-3. **Always `require(msg.sender == platform)` in your callback.** Anyone can spoof results otherwise.
-4. **Callback signature is mandatory.** `(uint256 requestId, Response[] memory responses, ResponseStatus status, Request memory details)` — name flexible, types not.
-5. **Handle all three statuses**: Success / Failed / TimedOut.
-6. **Majority vs Threshold consensus**: Majority for deterministic outputs (LLM with fixed seed + temp 0); Threshold for prices/RNG where results naturally differ.
-7. **Avoid `threshold = subcommitteeSize`** — one failure prevents finalisation. 3 of 5 is the documented default.
-
-(Full list and explanations in `context/research/` per-page docs.)
-
-## Critical dreamDEX gotchas
-
-1. **`placeOrder` can return `(false, 0)` with `tx.status == 1` and zero events.** Always check the return tuple AND verify `OrderPlaced` in logs.
-2. **Raw token units everywhere on-chain.** USDso is 18 decimals — use `cast to-wei` / `parseUnits`.
-3. **Builder Codes disabled in v1.0.** Pass `address(0)` + `0` for the last two args of `placeOrder` or revert with `BuilderCodesNotSupported`.
-4. **Wallet funding ≠ market buy.** Market buy with `fundingSource: "wallet"` returns 400 on the REST API. Use IOC limit above best ask instead.
-5. **Native pool (SOMI/USDso) needs different functions** — `depositNative()` + payable taker variant.
-
-(Full list in `context/research/dreamdex-contracts.md`.)
+- `context/plan/coliseum.md` — full backend implementation plan
+- `context/plan/coliseum-frontend.md` — full UI spec
+- `context/progress.md` — current build status, lessons learned, resume point
+- `context/research/` — dreamDEX, Somnia Agents, and Reactivity reference docs
 
 ## License
 
