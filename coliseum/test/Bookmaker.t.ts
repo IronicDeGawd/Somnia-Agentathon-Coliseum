@@ -2,7 +2,7 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { parseEther } from "viem";
 
-const DUEL_RESOLVED_STATUS = 4;
+const DUEL_RESOLVED_STATUS = 2; // DuelStatus.Resolved in ArenaTypes
 
 async function deploy() {
   const [owner, bettor1, bettor2, bettor3, rakeRecipient] =

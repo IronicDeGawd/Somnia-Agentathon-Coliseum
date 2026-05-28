@@ -2,18 +2,19 @@
 pragma solidity ^0.8.24;
 
 contract MockArena {
-    uint8  public _status;
     uint256 public activeDuelId;
     uint256 public nextDuelId = 1;
 
     struct DuelData {
         uint8   fighterA;
         uint8   fighterB;
+        address creator;
         uint256 startBlock;
         uint256 lastTurnBlock;
         uint16  completedCallbacks;
+        uint16  turns;
+        uint8   poolMask;
         uint8   status;
-        address pool;
         uint256 initialUsdsoPerFighter;
     }
 
@@ -30,22 +31,26 @@ contract MockArena {
     function duels(uint256 duelId) external view returns (
         uint8   fighterA,
         uint8   fighterB,
+        address creator,
         uint256 startBlock,
         uint256 lastTurnBlock,
         uint16  completedCallbacks,
+        uint16  turns,
+        uint8   poolMask,
         uint8   status,
-        address pool,
         uint256 initialUsdsoPerFighter
     ) {
         DuelData storage d = _duels[duelId];
         return (
             d.fighterA,
             d.fighterB,
+            d.creator,
             d.startBlock,
             d.lastTurnBlock,
             d.completedCallbacks,
+            d.turns,
+            d.poolMask,
             d.status,
-            d.pool,
             d.initialUsdsoPerFighter
         );
     }
