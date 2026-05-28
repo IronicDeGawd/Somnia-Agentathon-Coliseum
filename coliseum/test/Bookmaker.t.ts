@@ -2,6 +2,7 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { parseEther } from "viem";
 
+const DUEL_ACTIVE_STATUS   = 1; // DuelStatus.Active   in ArenaTypes
 const DUEL_RESOLVED_STATUS = 2; // DuelStatus.Resolved in ArenaTypes
 
 async function deploy() {
@@ -11,9 +12,15 @@ async function deploy() {
   const mockArena = await hre.viem.deployContract("MockArena");
   const usdso = await hre.viem.deployContract("MockERC20", ["USDso", "USDso"]);
 
+  // Bookmaker now needs registry + platform for the LLM odds updater.
+  // The tests don't exercise the on-chain LLM path (it requires the Somnia Agents
+  // precompile), so we pass the deployer address as a stand-in. The active-duel
+  // guard does call arena.duels() which is implemented on MockArena.
   const bookmaker = await hre.viem.deployContract("Bookmaker", [
     mockArena.address,
     usdso.address,
+    owner.account.address,  // _registry stand-in (only read inside _onBlockTick which tests don't trigger)
+    owner.account.address,  // _platform stand-in (only used for callback auth, tests don't fire callbacks)
     1n,
   ], { value: parseEther("33") });
 
@@ -77,8 +84,10 @@ describe("Bookmaker", function () {
 
   describe("placeBet", function () {
     it("locks odds at placement time", async function () {
-      const { bookmaker, bettor1 } = await deploy();
+      const { bookmaker, mockArena, bettor1 } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      // Mark the Arena duel Active so the placeBet active-duel guard passes.
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
 
       await bookmaker.write.placeBet([1n, 0, parseEther("10")], { account: bettor1.account });
 
@@ -115,12 +124,35 @@ describe("Bookmaker", function () {
       expect(caught, "expected revert").to.not.be.undefined;
       expect(String(caught)).to.include("ZeroStake");
     });
+
+    it("reverts DuelInactive when Arena is not in Active state (Finalizing or Resolved)", async function () {
+      const { bookmaker, mockArena, bettor1 } = await deploy();
+      await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      // Arena status is None (0) — bet should revert with DuelInactive.
+      let caught: unknown;
+      await bookmaker.write
+        .placeBet([1n, 0, parseEther("10")], { account: bettor1.account })
+        .catch((e: unknown) => { caught = e; });
+      expect(caught, "expected revert").to.not.be.undefined;
+      expect(String(caught)).to.include("DuelInactive");
+
+      // Same revert when the duel has moved to Resolved.
+      await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
+      let caught2: unknown;
+      await bookmaker.write
+        .placeBet([1n, 0, parseEther("10")], { account: bettor1.account })
+        .catch((e: unknown) => { caught2 = e; });
+      expect(caught2, "expected revert on Resolved status").to.not.be.undefined;
+      expect(String(caught2)).to.include("DuelInactive");
+    });
   });
 
   describe("settleBets", function () {
     it("pays winning bettors and accrues rake correctly", async function () {
       const { bookmaker, mockArena, usdso, bettor1, bettor2, bettor3 } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      // Duel starts Active for the placeBet guard to pass.
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
 
       // bettor1 and bettor2 bet on fighter 0 (A) at 6000 bps, bettor3 bets on fighter 1 (B)
       const stake10 = parseEther("10");
@@ -190,6 +222,7 @@ describe("Bookmaker", function () {
     it("reverts InsufficientBookmakerBalance when contract underfunded", async function () {
       const { bookmaker, mockArena, usdso, bettor1, bettor2, bettor3 } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
 
       await bookmaker.write.placeBet([1n, 0, parseEther("10")], { account: bettor1.account });
       await bookmaker.write.placeBet([1n, 0, parseEther("10")], { account: bettor2.account });
@@ -215,6 +248,7 @@ describe("Bookmaker", function () {
     it("sends accrued rake to designated address", async function () {
       const { bookmaker, mockArena, usdso, bettor3, rakeRecipient } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
 
       // Only a losing bet so there is rake with no winner payout needed
       await bookmaker.write.placeBet([1n, 1, parseEther("10")], { account: bettor3.account });
@@ -249,6 +283,7 @@ describe("Bookmaker", function () {
     it("reverts NothingToWithdraw on second withdrawRake call", async function () {
       const { bookmaker, mockArena, bettor3, rakeRecipient } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
 
       await bookmaker.write.placeBet([1n, 1, parseEther("10")], { account: bettor3.account });
 

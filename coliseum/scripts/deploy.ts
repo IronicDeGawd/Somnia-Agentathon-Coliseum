@@ -162,11 +162,12 @@ async function main() {
     external: addresses,
   });
 
-  // 3. Bookmaker
+  // 3. Bookmaker — gets the same registry + platform as the Arena so its
+  //    LLM Bookmaker agent can read fighter prompts and fire inferNumber requests.
   console.log("Deploying Bookmaker...");
   const bookmaker = await hre.viem.deployContract(
     "Bookmaker",
-    [arena.address, addresses.usdso, turnIntervalBlocks],
+    [arena.address, addresses.usdso, registry.address, addresses.platform, turnIntervalBlocks],
     { value: reactivityFund }
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);

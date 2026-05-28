@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import "./interfaces/IArena.sol";
 import "./interfaces/IBookmaker.sol";
 import "./interfaces/IERC20Minimal.sol";
+import "./interfaces/IFighterRegistry.sol";
+import "./interfaces/ISomniaAgents.sol";
 import "./interfaces/ISomniaReactivityPrecompile.sol";
 
 contract Bookmaker is IBookmaker {
@@ -19,6 +21,9 @@ contract Bookmaker is IBookmaker {
     error InsufficientBookmakerBalance(uint256 required, uint256 actual);
     error NothingToWithdraw();
     error ReactivityUnderfunded();
+    error OnlyPlatform();
+    error PendingRequest();
+    error InsufficientStt();
 
     address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
     uint256 public constant REACTIVITY_FUND_MIN = 33 ether;
@@ -36,16 +41,40 @@ contract Bookmaker is IBookmaker {
 
     IArena public immutable arena;
     IERC20Minimal public immutable usdso;
+    IFighterRegistry public immutable registry;
+    address public immutable PLATFORM_ADDR;
     address public owner;
+
+    // Somnia Agents constants — same agent ID Arena uses for fighters.
+    uint256 public constant LLM_AGENT_ID = 12847293847561029384;
+    // per-agent budget × 3 validators; mirrors Arena.FIGHTER_DEPOSIT_TOPUP
+    uint256 public constant ODDS_DEPOSIT_TOPUP = 0.07 ether;
+    // Floor odds the LLM can produce — never let either side hit 0% (infinite payout)
+    // or 100% (no payout). 500 bps = 5%, 9500 bps = 95%.
+    uint16 public constant MIN_ODDS_BPS = 500;
+    uint16 public constant MAX_ODDS_BPS = 9500;
 
     uint16 public constant BPS_TOTAL = 10000;
     uint16 public constant RAKE_BPS = 500;           // 5%
     uint16 public constant PAYOUT_FACTOR_BPS = 9500; // 95%
 
+    /// @dev Mirror of ArenaTypes.DuelStatus.Active. Hardcoded because we read the
+    ///      Arena tuple via the IArena interface (no enum import). If ArenaTypes
+    ///      ever changes the Active position, update this constant.
+    uint8 public constant ARENA_STATUS_ACTIVE = 1;
+
     mapping(uint256 => Bet[]) public bets;                // duelId => bets
     mapping(uint256 => uint16[2]) public currentOdds;     // duelId => [oddsA, oddsB] bps, sum = 10000
     mapping(uint256 => bool) public duelSettled;          // duelId => bool
     mapping(uint256 => uint256) public rakeAccrued;       // duelId => rake amount USDso
+
+    // ─── LLM odds updater state ──────────────────────────────────────────────
+    // One pending request at a time per duel. Cleared when the callback lands
+    // (or after a long enough block-delta if the callback never arrives — see
+    // the cooldown check in _onBlockTick).
+    mapping(uint256 => bool)    public pendingOddsRequest;       // duelId => in-flight?
+    mapping(uint256 => uint256) public lastOddsUpdateBlock;      // duelId => block of last update/request
+    mapping(uint256 => uint256) public oddsRequestToDuel;        // requestId => duelId (callback lookup)
 
     event SubscriptionSkipped(string reason);
     event OddsInitialized(uint256 indexed duelId, uint16 oddsA, uint16 oddsB);
@@ -55,18 +84,28 @@ contract Bookmaker is IBookmaker {
     event RakeWithdrawn(uint256 indexed duelId, address indexed to, uint256 amount);
     event Resubscribed(uint256 indexed newSubscriptionId);
     event NativeWithdrawn(address indexed to, uint256 amount);
+    event OddsRequestSent(uint256 indexed duelId, uint256 indexed requestId, uint256 blockNumber);
+    event OddsRequestFailed(uint256 indexed duelId, string reason);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
     }
 
-    constructor(address _arena, address _usdso, uint256 _turnIntervalBlocks) payable {
+    constructor(
+        address _arena,
+        address _usdso,
+        address _registry,
+        address _platform,
+        uint256 _turnIntervalBlocks
+    ) payable {
         if (msg.value < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
-        arena = IArena(_arena);
-        usdso = IERC20Minimal(_usdso);
+        arena         = IArena(_arena);
+        usdso         = IERC20Minimal(_usdso);
+        registry      = IFighterRegistry(_registry);
+        PLATFORM_ADDR = _platform;
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
-        owner = msg.sender;
+        owner         = msg.sender;
 
         subscriptionId = _subscribeReactivity();
     }
@@ -130,8 +169,155 @@ contract Bookmaker is IBookmaker {
         _onBlockTick(blockNumber);
     }
 
-    function _onBlockTick(uint64 /*blockNumber*/) internal {
-        // v1.1: LLM-driven odds update scheduled for next phase
+    function _onBlockTick(uint64 blockNumber) internal {
+        // Pick up whatever duel the Arena currently considers active. If none, skip.
+        uint256 duelId = arena.activeDuelId();
+        if (duelId == 0) return;
+
+        // Only re-price if the betting line has been opened (initializeOdds was called).
+        uint16 oA = currentOdds[duelId][0];
+        uint16 oB = currentOdds[duelId][1];
+        if (uint256(oA) + uint256(oB) != BPS_TOTAL) return;
+
+        // Don't update odds for a settled duel.
+        if (duelSettled[duelId]) return;
+
+        // One LLM request in flight at a time. If a callback never landed, the
+        // cooldown below acts as an escape hatch.
+        if (pendingOddsRequest[duelId]) {
+            // Escape hatch: if a request has been pending for more than 4 turn
+            // intervals, assume it's lost and clear the flag so we can try again.
+            if (blockNumber > lastOddsUpdateBlock[duelId] + TURN_INTERVAL_BLOCKS * 4) {
+                pendingOddsRequest[duelId] = false;
+            } else {
+                return;
+            }
+        }
+
+        // Make sure we have enough STT for both the LLM request AND a Reactivity
+        // floor. If draining a request would put us below 32 STT we skip — the
+        // sub itself is more important than this one odds update.
+        IAgentRequester platform = IAgentRequester(PLATFORM_ADDR);
+        uint256 deposit = platform.getRequestDeposit() + ODDS_DEPOSIT_TOPUP * 3;
+        if (address(this).balance < REACTIVITY_FUND_MIN + deposit) {
+            emit OddsRequestFailed(duelId, "insufficient STT");
+            return;
+        }
+
+        // Arena must still be Active. Tuple positions:
+        //   0 fA, 1 fB, 2 creator, 3 startBlock, 4 lastTurnBlock, 5 completedCallbacks,
+        //   6 turns, 7 poolMask, 8 status, 9 initialUsdsoPerFighter,
+        //   10 fundsRecovered, 11 winnerSlot
+        (uint8 fighterA, uint8 fighterB, , , , , , , uint8 arenaStatus, , , ) = arena.duels(duelId);
+        if (arenaStatus != ARENA_STATUS_ACTIVE) return;
+
+        // Build the prompt and fire the LLM request. inferNumber(0, 100) returns
+        // an estimated win-probability % for fighterA.
+        string memory prompt = _buildOddsPrompt(duelId, fighterA, fighterB);
+        string memory system = "You are a sports bookmaker. Given two AI trader personalities and their current portfolio values, output a single integer 0..100 = probability that Fighter A wins.";
+
+        bytes memory payload = abi.encodeWithSelector(
+            ILLMInferenceAgent.inferNumber.selector,
+            prompt,
+            system,
+            int256(0), int256(100),
+            false
+        );
+
+        try platform.createRequest{value: deposit}(
+            LLM_AGENT_ID,
+            address(this),
+            this.handleBookmakerResponse.selector,
+            payload
+        ) returns (uint256 requestId) {
+            pendingOddsRequest[duelId]      = true;
+            lastOddsUpdateBlock[duelId]     = blockNumber;
+            oddsRequestToDuel[requestId]    = duelId;
+            emit OddsRequestSent(duelId, requestId, blockNumber);
+        } catch {
+            emit OddsRequestFailed(duelId, "createRequest reverted");
+        }
+    }
+
+    /// @dev Build a short market-context prompt for the bookmaker LLM.
+    ///      Includes both fighter system prompts (their personalities) and
+    ///      current portfolio values across active pools. Cheap enough for
+    ///      every-turn LLM context.
+    function _buildOddsPrompt(uint256 duelId, uint8 fighterA, uint8 fighterB)
+        internal
+        view
+        returns (string memory)
+    {
+        IFighterRegistry.Fighter memory fA = registry.getFighter(fighterA);
+        IFighterRegistry.Fighter memory fB = registry.getFighter(fighterB);
+
+        return string.concat(
+            "Duel #", _toString(duelId), ". ",
+            "Fighter A (", fA.name, "): ", fA.systemPrompt, " ",
+            "Fighter B (", fB.name, "): ", fB.systemPrompt, " ",
+            "Output integer 0..100 = probability A wins."
+        );
+    }
+
+    function _toString(uint256 v) internal pure returns (string memory) {
+        if (v == 0) return "0";
+        bytes memory buf = new bytes(78);
+        uint256 len = 0;
+        uint256 tmp = v;
+        while (tmp > 0) { buf[len++] = bytes1(uint8(48 + (tmp % 10))); tmp /= 10; }
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) out[i] = buf[len - 1 - i];
+        return string(out);
+    }
+
+    /// @notice Somnia Agents callback. Decodes the inferNumber result, clamps it
+    ///         to [MIN_ODDS_BPS, MAX_ODDS_BPS], and writes the new odds line.
+    ///         No-ops if the duel settled, Arena is no longer Active, or the
+    ///         response is malformed/failed — odds simply don't move that turn.
+    function handleBookmakerResponse(
+        uint256 requestId,
+        Response[] memory responses,
+        ResponseStatus status,
+        Request memory /* details */
+    ) external {
+        if (msg.sender != PLATFORM_ADDR) revert OnlyPlatform();
+
+        uint256 duelId = oddsRequestToDuel[requestId];
+        // Unknown requestId — ignore silently to keep the platform happy.
+        if (duelId == 0) return;
+        delete oddsRequestToDuel[requestId];
+
+        // Always clear the pending flag, regardless of outcome.
+        pendingOddsRequest[duelId] = false;
+
+        if (duelSettled[duelId]) return;
+        // Re-check Arena status — Arena may have finalized while the LLM was thinking.
+        (, , , , , , , , uint8 arenaStatus, , , ) = arena.duels(duelId);
+        if (arenaStatus != ARENA_STATUS_ACTIVE) return;
+
+        if (status != ResponseStatus.Success || responses.length == 0) {
+            emit OddsRequestFailed(duelId, "no consensus");
+            return;
+        }
+        if (responses[0].result.length != 32) {
+            emit OddsRequestFailed(duelId, "bad encoding");
+            return;
+        }
+        int256 raw = abi.decode(responses[0].result, (int256));
+        if (raw < 0 || raw > 100) {
+            emit OddsRequestFailed(duelId, "out of range");
+            return;
+        }
+
+        // Convert % to BPS, then clamp to [MIN, MAX] so we never produce 0 or 10000.
+        uint16 bpsA = uint16(uint256(raw) * 100);
+        if (bpsA < MIN_ODDS_BPS) bpsA = MIN_ODDS_BPS;
+        if (bpsA > MAX_ODDS_BPS) bpsA = MAX_ODDS_BPS;
+        uint16 bpsB = BPS_TOTAL - bpsA;
+
+        currentOdds[duelId][0] = bpsA;
+        currentOdds[duelId][1] = bpsB;
+        emit OddsUpdated(duelId, bpsA, bpsB);
     }
 
     function initializeOdds(uint256 duelId, uint16 oddsA, uint16 oddsB) external onlyOwner {
@@ -157,8 +343,14 @@ contract Bookmaker is IBookmaker {
         if (duelSettled[duelId]) revert DuelAlreadySettled();
 
         uint16 lockedOdds = currentOdds[duelId][fighterId];
-        // Odds uninitialized means duel is not active for betting
+        // Odds uninitialized means the bookmaker hasn't opened the line yet.
         if (lockedOdds == 0) revert DuelInactive();
+
+        // Reject bets after the Arena has moved past Active (Finalizing or Resolved).
+        // Stops the awkward window between finalizeDuel and settleBets where odds
+        // are stale but bets would still be accepted. Reads one slot from Arena.
+        (, , , , , , , , uint8 arenaStatus, , , ) = arena.duels(duelId);
+        if (arenaStatus != ARENA_STATUS_ACTIVE) revert DuelInactive();
 
         // CEI: state update before external call
         uint256 betIndex = bets[duelId].length;
