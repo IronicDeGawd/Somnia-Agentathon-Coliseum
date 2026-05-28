@@ -33,6 +33,13 @@ abstract contract ArenaVault {
     uint256 public subscriptionId;
     uint256 public accruedFees;
 
+    /// @notice Running total of USDso the OWNER has seeded into pool vaults via
+    ///         fundPools(). Tracked separately from user duel deposits so the
+    ///         owner can withdraw their own seed liquidity without touching
+    ///         depositor funds. Incremented in fundPools, decremented in
+    ///         ownerWithdrawSeed.
+    uint256 public seedLiquidity;
+
     mapping(address => ArenaTypes.PoolMeta) public poolMeta;
 
     // ─── Modifier ────────────────────────────────────────────────────────────
@@ -89,6 +96,7 @@ abstract contract ArenaVault {
     function fundPools(uint256 usdsoPerPool) external onlyOwner {
         if (usdsoPerPool == 0) revert ArenaTypes.ZeroAmount();
         address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        uint256 totalDeposited = usdsoPerPool * 3;
         for (uint256 i = 0; i < 3; i++) {
             address pool = pools[i];
             bool ok = IERC20Minimal(USDSO).transferFrom(msg.sender, address(this), usdsoPerPool);
@@ -97,7 +105,22 @@ abstract contract ArenaVault {
             if (!ok) revert ArenaTypes.ApproveFailed();
             ISpotPool(pool).deposit(USDSO, usdsoPerPool);
         }
-        emit ArenaTypes.PoolsFunded(usdsoPerPool, usdsoPerPool * 3);
+        // Track owner seed so it can be withdrawn later via ownerWithdrawSeed.
+        seedLiquidity += totalDeposited;
+        emit ArenaTypes.PoolsFunded(usdsoPerPool, totalDeposited);
+    }
+
+    /// @notice Withdraw owner-seeded USDso (vault liquidity) back to a recipient.
+    ///         Bounded by `seedLiquidity` so this cannot touch user duel deposits.
+    ///         Caller must first pull pool balances back to the contract via
+    ///         withdrawFromPool() before calling this.
+    function ownerWithdrawSeed(address to, uint256 amount) external onlyOwner {
+        if (amount == 0) revert ArenaTypes.ZeroAmount();
+        if (amount > seedLiquidity) revert ArenaTypes.ZeroAmount();
+        seedLiquidity -= amount;
+        bool ok = IERC20Minimal(USDSO).transfer(to, amount);
+        if (!ok) revert ArenaTypes.TransferFailed();
+        emit ArenaTypes.SeedWithdrawn(to, amount);
     }
 
     // ─── Fund recovery (owner-only) ───────────────────────────────────────────
