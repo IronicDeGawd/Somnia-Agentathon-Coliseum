@@ -176,13 +176,19 @@ contract Bookmaker is IBookmaker {
         emit BetPlaced(duelId, fighterId, msg.sender, stake, lockedOdds, betIndex);
     }
 
-    function settleBets(uint256 duelId, uint8 winnerId) external {
-        if (winnerId > 1) revert InvalidWinner();
+    /// @notice Settle bets for a resolved duel. The winner is read from Arena's Duel.winnerSlot
+    ///         (set authoritatively in _resolveDuel) — not from the caller — so settlement
+    ///         outcome cannot be manipulated by passing a wrong winnerId.
+    function settleBets(uint256 duelId) external {
         if (duelSettled[duelId]) revert DuelAlreadySettled();
 
-        // Only settle once the duel is resolved on-chain (status == 4)
-        (, , , , , uint8 status, , ) = arena.duels(duelId);
-        if (status != 4) revert DuelInactive();
+        // Read status + winnerSlot from Arena. Tuple layout (12 fields):
+        //   fighterA, fighterB, creator, startBlock, lastTurnBlock, completedCallbacks,
+        //   turns, poolMask, status, initialUsdsoPerFighter, fundsRecovered, winnerSlot
+        (, , , , , , , , uint8 status, , , uint8 winnerSlot) = arena.duels(duelId);
+        if (status != 2) revert DuelInactive();
+        if (winnerSlot > 1) revert InvalidWinner();
+        uint8 winnerId = winnerSlot;
 
         uint256 totalLosingStake = 0;
         uint256 totalWinningStake = 0;

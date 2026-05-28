@@ -2,7 +2,7 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { parseEther } from "viem";
 
-const DUEL_RESOLVED_STATUS = 4;
+const DUEL_RESOLVED_STATUS = 2; // DuelStatus.Resolved in ArenaTypes
 
 async function deploy() {
   const [owner, bettor1, bettor2, bettor3, rakeRecipient] =
@@ -94,7 +94,8 @@ describe("Bookmaker", function () {
 
       // Settle the duel (with no bets) to flip duelSettled[1] = true
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
-      await bookmaker.write.settleBets([1n, 0]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
+      await bookmaker.write.settleBets([1n]);
 
       let caught: unknown;
       await bookmaker.write
@@ -130,7 +131,8 @@ describe("Bookmaker", function () {
       await bookmaker.write.placeBet([1n, 1, stake6], { account: bettor3.account });
 
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
-      await bookmaker.write.settleBets([1n, 0]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
+      await bookmaker.write.settleBets([1n]);
 
       // totalLosingStake = 6e18 (bettor3)
       // rake = 6e18 * 500 / 10000 = 3e17
@@ -159,24 +161,27 @@ describe("Bookmaker", function () {
       const { bookmaker, mockArena } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
-      await bookmaker.write.settleBets([1n, 0]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
+      await bookmaker.write.settleBets([1n]);
 
       let caught: unknown;
       await bookmaker.write
-        .settleBets([1n, 0])
+        .settleBets([1n])
         .catch((e: unknown) => { caught = e; });
       expect(caught, "expected revert").to.not.be.undefined;
       expect(String(caught)).to.include("DuelAlreadySettled");
     });
 
-    it("reverts InvalidWinner when winnerId >= 2", async function () {
+    it("reverts InvalidWinner when Arena reports winnerSlot >= 2", async function () {
       const { bookmaker, mockArena } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
+      // Simulate a malformed/unset winnerSlot on Arena (e.g. type(uint8).max)
+      await mockArena.write.setWinnerSlot([1n, 255]);
 
       let caught: unknown;
       await bookmaker.write
-        .settleBets([1n, 2])
+        .settleBets([1n])
         .catch((e: unknown) => { caught = e; });
       expect(caught, "expected revert").to.not.be.undefined;
       expect(String(caught)).to.include("InvalidWinner");
@@ -195,10 +200,11 @@ describe("Bookmaker", function () {
       await usdso.write.burn([bookmaker.address, bookmakerBalance]);
 
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
 
       let caught: unknown;
       await bookmaker.write
-        .settleBets([1n, 0])
+        .settleBets([1n])
         .catch((e: unknown) => { caught = e; });
       expect(caught, "expected revert").to.not.be.undefined;
       expect(String(caught)).to.include("InsufficientBookmakerBalance");
@@ -214,7 +220,8 @@ describe("Bookmaker", function () {
       await bookmaker.write.placeBet([1n, 1, parseEther("10")], { account: bettor3.account });
 
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
-      await bookmaker.write.settleBets([1n, 0]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
+      await bookmaker.write.settleBets([1n]);
 
       const expectedRake = parseEther("10") * 500n / 10000n;
 
@@ -246,7 +253,8 @@ describe("Bookmaker", function () {
       await bookmaker.write.placeBet([1n, 1, parseEther("10")], { account: bettor3.account });
 
       await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
-      await bookmaker.write.settleBets([1n, 0]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
+      await bookmaker.write.settleBets([1n]);
 
       await bookmaker.write.withdrawRake([1n, rakeRecipient.account.address]);
 
