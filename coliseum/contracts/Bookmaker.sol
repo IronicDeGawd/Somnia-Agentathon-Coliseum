@@ -125,9 +125,12 @@ contract Bookmaker is IBookmaker {
             emitter: SOMNIA_REACTIVITY_PRECOMPILE,
             handlerContractAddress: address(this),
             handlerFunctionSelector: this.onEvent.selector,
-            priorityFeePerGas: 2_000_000_000,
-            maxFeePerGas: 20_000_000_000,
-            gasLimit: 3_000_000,
+            // Priority fee must beat testnet baseFee (~6 gwei) AND ambient
+            // background subscription traffic, or our handler is indefinitely
+            // deferred in the per-block reactivity queue.
+            priorityFeePerGas: 10_000_000_000,
+            maxFeePerGas:      50_000_000_000,
+            gasLimit:          3_000_000,
             isGuaranteed: false,
             isCoalesced: false
         });

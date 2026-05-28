@@ -180,8 +180,13 @@ abstract contract ArenaVault {
             emitter:                 SOMNIA_REACTIVITY_PRECOMPILE,
             handlerContractAddress:  address(this),
             handlerFunctionSelector: _onEventSelector(),
-            priorityFeePerGas:       2_000_000_000,
-            maxFeePerGas:            20_000_000_000,
+            // Priority fee must be high enough to win the per-block reactivity queue.
+            // Testnet baseFee is ~6 gwei; lower-priority subs get indefinitely deferred
+            // even though the subscription stays alive. 10 gwei tip puts us above most
+            // background traffic.
+            priorityFeePerGas:       10_000_000_000,
+            // maxFeePerGas must be >= priorityFeePerGas + baseFee.
+            maxFeePerGas:            50_000_000_000,
             gasLimit:                3_000_000,
             isGuaranteed:            false,
             isCoalesced:             false
