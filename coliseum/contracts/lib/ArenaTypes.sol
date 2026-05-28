@@ -144,6 +144,7 @@ library ArenaTypes {
     event Resubscribed(uint256 indexed newSubscriptionId);
     event SubscriptionSkipped(string reason);
     event FeesWithdrawn(address indexed to, uint256 amount);
+    event SeedWithdrawn(address indexed to, uint256 amount);
     event DuelFundsRecovered(uint256 indexed duelId, address indexed creator, uint256 amount);
     /// @notice Emitted when an active pool has zero mark price at finalize time.
     ///         Indicates the duel result for that asset is unreliable (no liquidity).

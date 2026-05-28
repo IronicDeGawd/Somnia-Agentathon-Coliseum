@@ -33,6 +33,13 @@ abstract contract ArenaVault {
     uint256 public subscriptionId;
     uint256 public accruedFees;
 
+    /// @notice Running total of USDso the OWNER has seeded into pool vaults via
+    ///         fundPools(). Tracked separately from user duel deposits so the
+    ///         owner can withdraw their own seed liquidity without touching
+    ///         depositor funds. Incremented in fundPools, decremented in
+    ///         ownerWithdrawSeed.
+    uint256 public seedLiquidity;
+
     mapping(address => ArenaTypes.PoolMeta) public poolMeta;
 
     // ─── Modifier ────────────────────────────────────────────────────────────
@@ -89,6 +96,7 @@ abstract contract ArenaVault {
     function fundPools(uint256 usdsoPerPool) external onlyOwner {
         if (usdsoPerPool == 0) revert ArenaTypes.ZeroAmount();
         address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        uint256 totalDeposited = usdsoPerPool * 3;
         for (uint256 i = 0; i < 3; i++) {
             address pool = pools[i];
             bool ok = IERC20Minimal(USDSO).transferFrom(msg.sender, address(this), usdsoPerPool);
@@ -97,7 +105,22 @@ abstract contract ArenaVault {
             if (!ok) revert ArenaTypes.ApproveFailed();
             ISpotPool(pool).deposit(USDSO, usdsoPerPool);
         }
-        emit ArenaTypes.PoolsFunded(usdsoPerPool, usdsoPerPool * 3);
+        // Track owner seed so it can be withdrawn later via ownerWithdrawSeed.
+        seedLiquidity += totalDeposited;
+        emit ArenaTypes.PoolsFunded(usdsoPerPool, totalDeposited);
+    }
+
+    /// @notice Withdraw owner-seeded USDso (vault liquidity) back to a recipient.
+    ///         Bounded by `seedLiquidity` so this cannot touch user duel deposits.
+    ///         Caller must first pull pool balances back to the contract via
+    ///         withdrawFromPool() before calling this.
+    function ownerWithdrawSeed(address to, uint256 amount) external onlyOwner {
+        if (amount == 0) revert ArenaTypes.ZeroAmount();
+        if (amount > seedLiquidity) revert ArenaTypes.ZeroAmount();
+        seedLiquidity -= amount;
+        bool ok = IERC20Minimal(USDSO).transfer(to, amount);
+        if (!ok) revert ArenaTypes.TransferFailed();
+        emit ArenaTypes.SeedWithdrawn(to, amount);
     }
 
     // ─── Fund recovery (owner-only) ───────────────────────────────────────────
@@ -132,9 +155,16 @@ abstract contract ArenaVault {
 
     // ─── Platform fees ────────────────────────────────────────────────────────
 
-    /// @notice Withdraw accumulated platform fees to a recipient.
+    /// @notice Withdraw accumulated platform fees to a recipient. Caps the transfer
+    ///         at the contract's actual USDso balance — `accruedFees` is an
+    ///         accounting counter that can drift slightly above the real balance
+    ///         due to rounding in fighter-balance math when pots get traded into
+    ///         base tokens that don't round-trip cleanly back to quote.
     function withdrawFees(address to) external onlyOwner {
         uint256 amount = accruedFees;
+        if (amount == 0) revert ArenaTypes.ZeroAmount();
+        uint256 bal = IERC20Minimal(USDSO).balanceOf(address(this));
+        if (bal < amount) amount = bal;
         if (amount == 0) revert ArenaTypes.ZeroAmount();
         accruedFees = 0;
         bool ok = IERC20Minimal(USDSO).transfer(to, amount);
@@ -157,9 +187,17 @@ abstract contract ArenaVault {
             emitter:                 SOMNIA_REACTIVITY_PRECOMPILE,
             handlerContractAddress:  address(this),
             handlerFunctionSelector: _onEventSelector(),
-            priorityFeePerGas:       2_000_000_000,
-            maxFeePerGas:            20_000_000_000,
-            gasLimit:                3_000_000,
+            // Priority fee must be high enough to win the per-block reactivity queue.
+            // Testnet baseFee is ~6 gwei; lower-priority subs get indefinitely deferred
+            // even though the subscription stays alive. 10 gwei tip puts us above most
+            // background traffic.
+            priorityFeePerGas:       10_000_000_000,
+            // maxFeePerGas must be >= priorityFeePerGas + baseFee.
+            maxFeePerGas:            50_000_000_000,
+            // Arena _runTurn does pool snapshots + 2 LLM createRequest calls — heavy
+            // path. 3M gas was tight; reactive txs were silently failing on
+            // out-of-gas with no event. Bumped to 15M (well under the 200M cap).
+            gasLimit:                15_000_000,
             isGuaranteed:            false,
             isCoalesced:             false
         });
