@@ -1,256 +1,313 @@
 'use client';
 
-import React, { useReducer, useEffect, useState } from 'react';
+import React, { useReducer, useEffect } from 'react';
 import Link from 'next/link';
-import { Play, TrendingUp, Users, Coins, HelpCircle, Shield, Award, ChevronRight, Sparkles } from 'lucide-react';
-import { TopBar } from '@/components/shared/TopBar';
+import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
-import { BracketButton, Chip, Dot, SectionHead, PnLBlock } from '@/components/shared/OtherHUD';
+import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
-import { FIGHTERS, ROSTER } from '@/lib/fighters';
-import { fmtUsd, fmtPct } from '@/lib/format';
+import { ROSTER } from '@/lib/fighters';
+import { fmtUsd, fmtTime } from '@/lib/format';
 
 export default function LobbyPage() {
-  const [simState, dispatch] = useReducer(simReducer, makeInitialSim());
-  const [backedFighterId, setBackedFighterId] = useState<'degen' | 'whale' | null>(null);
+  const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
 
-  // Active game loop ticking for the simulation
   useEffect(() => {
-    const clock = setInterval(() => {
-      dispatch({ type: 'TICK' });
-    }, 1000);
+    const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
     return () => clearInterval(clock);
   }, []);
 
-  const handlePlaceBet = (fighter: 'degen' | 'whale') => {
-    setBackedFighterId(fighter);
-    dispatch({ type: 'PLACE_BET', fighter, amount: 10, odds: fighter === 'degen' ? simState.oddsDegen : 100 - simState.oddsDegen });
-  };
+  const tickerItems: React.ReactNode[] = [
+    <>WBTC/USDSO <span className="t-num text-win">67,425.10</span> +0.34%</>,
+    <>ETH/USDSO <span className="t-num text-loss">3,148.20</span> −0.92%</>,
+    <>SOL/USDSO <span className="t-num text-win">142.88</span> +2.18%</>,
+    <>VOLUME 24H <span className="t-num">$12.4M</span></>,
+    <>3 BOUTS ON THE CARD</>,
+    <>TODAY&rsquo;S PURSE <span className="t-num text-gold">$4,872</span></>,
+  ];
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
-      {/* Navigation TopBar */}
-      <TopBar showNavigation={false} />
+    <div className="col">
+      <AppTopBar />
 
-      {/* Lobby Hero Banner / Marquee */}
-      <section className="relative border-b border-[var(--border)] px-6 py-12 bg-slate-950/20 text-center flex flex-col items-center justify-center overflow-hidden">
-        {/* Faded background vectors */}
-        <div className="absolute top-1/2 left-10 -translate-y-1/2 opacity-[0.06] hidden md:block">
-          <FighterAvatar fighter="degen" context="card" size={140} chrome={false} />
+      {/* ── LOBBY MARQUEE ──────────────────────────────────────────── */}
+      <section style={{ position: 'relative', borderBottom: '1px solid var(--border)', overflow: 'hidden' }}>
+        {/* Faded backdrop portraits */}
+        <div style={{ position: 'absolute', left: -40, top: 40, opacity: 0.18, transform: 'rotate(-3deg)', pointerEvents: 'none' }}>
+          <FighterAvatar fighter="degen" context="card" size={320} state="winning" chrome={false} />
         </div>
-        <div className="absolute top-1/2 right-10 -translate-y-1/2 opacity-[0.06] hidden md:block">
-          <FighterAvatar fighter="whale" context="card" size={140} chrome={false} />
+        <div style={{ position: 'absolute', right: -40, top: 40, opacity: 0.18, transform: 'rotate(3deg)', pointerEvents: 'none' }}>
+          <FighterAvatar fighter="whale" context="card" size={320} state="winning" chrome={false} />
         </div>
 
-        <div className="z-10 flex flex-col items-center">
-          <div className="flex items-center gap-2 mb-3">
-            <Dot variant="a" pulse={true} />
-            <Chip variant="live">ARENA LOBBY ACTIVE</Chip>
-          </div>
-          <h2 className="t-display text-4xl sm:text-5xl uppercase tracking-tighter text-[var(--text)]">
-            THE DEGEN vs THE WHALE
-          </h2>
-          <p className="text-xs font-mono text-[var(--text-faint)] tracking-widest mt-2 uppercase">
-            dreamDEX CLOB · TONIGHT'S FEATURE BOUT · 15 TURNS ACTIVE
-          </p>
-
-          {/* Quick HUD specs */}
-          <div className="flex flex-wrap items-center justify-center gap-8 mt-6 border-t border-b border-[var(--border-soft)] py-3 px-6 text-xs text-[var(--text-dim)] font-mono">
-            <span className="flex items-center gap-1.5"><Play className="w-3.5 h-3.5 text-[var(--gold)]" /> ROUND {simState.round}/15</span>
-            <span className="flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5 text-[var(--win)]" /> POT: {fmtUsd(simState.pot)}</span>
-            <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-cyan-400" /> SPECTATORS: {simState.spectators}</span>
+        <div className="shell-pad col gap-16" style={{ position: 'relative', paddingTop: 36, paddingBottom: 36 }}>
+          {/* Status strip */}
+          <div className="row jc-sb ai-c">
+            <div className="row gap-12 ai-c">
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>§ LOBBY · MAIN HALL</span>
+              <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+              <Chip variant="gold">▸ NEXT BOUT · ROUND #342</Chip>
+            </div>
+            <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em', whiteSpace: 'nowrap' }}>21:00 UTC · BEST OF 15 · TESTNET</span>
           </div>
 
-          {/* Enter buttons */}
-          <div className="flex flex-wrap gap-4 mt-6">
-            <BracketButton variant="a" onClick={() => handlePlaceBet('degen')} disabled={!!backedFighterId} className="w-48 text-[10px]">
-              {backedFighterId === 'degen' ? 'BACKED' : 'BACK DEGEN +$10'}
-            </BracketButton>
-            <Link href="/duel/1/preduel">
-              <BracketButton variant="primary" className="w-48 text-[10px]">
-                ENTER PRE-DUEL →
-              </BracketButton>
-            </Link>
-            <BracketButton variant="b" onClick={() => handlePlaceBet('whale')} disabled={!!backedFighterId} className="w-48 text-[10px]">
-              {backedFighterId === 'whale' ? 'BACKED' : 'BACK WHALE +$10'}
-            </BracketButton>
+          {/* Big poster headline */}
+          <div className="col ai-c gap-4" style={{ paddingTop: 12 }}>
+            <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>TONIGHT&rsquo;S MAIN EVENT</span>
+            <h1
+              className="fp-display"
+              style={{
+                fontSize: 'clamp(56px, 8vw, 96px)',
+                letterSpacing: '0.04em',
+                lineHeight: 1,
+                textAlign: 'center',
+                margin: '8px 0',
+                color: 'var(--text)',
+              }}
+            >
+              <span className="text-a">THE DEGEN</span>
+              <span style={{ color: 'var(--text-faint)', margin: '0 16px' }}>vs</span>
+              <span className="text-b">THE WHALE</span>
+            </h1>
+          </div>
+
+          {/* 4-up stat strip — BELL IN / PURSE / ODDS / BETTORS */}
+          <div className="row gap-32 ai-c jc-c" style={{ marginTop: 8 }}>
+            <div className="col ai-c gap-4">
+              <span className="eyebrow">BELL IN</span>
+              <span className="t-num text-gold" style={{ fontSize: 36, lineHeight: 1 }}>{fmtTime(sim.countdown)}</span>
+            </div>
+            <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
+            <div className="col ai-c gap-4">
+              <span className="eyebrow">PURSE</span>
+              <span className="t-num text-gold" style={{ fontSize: 36, lineHeight: 1 }}>${sim.potNext}</span>
+            </div>
+            <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
+            <div className="col ai-c gap-4">
+              <span className="eyebrow">ODDS</span>
+              <span className="t-num" style={{ fontSize: 36, lineHeight: 1, whiteSpace: 'nowrap' }}>
+                <span className="text-a">{sim.oddsDegen}</span>
+                <span style={{ color: 'var(--text-faint)', fontSize: 22 }}> · </span>
+                <span className="text-b">{100 - sim.oddsDegen}</span>
+              </span>
+            </div>
+            <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
+            <div className="col ai-c gap-4">
+              <span className="eyebrow">BETTORS</span>
+              <span className="t-num" style={{ fontSize: 36, lineHeight: 1, color: 'var(--text)' }}>14</span>
+            </div>
+          </div>
+
+          {/* CTAs — all route to preduel */}
+          <div className="row gap-12 ai-c jc-c" style={{ marginTop: 12 }}>
+            <Link href="/duel/1/preduel"><BracketButton variant="a">BACK DEGEN</BracketButton></Link>
+            <Link href="/duel/1/preduel"><BracketButton variant="primary">ENTER PRE-DUEL →</BracketButton></Link>
+            <Link href="/duel/1/preduel"><BracketButton variant="b">BACK WHALE</BracketButton></Link>
+          </div>
+        </div>
+
+        {/* Ticker bottom strip */}
+        <div style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-stage)', height: 36, overflow: 'hidden', position: 'relative' }}>
+          <div className="ticker" style={{ height: '100%', alignItems: 'center', paddingLeft: 16 }}>
+            {[0, 1].map((k) => (
+              <div className="row gap-32 ai-c" key={k} style={{ height: '100%' }}>
+                {tickerItems.map((item, i) => (
+                  <React.Fragment key={i}>
+                    <span className="t-mono t-xs t-dim">{item}</span>
+                    <span className="t-mono t-xs t-dim">·</span>
+                  </React.Fragment>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Main Lobby body */}
-      <main className="shell-pad grid grid-cols-1 lg:grid-cols-12 gap-8 items-start select-none">
-        
-        {/* Left Column: § 01 LIVE NOW & § 03 YOUR LEDGER */}
-        <div className="lg:col-span-8 space-y-8">
-          
-          {/* § 01 LIVE NOW */}
-          <div>
-            <SectionHead num="§ 01" title="LIVE BROADCAST" meta="REALTIME COMBAT" />
-            
-            <div className="card border-[var(--fighter-a)] mt-4 p-6 bg-[var(--bg-stage)]/30 rounded-[2px] shadow-[0_0_12px_rgba(255,51,102,0.04)]">
-              {/* Header card strip */}
-              <div className="flex justify-between items-center border-b border-[var(--border-soft)] pb-4 mb-6 text-xs text-[var(--text-dim)] font-mono">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_6px_#34d399]" />
-                  <span className="font-bold text-[var(--text)]">ROUND #{simState.round}/15</span>
-                  <Chip variant="live">LIVE</Chip>
+      {/* ── § 01 LIVE NOW ──────────────────────────────────────────── */}
+      <section className="shell-pad col gap-16" style={{ paddingTop: 40, paddingBottom: 40 }}>
+        <div className="sect-head">
+          <span className="sect-head-num">§ 01</span>
+          <span className="sect-head-title">LIVE NOW</span>
+          <span className="sect-head-meta">round #341 · in progress</span>
+        </div>
+
+        <div className="card corner-card acc-a glow-a" style={{ overflow: 'hidden' }}>
+          {/* Header strip */}
+          <div
+            className="row ai-c gap-12"
+            style={{
+              padding: '10px 16px',
+              background: 'linear-gradient(90deg, var(--fighter-a-soft), transparent 70%)',
+              borderBottom: '1px solid var(--border)',
+            }}
+          >
+            <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
+            <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
+              R<span className="t-num" style={{ color: 'var(--text)' }}>{sim.round}/15</span>
+              <span style={{ margin: '0 8px' }}>·</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>{fmtTime(sim.timeLeft)}</span> left
+            </span>
+            <div className="grow" />
+            <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>{sim.spectators} watching</span>
+          </div>
+
+          {/* Two-fighter body */}
+          <div className="row gap-24" style={{ padding: 24, alignItems: 'stretch' }}>
+            <div className="col gap-12 flex-1">
+              <div className="row jc-sb ai-c">
+                <div className="row gap-12 ai-c">
+                  <FighterAvatar fighter="degen" context="mini" size={32} />
+                  <span className="t-display t-up" style={{ color: 'var(--fighter-a)', letterSpacing: '0.12em', fontSize: 14 }}>THE DEGEN</span>
                 </div>
-                <div>
-                  <span>NEXT ADVANCE IN: {simState.timeLeft}s</span>
+                <span className="t-num" style={{ fontSize: 24, color: sim.degen.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}>
+                  {fmtUsd(sim.degen.pnl)}
+                </span>
+              </div>
+              <Sparkline data={sim.degen.history} color="var(--fighter-a)" height={48} />
+            </div>
+
+            <div className="col ai-c jc-c" style={{ width: 60 }}>
+              <span className="t-display" style={{ fontSize: 32, color: 'var(--text-faint)' }}>VS</span>
+            </div>
+
+            <div className="col gap-12 flex-1">
+              <div className="row jc-sb ai-c">
+                <span className="t-num" style={{ fontSize: 24, color: sim.whale.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}>
+                  {fmtUsd(sim.whale.pnl)}
+                </span>
+                <div className="row gap-12 ai-c">
+                  <span className="t-display t-up" style={{ color: 'var(--fighter-b)', letterSpacing: '0.12em', fontSize: 14 }}>THE WHALE</span>
+                  <FighterAvatar fighter="whale" context="mini" size={32} />
                 </div>
               </div>
+              <Sparkline data={sim.whale.history} color="var(--fighter-b)" height={48} />
+            </div>
+          </div>
 
-              {/* Sparklines side-by-side */}
-              <div className="grid grid-cols-1 md:grid-cols-11 items-center gap-6 mb-6">
-                <div className="md:col-span-5 flex flex-col gap-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-[var(--fighter-a)] font-bold font-sans">THE DEGEN</span>
-                    <span className="font-mono text-[var(--win)] font-bold">{fmtUsd(simState.degen.pnl)}</span>
-                  </div>
-                  <Sparkline data={simState.degen.history} color="var(--fighter-a)" height={50} />
-                </div>
-
-                <div className="md:col-span-1 text-center font-mono font-bold text-slate-600 text-lg">
-                  VS
-                </div>
-
-                <div className="md:col-span-5 flex flex-col gap-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-[var(--fighter-b)] font-bold font-sans">THE WHALE</span>
-                    <span className="font-mono text-[var(--win)] font-bold">{fmtUsd(simState.whale.pnl)}</span>
-                  </div>
-                  <Sparkline data={simState.whale.history} color="var(--fighter-b)" height={50} />
-                </div>
+          {/* Footer: odds + JOIN SPECTATORS */}
+          <div
+            className="row ai-c jc-sb gap-24"
+            style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-stage)' }}
+          >
+            <div className="col gap-4" style={{ flex: 2 }}>
+              <div className="row jc-sb t-mono t-xs">
+                <span className="text-a">DEGEN {sim.oddsDegen}%</span>
+                <span className="text-b">WHALE {100 - sim.oddsDegen}%</span>
               </div>
+              <OddsBar oddsA={sim.oddsDegen} oddsB={100 - sim.oddsDegen} />
+            </div>
+            <Link href="/duel/1"><BracketButton variant="a">JOIN SPECTATORS →</BracketButton></Link>
+          </div>
+        </div>
+      </section>
 
-              {/* Odds splitter */}
-              <div className="border-t border-[var(--border-soft)] pt-4">
-                <div className="flex justify-between items-center text-[10px] font-mono text-[var(--text-dim)] mb-2 uppercase">
-                  <span>DEGEN odds: {simState.oddsDegen}%</span>
-                  <span>WHALE odds: {100 - simState.oddsDegen}%</span>
+      {/* ── § 02 STANDINGS ─────────────────────────────────────────── */}
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+        <div className="sect-head">
+          <span className="sect-head-num">§ 02</span>
+          <span className="sect-head-title">STANDINGS</span>
+          <span className="sect-head-meta">season 02 · all-time leaderboard</span>
+        </div>
+
+        <div className="card" style={{ padding: '0 24px' }}>
+          {/* Header row */}
+          <div className="row ai-c gap-16" style={{ padding: '12px 0', borderBottom: '1px solid var(--text-faint)' }}>
+            <span className="label-tiny" style={{ width: 32 }}>#</span>
+            <span className="label-tiny" style={{ flex: 1 }}>FIGHTER</span>
+            <span className="label-tiny" style={{ width: 90 }}>RECORD</span>
+            <span className="label-tiny" style={{ width: 100, textAlign: 'right' }}>TOTAL PNL</span>
+            <span className="label-tiny" style={{ width: 220 }}>FORM</span>
+            <span className="label-tiny" style={{ width: 60, textAlign: 'right' }}></span>
+          </div>
+
+          {ROSTER.map((r, i) => {
+            const isPos = r.pnl >= 0;
+            const maxAbs = 400;
+            const w = Math.min(100, (Math.abs(r.pnl) / maxAbs) * 100);
+            return (
+              <div
+                key={r.id}
+                className="row ai-c gap-16"
+                style={{
+                  padding: '14px 0',
+                  borderBottom: i < ROSTER.length - 1 ? '1px solid var(--border)' : 'none',
+                  cursor: 'pointer',
+                }}
+                onClick={() => { window.location.href = `/fighters/${r.id}`; }}
+              >
+                <span className="t-num t-sm t-dim" style={{ width: 32 }}>{String(i + 1).padStart(2, '0')}</span>
+                <div className="row gap-12 ai-c flex-1" style={{ minWidth: 0 }}>
+                  <FighterAvatar fighter={r.id} context="mini" size={28} />
+                  <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap' }}>{r.name}</span>
+                  <span className="t-mono t-xs t-faint" style={{ whiteSpace: 'nowrap' }}>· {r.tier}</span>
                 </div>
-                <OddsBar oddsA={simState.oddsDegen} oddsB={100 - simState.oddsDegen} />
-              </div>
-
-              <div className="flex justify-end mt-6">
-                <Link href="/duel/1">
-                  <BracketButton variant="gold" className="text-[10px] px-6">
-                    JOIN SPECTATORS AREA →
-                  </BracketButton>
+                <span className="t-num t-sm" style={{ width: 90 }}>{r.record}</span>
+                <span className="t-num" style={{ width: 100, textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
+                  {fmtUsd(r.pnl)}
+                </span>
+                <div style={{ width: 220, height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      bottom: 0,
+                      left: isPos ? '50%' : `${50 - w / 2}%`,
+                      width: `${w / 2}%`,
+                      background: isPos ? 'var(--win)' : 'var(--loss)',
+                    }}
+                  />
+                  <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: 'var(--text-faint)' }} />
+                </div>
+                <Link
+                  href={`/fighters/${r.id}`}
+                  className="bk bk-ghost"
+                  style={{ width: 60, textAlign: 'center' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  VIEW →
                 </Link>
               </div>
-            </div>
-          </div>
+            );
+          })}
+        </div>
+      </section>
 
-          {/* § 03 YOUR LEDGER */}
-          <div>
-            <SectionHead num="§ 03" title="YOUR LEDGER" meta="BETTING ARCHIVE" />
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-              {/* Card 1: Active Bet */}
-              <div className="card p-4 bg-[var(--bg-card-2)]/40 rounded-[2px] border-slate-700/60">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[10px] text-[var(--text-faint)] font-bold">ROUND #342</span>
-                  <Chip variant={backedFighterId ? 'live' : 'default'} className="text-[8px] py-0 px-1 border-none font-bold">
-                    {backedFighterId ? 'LIVE IN PLAY' : 'NO ACTIVE BET'}
-                  </Chip>
-                </div>
-                <h4 className="text-xs font-bold text-[var(--text)] uppercase">
-                  {backedFighterId ? `BACKED THE ${backedFighterId.toUpperCase()}` : 'NO MATCH BET PLACED'}
-                </h4>
-                <div className="flex justify-between items-center text-xs font-mono border-t border-[var(--border-soft)] pt-3 mt-3 text-[var(--text-dim)]">
-                  <span>STAKE: {backedFighterId ? '$10.00 USDso' : '--'}</span>
-                  <span className="text-[var(--gold)]">
-                    {backedFighterId ? `${backedFighterId === 'degen' ? simState.oddsDegen : 100 - simState.oddsDegen}% ODDS` : '--'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Card 2: Past Bet */}
-              <div className="card p-4 bg-[var(--bg-stage)]/10 rounded-[2px]">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[10px] text-[var(--text-faint)] font-bold">ROUND #341</span>
-                  <Chip variant="win" className="text-[8px] py-0 px-1 border-none font-bold">SETTLED: WON</Chip>
-                </div>
-                <h4 className="text-xs font-bold text-[var(--text)] uppercase">BACKED THE WHALE</h4>
-                <div className="flex justify-between items-center text-xs font-mono border-t border-[var(--border-soft)] pt-3 mt-3 text-[var(--text-dim)]">
-                  <span>STAKE: $5.00 USDso</span>
-                  <span className="text-[var(--win)] font-bold">+$9.10 USDso</span>
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* ── § 03 YOUR LEDGER ───────────────────────────────────────── */}
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 80 }}>
+        <div className="sect-head">
+          <span className="sect-head-num">§ 03</span>
+          <span className="sect-head-title">YOUR LEDGER</span>
+          <span className="sect-head-meta">lifetime PnL · +$48.92 across 12 bouts</span>
         </div>
 
-        {/* Right Column: § 02 STANDINGS */}
-        <div className="lg:col-span-4">
-          <SectionHead num="§ 02" title="STANDINGS" meta="SEASON LEADERBOARD" />
-          
-          <div className="card border-[var(--border)] mt-4 p-4 bg-[var(--bg-deep)]/90 rounded-[2px] space-y-4">
-            <div className="text-[10px] font-bold text-[var(--text-faint)] border-b border-[var(--border-soft)] pb-2 flex justify-between uppercase">
-              <span>FIGHTER</span>
-              <div className="flex gap-8">
-                <span>RECORD</span>
-                <span>PNL</span>
+        <div className="row gap-16">
+          {[
+            { status: 'live', round: 341, fighters: 'DEGEN vs WHALE',      bet: '$5 on DEGEN @ 65%',   est: '+$2.69 est.', color: 'var(--win)' },
+            { status: 'won',  round: 339, fighters: 'DEGEN vs CONTRARIAN', bet: '$10 on DEGEN @ 58%',  est: '+$7.24',      color: 'var(--win)' },
+            { status: 'lost', round: 338, fighters: 'SCALPER vs SURFER',   bet: '$5 on SCALPER @ 47%', est: '−$5.00',      color: 'var(--loss)' },
+            { status: 'won',  round: 336, fighters: 'WHALE vs DEGEN',      bet: '$8 on WHALE @ 51%',   est: '+$7.85',      color: 'var(--win)' },
+          ].map((b) => (
+            <div key={b.round} className="card pad-16 col gap-8 flex-1">
+              <div className="row jc-sb ai-c">
+                {b.status === 'live' ? (
+                  <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
+                ) : b.status === 'won' ? (
+                  <Chip variant="win">WON</Chip>
+                ) : (
+                  <Chip variant="loss">LOST</Chip>
+                )}
+                <span className="t-mono t-xs t-faint">#{b.round}</span>
               </div>
+              <span className="t-mono t-sm">{b.fighters}</span>
+              <hr className="divider" />
+              <span className="t-mono t-xs t-dim">{b.bet}</span>
+              <span className="t-num" style={{ color: b.color, fontSize: 18 }}>{b.est}</span>
             </div>
-
-            {ROSTER.map((fighter, idx) => {
-              const fullFighter = FIGHTERS[fighter.id];
-              const pnlClass = fighter.pnl >= 0 ? 'text-[var(--win)]' : 'text-[var(--loss)]';
-
-              return (
-                <div key={fighter.id} className="flex flex-col gap-2 border-b border-[var(--border-soft)] pb-3 last:border-b-0 last:pb-0">
-                  <div className="flex items-center justify-between text-xs">
-                    {/* Rank, Name */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 font-bold">{idx + 1}</span>
-                      <FighterAvatar fighter={fighter.id} context="mini" size={28} />
-                      <div className="flex flex-col">
-                        <Link href={`/fighters/${fighter.id}`} className="font-bold text-[var(--text)] hover:underline uppercase">
-                          {fighter.name.split(' ')[1] || fighter.name}
-                        </Link>
-                        <span className="text-[9px] text-[var(--text-faint)] uppercase">{fighter.tier}</span>
-                      </div>
-                    </div>
-
-                    {/* Record / PNL */}
-                    <div className="flex items-center gap-6 font-mono">
-                      <span className="text-[10px] text-slate-400">{fighter.record}</span>
-                      <span className={`font-bold ${pnlClass}`}>{fmtUsd(fighter.pnl)}</span>
-                    </div>
-                  </div>
-
-                  {/* Center-zero custom form bar */}
-                  <div className="w-full h-1.5 bg-slate-900 border border-slate-800 relative mt-1 flex">
-                    <div className="w-1/2 h-full flex justify-end">
-                      {fighter.pnl < 0 && (
-                        <div
-                          className="h-full bg-[var(--loss)]"
-                          style={{ width: `${Math.min(100, (Math.abs(fighter.pnl) / 150) * 100)}%` }}
-                        />
-                      )}
-                    </div>
-                    {/* center line */}
-                    <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-slate-500" />
-                    <div className="w-1/2 h-full">
-                      {fighter.pnl > 0 && (
-                        <div
-                          className="h-full bg-[var(--win)]"
-                          style={{ width: `${Math.min(100, (fighter.pnl / 350) * 100)}%` }}
-                        />
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          ))}
         </div>
-      </main>
+      </section>
     </div>
   );
 }

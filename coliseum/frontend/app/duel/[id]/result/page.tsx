@@ -1,243 +1,253 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useReducer, useEffect } from 'react';
 import Link from 'next/link';
-import { Play, TrendingUp, Users, Coins, RotateCcw, Share2, ArrowRight, Award } from 'lucide-react';
-import { TopBar } from '@/components/shared/TopBar';
+import { useRouter } from 'next/navigation';
+import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
-import { BracketButton, Chip, Dot, SectionHead } from '@/components/shared/OtherHUD';
+import { BracketButton, Chip } from '@/components/shared/OtherHUD';
+import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { FIGHTERS } from '@/lib/fighters';
-import { fmtUsd, fmtPct } from '@/lib/format';
+import { fmtUsd, fmtPct, fmtTime } from '@/lib/format';
+
+interface ResultBet {
+  fighter: 'degen' | 'whale';
+  amount: number;
+}
 
 export default function ResultPage() {
-  const [claimed, setClaimed] = useState(false);
+  const router = useRouter();
+  const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
 
-  const winner = FIGHTERS.degen;
-  const loser = FIGHTERS.whale;
+  useEffect(() => {
+    const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
+    return () => clearInterval(clock);
+  }, []);
 
-  // null = no bet placed. Set to an object to simulate a placed bet.
-  const userBet: { fighter: string; amount: number; odds: number } | null = {
-    fighter: 'degen',
-    amount: 10,
-    odds: 60,
-  };
+  // Mock the user's bet — in production this comes from chain reads / URL state.
+  const bet: ResultBet | null = { fighter: 'whale', amount: 5 };
 
-  const payoutRatio = userBet ? 100 / userBet.odds : 0;
-  const grossPayout = userBet ? userBet.amount * payoutRatio : 0;
-  const netEarnings = userBet ? grossPayout - userBet.amount : 0;
+  const winnerId: 'degen' | 'whale' = sim.degen.pnl >= sim.whale.pnl ? 'degen' : 'whale';
+  const loserId: 'degen' | 'whale' = winnerId === 'degen' ? 'whale' : 'degen';
+  const w = FIGHTERS[winnerId];
+  const l = FIGHTERS[loserId];
+  const wPnl = winnerId === 'degen' ? sim.degen.pnl : sim.whale.pnl;
+  const lPnl = winnerId === 'degen' ? sim.whale.pnl : sim.degen.pnl;
+  const wPct = (wPnl / 300) * 100;
+
+  const betWon = bet !== null && bet.fighter === winnerId;
+  const odds = bet ? (bet.fighter === 'degen' ? sim.oddsDegen : 100 - sim.oddsDegen) : 0;
+  const payout = betWon && bet ? bet.amount * (100 / odds) : 0;
+  const profit = payout - (bet ? bet.amount : 0);
+
+  const payoutMeta = bet ? (betWon ? 'winning ticket · claimable' : 'losing ticket · settled') : 'no bet placed';
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
-      {/* navigation */}
-      <TopBar showNavigation={false} />
+    <div className="col">
+      <AppTopBar />
 
-      {/* Post-match staging status bar */}
-      <section className="border-b border-[var(--border)] bg-[var(--bg-stage)]/20 px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 font-mono uppercase text-xs">
-        <div className="flex items-center gap-3">
-          <SectionHead num="§ POST-DUEL" title="ROUND #342" meta="BOUT SETTLED" />
-          <Chip variant="gold">★ FINALIZED</Chip>
+      {/* Status strip */}
+      <div
+        className="row ai-c jc-sb"
+        style={{ padding: '14px 32px', borderBottom: '1px solid var(--border)', background: 'var(--bg-stage)' }}
+      >
+        <div className="row gap-12 ai-c">
+          <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>
+            § POST-DUEL · ROUND #341
+          </span>
+          <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+          <Chip variant="gold">★ SETTLED · ON-CHAIN</Chip>
         </div>
+        <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
+          NEXT BOUT IN <span className="t-num" style={{ color: 'var(--gold)' }}>{fmtTime(sim.countdown)}</span>
+        </span>
+      </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-[var(--text-faint)] select-none">NEXT BOUT IN: 12m</span>
-          <span className="h-4 w-[1px] bg-[var(--border)]" />
-          <Link href="/duel">
-            <BracketButton variant="ghost" className="text-[10px] py-1 px-3">
-              BACK TO LOBBY
-            </BracketButton>
-          </Link>
+      {/* Winner reveal — bare section, no card chrome */}
+      <section style={{ position: 'relative', padding: '64px 32px 48px', overflow: 'hidden' }}>
+        <div className="col ai-c gap-16" style={{ position: 'relative', maxWidth: 1200, margin: '0 auto' }}>
+          <div className="row gap-16 ai-c">
+            <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
+            <span className="eyebrow" style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}>★ WINNER ★</span>
+            <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
+          </div>
+
+          <div className="vs-pop" style={{ filter: `drop-shadow(0 0 60px ${w.hex})` }}>
+            <FighterAvatar fighter={winnerId} context="card" size={220} state="victory" />
+          </div>
+
+          <h1
+            className="fp-display"
+            style={{
+              fontSize: 'clamp(56px, 8vw, 96px)',
+              letterSpacing: '0.06em',
+              lineHeight: 1,
+              textAlign: 'center',
+              margin: 0,
+              color: w.hex,
+              textShadow: `0 0 60px ${w.hex}`,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {w.name}
+          </h1>
+
+          <div className="row gap-32 ai-c" style={{ marginTop: 24 }}>
+            <div className="col ai-c gap-2">
+              <span className="eyebrow">FINAL PNL</span>
+              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>{fmtUsd(wPnl)}</span>
+            </div>
+            <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
+            <div className="col ai-c gap-2">
+              <span className="eyebrow">RETURN</span>
+              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>{fmtPct(wPct)}</span>
+            </div>
+            <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
+            <div className="col ai-c gap-2">
+              <span className="eyebrow">METHOD</span>
+              <span
+                className="t-display t-up"
+                style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}
+              >
+                PNL DECISION
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Main content grid */}
-      <main className="flex-1 shell-pad grid grid-cols-1 lg:grid-cols-12 gap-10 py-10 items-start select-none">
-        
-        {/* Left 7 Cols: Winner Reveal & tape stats */}
-        <div className="lg:col-span-7 space-y-10">
-          
-          {/* Winner banner oversized */}
-          <div className="card border-[var(--gold)] p-8 bg-[var(--bg-card-2)]/40 rounded-[2px] flex flex-col items-center text-center relative overflow-hidden shadow-[0_0_24px_rgba(252,211,77,0.05)]">
-            
-            {/* Glowing wash behind */}
-            <div
-              className="absolute w-[300px] h-[300px] rounded-full blur-[100px] opacity-25 pointer-events-none scale-110"
-              style={{ backgroundColor: winner.hex }}
-            />
-
-            <div className="flex items-center gap-2 mb-4">
-              <Award className="w-4 h-4 text-[var(--gold)]" />
-              <span className="t-display text-xs text-yellow-400 tracking-widest uppercase">★ ARENA WINNER ★</span>
-            </div>
-
-            {/* Oversized Avatar */}
-            <FighterAvatar fighter="degen" context="card" size={200} state="victory" />
-
-            <h2 className="t-display text-4xl sm:text-6xl text-[var(--fighter-a)] tracking-tighter uppercase mt-6 select-all font-bold">
-              THE DEGEN
-            </h2>
-            <p className="text-[10px] text-[var(--text-faint)] italic font-mono mt-1">"{winner.quote}"</p>
-
-            {/* Stat parameters */}
-            <div className="grid grid-cols-3 gap-4 w-full border-t border-[var(--border-soft)] mt-8 pt-6 text-center font-mono text-xs">
-              <div className="border-r border-[var(--border-soft)]">
-                <span className="text-[9px] text-[var(--text-faint)] uppercase font-bold">FINAL PNL</span>
-                <span className="text-lg font-bold text-[var(--win)] block mt-1">+$42.50</span>
-              </div>
-              <div className="border-r border-[var(--border-soft)]">
-                <span className="text-[9px] text-[var(--text-faint)] uppercase font-bold">RETURN %</span>
-                <span className="text-lg font-bold text-[var(--win)] block mt-1">+35.4%</span>
-              </div>
-              <div>
-                <span className="text-[9px] text-[var(--text-faint)] uppercase font-bold">SETTLED BLOCK</span>
-                <span className="text-lg font-bold text-[var(--text-dim)] block mt-1">#39458</span>
-              </div>
-            </div>
-          </div>
-
-          {/* § 01 FINAL TAPE */}
-          <div>
-            <SectionHead num="§ 01" title="FINAL TAPE" meta="COMPLETED RECORDS" />
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-4">
-              {/* Winner Stats */}
-              <div className="card border-[var(--fighter-a)] p-4 bg-[var(--bg-stage)]/20 rounded-[2px]">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[10px] text-[var(--fighter-a)] font-bold font-sans">WINNER CORNER</span>
-                  <Chip variant="win" className="text-[8px] py-0 px-1 border-none font-bold">+35.4%</Chip>
-                </div>
-                <div className="flex items-center gap-3 mb-4">
-                  <FighterAvatar fighter="degen" context="inline" size={48} />
-                  <div>
-                    <h4 className="text-xs font-bold text-[var(--text)]">THE DEGEN</h4>
-                    <span className="text-[9px] text-[var(--text-faint)] font-mono">AGGRESSIVE momentum chaser</span>
-                  </div>
-                </div>
-                <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] font-mono text-[var(--text-dim)] space-y-2">
-                  <div className="flex justify-between">
-                    <span>BEST TRADE:</span>
-                    <span className="text-[var(--win)] font-bold">+$67.20 (SOMI)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>TRADES EXECUTED:</span>
-                    <span>12 FILLS</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Loser Stats */}
-              <div className="card border-[var(--border)] p-4 bg-[var(--bg-stage)]/10 rounded-[2px] opacity-75">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[10px] text-[var(--text-faint)] font-bold font-sans">LOSER CORNER</span>
-                  <Chip variant="loss" className="text-[8px] py-0 px-1 border-none font-bold">-18.4%</Chip>
-                </div>
-                <div className="flex items-center gap-3 mb-4">
-                  <FighterAvatar fighter="whale" context="inline" size={48} />
-                  <div>
-                    <h4 className="text-xs font-bold text-[var(--text)]">THE WHALE</h4>
-                    <span className="text-[9px] text-[var(--text-faint)] font-mono">PATIENT size allocator</span>
-                  </div>
-                </div>
-                <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] font-mono text-[var(--text-dim)] space-y-2">
-                  <div className="flex justify-between">
-                    <span>BEST TRADE:</span>
-                    <span className="text-[var(--win)] font-bold">+$12.40 (WETH)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>TRADES EXECUTED:</span>
-                    <span>4 FILLS</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
+      {/* § 01 FINAL TAPE */}
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+        <div className="sect-head">
+          <span className="sect-head-num">§ 01</span>
+          <span className="sect-head-title">FINAL TAPE</span>
+          <span className="sect-head-meta">15 rounds settled · {sim.spectators} spectators</span>
         </div>
 
-        {/* Right 5 Cols: Payout Details & CTA actions */}
-        <div className="lg:col-span-5 space-y-8">
-          
-          {/* § 02 YOUR PAYOUT */}
-          <div>
-            <SectionHead num="§ 02" title="YOUR PAYOUT" meta="SETTLED BALANCE" />
-
-            <div className="card p-6 bg-[var(--bg-stage)]/30 rounded-[2px] mt-4 space-y-6">
-              {!userBet ? (
-                <div className="text-center py-6">
-                  <p className="t-display text-[var(--text-faint)] text-xl mb-2 font-bold font-sans">NO BET PLACED.</p>
-                  <p className="text-xs font-mono text-[var(--text-dim)]">
-                    You watched this round as a spectator. Back a fighter next time.
-                  </p>
+        <div className="row gap-16" style={{ alignItems: 'stretch' }}>
+          {/* Winner card */}
+          <div className="card flex-1 col gap-12 pad-24">
+            <div className="row jc-sb ai-c">
+              <div className="row gap-12 ai-c">
+                <FighterAvatar fighter={winnerId} context="mini" size={40} />
+                <div className="col gap-2">
+                  <Chip variant="win">★ WON</Chip>
+                  <span
+                    className="t-display t-up"
+                    style={{ color: w.hex, fontSize: 18, letterSpacing: '0.12em' }}
+                  >
+                    {w.name}
+                  </span>
                 </div>
-              ) : userBet.fighter === winner.id ? (
-                <>
-                  <div className="text-center">
-                    <span className="text-[10px] text-[var(--text-faint)] uppercase font-mono tracking-widest font-bold block mb-1">
-                      YOU BACKED THE WINNER!
-                    </span>
-                    <h3 className="t-display text-3xl font-sans text-[var(--win)] leading-none font-bold">
-                      {fmtUsd(grossPayout)} USDSO
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-dim)] font-mono mt-1.5">
-                      STAKE: {fmtUsd(userBet.amount)} · NET GAINS: {fmtUsd(netEarnings)} (+67%)
-                    </p>
-                  </div>
+              </div>
+              <span className="t-num text-win" style={{ fontSize: 28 }}>{fmtUsd(wPnl)}</span>
+            </div>
+            <hr className="divider" />
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Best round</span><span className="t-num text-win">+$8.92</span>
+            </div>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Worst round</span><span className="t-num text-loss">−$2.10</span>
+            </div>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Trades executed</span><span className="t-num" style={{ color: 'var(--text)' }}>23</span>
+            </div>
+          </div>
 
-                  <div className="border-t border-[var(--border-soft)] pt-4">
-                    {claimed ? (
-                      <div className="text-center py-3 border border-[var(--win)]/30 rounded-[2px] bg-emerald-950/10 text-[var(--win)] text-xs font-bold uppercase tracking-wider">
-                        ✔ PAYOUT CLAIMED SECURELY!
-                      </div>
-                    ) : (
-                      <BracketButton
-                        variant="gold"
-                        onClick={() => setClaimed(true)}
-                        className="w-full text-xs py-3 leading-none"
-                      >
-                        CLAIM PORTFOLIO EARNINGS
-                      </BracketButton>
-                    )}
+          {/* Loser card — opacity 0.7 */}
+          <div className="card flex-1 col gap-12 pad-24" style={{ opacity: 0.7 }}>
+            <div className="row jc-sb ai-c">
+              <div className="row gap-12 ai-c">
+                <FighterAvatar fighter={loserId} context="mini" size={40} />
+                <div className="col gap-2">
+                  <Chip variant="loss">LOST</Chip>
+                  <span
+                    className="t-display t-up"
+                    style={{ color: l.hex, fontSize: 18, letterSpacing: '0.12em' }}
+                  >
+                    {l.name}
+                  </span>
+                </div>
+              </div>
+              <span className="t-num text-loss" style={{ fontSize: 28 }}>{fmtUsd(lPnl)}</span>
+            </div>
+            <hr className="divider" />
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Best round</span><span className="t-num text-win">+$4.20</span>
+            </div>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Worst round</span><span className="t-num text-loss">−$6.80</span>
+            </div>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Trades executed</span><span className="t-num" style={{ color: 'var(--text)' }}>11</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* § 02 YOUR PAYOUT */}
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+        <div className="sect-head">
+          <span className="sect-head-num">§ 02</span>
+          <span className="sect-head-title">YOUR PAYOUT</span>
+          <span className="sect-head-meta">{payoutMeta}</span>
+        </div>
+
+        <div
+          className="card pad-24"
+          style={{ borderColor: betWon ? 'var(--win)' : bet ? 'var(--loss)' : 'var(--border)' }}
+        >
+          {bet ? (
+            <div className="row jc-sb ai-c">
+              <div className="col gap-4">
+                <span className="t-mono t-sm t-dim">YOU BACKED</span>
+                <span
+                  className="t-display t-up"
+                  style={{ fontSize: 22, color: FIGHTERS[bet.fighter].hex, letterSpacing: '0.12em' }}
+                >
+                  {FIGHTERS[bet.fighter].name}
+                </span>
+                <span className="t-mono t-xs text-faint">${bet.amount} @ {odds}%</span>
+              </div>
+
+              {betWon ? (
+                <>
+                  <div className="col ai-c gap-2">
+                    <span className="eyebrow">PAYOUT</span>
+                    <span className="t-num text-win" style={{ fontSize: 36 }}>+${payout.toFixed(2)}</span>
+                    <span className="t-mono t-xs t-dim">profit ${profit.toFixed(2)}</span>
                   </div>
+                  <BracketButton variant="gold">CLAIM PAYOUT →</BracketButton>
                 </>
               ) : (
-                <div className="text-center py-6">
-                  <p className="t-display text-[var(--loss)] text-xl mb-2 font-bold font-sans">COPE.</p>
-                  <p className="text-xs font-mono text-[var(--text-dim)]">
-                    Backed the loser this round. lessons are expensive, degens must learn.
-                  </p>
-                  <BracketButton variant="ghost" className="mt-4 text-[10px] py-2 border-[var(--border)]" onClick={() => {}}>
-                    SETTLED
-                  </BracketButton>
-                </div>
+                <>
+                  <div className="col ai-c gap-2">
+                    <span className="eyebrow">RESULT</span>
+                    <span className="t-num text-loss" style={{ fontSize: 36 }}>−${bet.amount.toFixed(2)}</span>
+                    <span className="t-mono t-xs t-dim">cope. lessons are expensive.</span>
+                  </div>
+                  <BracketButton variant="ghost" disabled>SETTLED</BracketButton>
+                </>
               )}
             </div>
-          </div>
-
-          {/* Staging actions CTAs */}
-          <div className="space-y-4 pt-4 border-t border-[var(--border)]">
-            <span className="text-[10px] text-[var(--text-faint)] font-bold uppercase block tracking-wider text-center select-none">
-              REPLAY & BROADCAST CONTROLS
-            </span>
-            
-            <div className="flex flex-col gap-3">
-              <BracketButton variant="ghost" className="w-full text-[10px] py-2.5 border-[var(--border)] hover:border-slate-600">
-                <RotateCcw className="w-3.5 h-3.5 mr-2" /> REPLAY SPECTATOR DUEL
-              </BracketButton>
-              
-              <BracketButton variant="ghost" className="w-full text-[10px] py-2.5 border-[var(--border)] hover:border-slate-600">
-                <Share2 className="w-3.5 h-3.5 mr-2" /> SHARE FIGHT CARD OVER SIBLING PLACES
-              </BracketButton>
-              
-              <Link href="/duel" className="block w-full">
-                <BracketButton variant="primary" className="w-full text-[10px] py-3">
-                  NEXT FIGHT LOBBY <ArrowRight className="w-3.5 h-3.5 ml-2" />
-                </BracketButton>
-              </Link>
-            </div>
-          </div>
-
+          ) : (
+            <span className="t-mono t-sm t-dim">No bet placed this round.</span>
+          )}
         </div>
+      </section>
 
-      </main>
+      {/* Action row — centered horizontal */}
+      <section className="shell-pad" style={{ paddingTop: 16, paddingBottom: 80 }}>
+        <div className="row gap-12 ai-c jc-c">
+          <Link href="/duel/1">
+            <BracketButton>WATCH REPLAY</BracketButton>
+          </Link>
+          <BracketButton variant="gold">SHARE CARD ⤴</BracketButton>
+          <BracketButton variant="primary" onClick={() => router.push('/duel')}>
+            NEXT BOUT →
+          </BracketButton>
+        </div>
+      </section>
     </div>
   );
 }

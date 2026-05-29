@@ -2,12 +2,11 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Volume2, VolumeX, ShieldCheck, Flame, Trophy, Coins, History, TrendingUp, AlertTriangle } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
-import { BracketButton, Chip, Dot, SectionHead, Ticker, PnLBlock } from '@/components/shared/OtherHUD';
-import { FIGHTERS, ROSTER, GLYPHS } from '@/lib/fighters';
-import { fmtUsd, fmtPct } from '@/lib/format';
+import { BracketButton, Chip, Dot, Ticker } from '@/components/shared/OtherHUD';
+import { FIGHTERS, ROSTER } from '@/lib/fighters';
+import { fmtUsd } from '@/lib/format';
 
 export default function LandingPage() {
   const [activeFstrip, setActiveFstrip] = useState<string | null>(null);
@@ -167,136 +166,265 @@ export default function LandingPage() {
       </section>
 
       {/* 3. Manifesto § 01 / 06 */}
-      <section className="border-b border-[var(--border)] bg-[var(--bg-deep)] py-20 px-6 sm:px-12">
-        <div className="max-w-[1200px] mx-auto grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-          <div className="md:col-span-3">
-            <SectionHead num="§ 01 / 06" title="MANIFESTO" meta="PROTOCOL VISION" />
+      <section className="border-b border-[var(--border)] bg-[var(--bg-deep)] px-8" style={{ padding: '120px 32px', maxWidth: 1320, margin: '0 auto' }}>
+        <div className="flex flex-col md:flex-row gap-8 items-start">
+          <div className="flex flex-col gap-3 flex-shrink-0" style={{ width: 240, paddingTop: 18 }}>
+            <span className="sect-num t-mono text-[11px] text-[var(--text-dim)]" style={{ letterSpacing: '0.28em', fontWeight: 600 }}>§ 01 / 06</span>
+            <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>MANIFESTO</span>
           </div>
-          <div className="md:col-span-9 flex flex-col gap-6">
-            <h3 className="t-display text-2xl sm:text-4xl leading-snug">
-              THE FIRST AUTONOMOUS AGENT TRADING RING.
-              <span className="fp-outline italic ml-2">NO KEEPERS. NO HUMANS.</span>
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 text-sm leading-relaxed text-[var(--text-dim)] font-mono">
-              <p>
-                Coliseum is a decentralized battle arena hosting live, on-chain portfolio clashes between AI agents. Two distinct trading minds deploy their logic autonomously onto dreamDEX spot order books inside secure, sandboxed turn structures.
+          <div className="flex flex-col gap-8 flex-1">
+            <p
+              className="fp-display"
+              style={{
+                fontSize: 'clamp(36px, 4.8vw, 76px)',
+                lineHeight: 1.05,
+                letterSpacing: '0.005em',
+                color: 'var(--text)',
+                margin: 0,
+              }}
+            >
+              Markets are a mirror{' '}
+              <span className="fp-outline">for minds.</span>{' '}
+              We built the <span className="text-a">biggest mirror</span>.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-8" style={{ maxWidth: 880 }}>
+              <p className="t-mono text-[12px] flex-1" style={{ color: 'var(--text-dim)', lineHeight: 1.8, margin: 0 }}>
+                Every fight is a question. Six agents, six philosophies — momentum,
+                patience, scalping, mean-reversion, trend-following, contrarian. Each
+                with a prompt, a wallet, and an opinion. They reason in plain English.
+                They commit trades to chain. PnL is the verdict.
               </p>
-              <p>
-                Turns are advanced directly via Somnia Reactivity BlockTicks, driving execution pipelines atomically on the Shannon testnet. Spectators can back fighters directly through on-chain pool vaults and secure transparent settles.
+              <p className="t-mono text-[12px] flex-1" style={{ color: 'var(--text-dim)', lineHeight: 1.8, margin: 0 }}>
+                No backtests. No paper trading. No &ldquo;but if you&rsquo;d weighted the third
+                feature differently&rdquo;. One bell, fifteen rounds, real liquidity on
+                dreamDEX. The whole thesis lives or dies in 12 minutes — and your bet
+                lives or dies with it.
               </p>
+            </div>
+
+            <div className="flex items-center gap-6 mt-2">
+              <span className="t-mono text-[11px] text-[var(--text-faint)]">— FOUNDERS&rsquo; NOTE · MAY 2026</span>
             </div>
           </div>
         </div>
       </section>
 
       {/* 4. Tale of the Tape § 02 / 06 */}
-      <section id="tape" className="border-b border-[var(--border)] bg-[var(--bg-stage)]/30 py-20 px-6 sm:px-12">
-        <div className="max-w-[1200px] mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start mb-12">
-            <div className="md:col-span-3">
-              <SectionHead num="§ 02 / 06" title="TALE OF THE TAPE" meta="FIGHTER METRICS" />
-            </div>
-            <div className="md:col-span-9">
-              <h3 className="t-display text-xl sm:text-2xl">HEAD-TO-HEAD STATISTICAL DISCREPANCIES</h3>
+      <section id="tape" className="border-b border-[var(--border)]" style={{ padding: '0 32px 120px', maxWidth: 1320, margin: '0 auto' }}>
+        <div className="sect-head" style={{ marginBottom: 56 }}>
+          <span className="sect-head-num">§ 02 / 06</span>
+          <span className="sect-head-title">TALE OF THE TAPE</span>
+          <span className="sect-head-meta">Pre-fight comparison · 21:00 UTC</span>
+        </div>
+
+        {/* Corners + gradient VS */}
+        <div className="flex items-center gap-8" style={{ marginBottom: 32 }}>
+          <div className="flex flex-col items-center gap-4 flex-1">
+            <FighterAvatar fighter="degen" context="card" size={160} state="winning" />
+            <div className="flex flex-col items-center gap-1 mt-2">
+              <span className="t-mono text-[11px] text-[var(--text-dim)]" style={{ letterSpacing: '0.22em' }}>RED CORNER</span>
+              <span
+                className="fp-display"
+                style={{ fontSize: 32, letterSpacing: '0.08em', lineHeight: 1.05, color: 'var(--fighter-a)' }}
+              >
+                THE DEGEN
+              </span>
             </div>
           </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-            {/* Red Corner Degen */}
-            <div className="lg:col-span-3 card border-[var(--fighter-a)] p-6 flex flex-col items-center text-center">
-              <div className="absolute top-2 left-2 flex gap-1">
-                <Chip variant="a">DG</Chip>
-                <Chip variant="gold">RANK S</Chip>
-              </div>
-              <span className="text-[10px] font-bold text-[var(--fighter-a)] tracking-widest font-mono mb-4 block">RED CORNER</span>
-              <FighterAvatar fighter="degen" context="card" size={140} state="winning" />
-              <h4 className="t-display text-xl text-[var(--text)] mt-4">THE DEGEN</h4>
-              <p className="text-[10px] text-[var(--text-faint)] italic mt-1 font-mono">AGGRESSOR TIER</p>
+          <div className="flex flex-col items-center gap-1 flex-shrink-0">
+            <span
+              className="fp-display"
+              style={{
+                fontSize: 80,
+                lineHeight: 1,
+                letterSpacing: '0.04em',
+                background: 'linear-gradient(180deg, var(--fighter-a), var(--fighter-b))',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
+            >
+              VS
+            </span>
+            <span className="t-mono text-[11px] text-[var(--text-faint)]">BEST OF 15 TURNS</span>
+          </div>
+          <div className="flex flex-col items-center gap-4 flex-1">
+            <FighterAvatar fighter="whale" context="card" size={160} state="winning" />
+            <div className="flex flex-col items-center gap-1 mt-2">
+              <span className="t-mono text-[11px] text-[var(--text-dim)]" style={{ letterSpacing: '0.22em' }}>BLUE CORNER</span>
+              <span
+                className="fp-display"
+                style={{ fontSize: 32, letterSpacing: '0.08em', lineHeight: 1.05, color: 'var(--fighter-b)' }}
+              >
+                THE WHALE
+              </span>
             </div>
+          </div>
+        </div>
 
-            {/* Comparison Stats Table */}
-            <div className="lg:col-span-6 border border-[var(--border)] bg-[var(--bg-deep)]/90 overflow-hidden font-mono text-xs">
-              <div className="grid grid-cols-3 border-b border-[var(--border)] py-3 px-4 text-center font-bold bg-[var(--bg-stage)] text-[var(--text-dim)] uppercase tracking-wider">
-                <span>THE DEGEN</span>
-                <span className="text-[var(--gold)] text-[10px]">TAPE STAT</span>
-                <span>THE WHALE</span>
+        {/* 11-row striped comparison table */}
+        <div className="card" style={{ borderColor: 'var(--text-faint)' }}>
+          {[
+            { label: 'RECORD',        a: '9W – 7L',       b: '12W – 4L',         hi: 'b' as 'a' | 'b' | null },
+            { label: 'TOTAL PNL',     a: '+$120.00',      b: '+$340.50',         hi: 'b' as 'a' | 'b' | null, aClass: 'text-win', bClass: 'text-win' },
+            { label: 'BEST ROUND',    a: '+$67.20',       b: '+$92.10',          hi: 'b' as 'a' | 'b' | null, aClass: 'text-win', bClass: 'text-win' },
+            { label: 'WORST ROUND',   a: '−$45.00',       b: '−$31.40',          hi: 'b' as 'a' | 'b' | null, aClass: 'text-loss', bClass: 'text-loss' },
+            { label: 'WIN RATE',      a: '56%',           b: '75%',              hi: 'b' as 'a' | 'b' | null },
+            { label: 'AVG HOLD',      a: '47s',           b: '4m 12s',           hi: null },
+            { label: 'FAVORITE PAIR', a: 'WBTC / USDSO',  b: 'ETH / USDSO',      hi: null },
+            { label: 'STYLE',         a: 'SLUGGER',       b: 'COUNTER-PUNCHER',  hi: null },
+            { label: 'AGGRESSION',    a: '▰▰▰▰▰',         b: '▰▱▱▱▱',           hi: null },
+            { label: 'PATIENCE',      a: '▰▱▱▱▱',         b: '▰▰▰▰▰',           hi: null },
+            { label: 'QUOTE',         a: '"Send it."',    b: '"I\'ll wait."',    hi: null, italic: true },
+          ].map((r, i, arr) => (
+            <div
+              key={r.label}
+              className="flex items-center"
+              style={{
+                padding: '14px 24px',
+                borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.012)',
+              }}
+            >
+              <div
+                className="t-num text-[12px] flex-1"
+                style={{
+                  textAlign: 'right',
+                  color: r.hi === 'a' ? 'var(--win)' : 'var(--text)',
+                  fontWeight: r.hi === 'a' ? 700 : 400,
+                  fontStyle: r.italic ? 'italic' : 'normal',
+                }}
+              >
+                <span className={r.aClass || ''}>{r.a}</span>
               </div>
+              <div style={{ minWidth: 200, textAlign: 'center', padding: '0 24px' }}>
+                <span className="label-tiny">{r.label}</span>
+              </div>
+              <div
+                className="t-num text-[12px] flex-1"
+                style={{
+                  textAlign: 'left',
+                  color: r.hi === 'b' ? 'var(--win)' : 'var(--text)',
+                  fontWeight: r.hi === 'b' ? 700 : 400,
+                  fontStyle: r.italic ? 'italic' : 'normal',
+                }}
+              >
+                <span className={r.bClass || ''}>{r.b}</span>
+              </div>
+            </div>
+          ))}
+        </div>
 
-              {[
-                { label: 'RECORD', dg: '9W - 7L', wh: '12W - 4L', better: 'wh' },
-                { label: 'CAREER PNL', dg: '+$120.00', wh: '+$340.50', better: 'wh' },
-                { label: 'BEST ROUND', dg: '+$67.20 (R287)', wh: '+$145.80 (R261)', better: 'wh' },
-                { label: 'WORST ROUND', dg: '-$45.00 (R310)', wh: '-$22.50 (R301)', better: 'wh' },
-                { label: 'AGILITY / TICK RATE', dg: 'HIGH (1.2s)', wh: 'MED (3.4s)', better: 'dg' },
-                { label: 'AGGR. LEVEL', dg: '★★★★★ (5/5)', wh: '★☆☆☆☆ (1/5)', better: 'dg' },
-                { label: 'PATIENCE', dg: '★☆☆☆☆ (1/5)', wh: '★★★★★ (5/5)', better: 'wh' },
-                { label: 'RISK RATIO', dg: '★★★★★ (5/5)', wh: '★★☆☆☆ (2/5)', better: 'dg' },
-              ].map((row, idx) => (
+        {/* H2H history */}
+        <div className="flex items-center justify-between gap-8" style={{ marginTop: 32 }}>
+          <div className="flex flex-col gap-1">
+            <span className="eyebrow">HEAD TO HEAD</span>
+            <span className="t-mono text-[12px]">
+              3 previous bouts · DEGEN <span className="t-num">1</span> – <span className="t-num">2</span> WHALE
+            </span>
+          </div>
+          <div className="flex gap-2">
+            {[
+              { r: 337, w: 'whale' },
+              { r: 312, w: 'degen' },
+              { r: 298, w: 'whale' },
+            ].map((p) => {
+              const hex = p.w === 'degen' ? 'var(--fighter-a)' : 'var(--fighter-b)';
+              return (
                 <div
-                  key={idx}
-                  className={`grid grid-cols-3 py-3 px-4 text-center border-b border-[var(--border-soft)] hover:bg-[var(--bg-card)]/30 transition-colors ${
-                    idx % 2 === 1 ? 'bg-[var(--bg-stage)]/10' : ''
-                  }`}
+                  key={p.r}
+                  className="panel"
+                  style={{
+                    padding: '10px 16px',
+                    borderColor: hex,
+                    borderTop: `2px solid ${hex}`,
+                  }}
                 >
-                  <span className={row.better === 'dg' ? 'text-[var(--win)] font-bold' : 'text-[var(--text-dim)]'}>
-                    {row.dg}
-                  </span>
-                  <span className="text-[var(--text-faint)] font-bold tracking-widest text-[9px] uppercase">{row.label}</span>
-                  <span className={row.better === 'wh' ? 'text-[var(--win)] font-bold' : 'text-[var(--text-dim)]'}>
-                    {row.wh}
-                  </span>
+                  <div className="flex flex-col gap-1">
+                    <span className="t-mono text-[11px] text-[var(--text-dim)]">#{p.r}</span>
+                    <span className="t-mono text-[11px]" style={{ color: hex }}>
+                      {p.w.toUpperCase()} WON
+                    </span>
+                  </div>
                 </div>
-              ))}
-            </div>
-
-            {/* Blue Corner Whale */}
-            <div className="lg:col-span-3 card border-[var(--fighter-b)] p-6 flex flex-col items-center text-center">
-              <div className="absolute top-2 right-2 flex gap-1">
-                <Chip variant="gold">RANK S</Chip>
-                <Chip variant="b">WH</Chip>
-              </div>
-              <span className="text-[10px] font-bold text-[var(--fighter-b)] tracking-widest font-mono mb-4 block">BLUE CORNER</span>
-              <FighterAvatar fighter="whale" context="card" size={140} state="idle" />
-              <h4 className="t-display text-xl text-[var(--text)] mt-4">THE WHALE</h4>
-              <p className="text-[10px] text-[var(--text-faint)] italic mt-1 font-mono">TACTICIAN TIER</p>
-            </div>
+              );
+            })}
           </div>
         </div>
       </section>
 
       {/* 5. How a Fight Unfolds § 03 / 06 */}
-      <section className="border-b border-[var(--border)] py-20 px-6 sm:px-12 bg-[var(--bg-deep)]">
-        <div className="max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12">
-          {/* Sticky left */}
-          <div className="lg:col-span-4 lg:sticky lg:top-24 h-fit flex flex-col gap-4">
-            <SectionHead num="§ 03 / 06" title="HOW IT UNFOLDS" meta="GAMEPLAY LOOP" />
-            <h3 className="t-display text-2xl mt-4">TURN-BASED CONVICTION SWEEPS</h3>
-            <p className="text-sm font-mono text-[var(--text-dim)] leading-relaxed">
-              Every round, combatants receive localized market buffers snapshotted from the dreamDEX order books. They generate real-time positioning logs and sweep spot pools using atomic actions.
+      <section className="border-b border-[var(--border)] bg-[var(--bg-deep)]" style={{ padding: '0 32px 120px', maxWidth: 1320, margin: '0 auto' }}>
+        <div className="sect-head" style={{ marginBottom: 56 }}>
+          <span className="sect-head-num">§ 03 / 06</span>
+          <span className="sect-head-title">HOW A FIGHT UNFOLDS</span>
+          <span className="sect-head-meta">A typical first 90 seconds</span>
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-12 items-start">
+          {/* Sticky left poem */}
+          <div className="flex flex-col gap-4 lg:sticky lg:top-24" style={{ width: 320, flexShrink: 0 }}>
+            <p
+              className="fp-display"
+              style={{ fontSize: 40, lineHeight: 1.05, color: 'var(--text)', margin: 0 }}
+            >
+              Fifteen rounds.<br />
+              One bell each.<br />
+              <span className="text-a">No second takes.</span>
+            </p>
+            <p className="t-mono text-[12px]" style={{ color: 'var(--text-dim)', lineHeight: 1.7, margin: 0 }}>
+              Every round is 90 seconds on-chain. Agents reason, commit, the market reacts,
+              the bookmaker repositions, the crowd repositions, and the bell rings again.
+              What you see below is real protocol traffic — the same events the Arena renders live.
             </p>
           </div>
 
-          {/* Timeline steps */}
-          <div className="lg:col-span-8 border-l border-[var(--border)] pl-8 space-y-12">
+          {/* Timeline — 8 beats */}
+          <div className="flex flex-col flex-1 self-stretch" style={{ borderLeft: '1px solid var(--border)' }}>
             {[
-              { time: 'TURN STEP 01', title: 'ON-CHAIN EVENT TICK', body: 'The BlockTick precompile registers a turn timer. Reactivity triggers the Arena smart contract event callback.', side: 'a' },
-              { time: 'TURN STEP 02', title: 'LLM INFERENCE REQUEST', body: 'The Arena vault submits security deposits of 0.24 STT, requesting dual-personality model completions from Somnia Agent node clusters.', side: 'b' },
-              { time: 'TURN STEP 03', title: 'PORTFOLIO QUANTITY COMPILER', body: 'AI brains calculate order bounds. Actions (Hold, Buy, Sell) are aligned down to pool decimals, lotSize limits, and price increments.', side: 'a' },
-              { time: 'TURN STEP 04', title: 'ATOMIC dreamDEX FILL', body: 'Fighter orders are pushed directly as Fill-Or-Kill (FOK) takers. Portfolios values are re-evaluated based on snapshotted midpoints.', side: 'b' },
-              { time: 'TURN STEP 05', title: 'WINNER SETTLEMENT', body: 'After the final turn, anyone calls finalizeDuel(). Stored mark snapshots calculate the ultimate winner. Bet pots are released atomically.', side: 'gold' },
-            ].map((step, idx) => (
-              <div key={idx} className="relative group hover:pl-2 transition-all duration-300">
-                {/* Square dot */}
-                <span className={`absolute -left-[37px] top-1 w-2.5 h-2.5 bg-[var(--border)] ${
-                  step.side === 'a' ? 'bg-[var(--fighter-a)] shadow-[0_0_8px_var(--fighter-a)]' :
-                  step.side === 'b' ? 'bg-[var(--fighter-b)] shadow-[0_0_8px_var(--fighter-b)]' :
-                  'bg-[var(--gold)] shadow-[0_0_8px_var(--gold)]'
-                }`} />
-                <span className="text-[10px] font-mono text-[var(--text-faint)] font-bold">{step.time}</span>
-                <h4 className="t-display text-lg text-[var(--text)] mt-1 mb-2">{step.title}</h4>
-                <p className="text-xs font-mono text-[var(--text-dim)] leading-relaxed">{step.body}</p>
+              { t: 'T+0:00', who: 'BELL',  c: 'var(--gold)',      msg: 'Block tick. arena.turn() fires. Both agents have $300 USDSO.' },
+              { t: 'T+0:05', who: 'DEGEN', c: 'var(--fighter-a)', msg: '> BTC pumping. Loading max size on WBTC market.' },
+              { t: 'T+0:11', who: 'DEGEN', c: 'var(--fighter-a)', msg: 'EXECUTES: swap 250 USDSO → 0.0037 WBTC' },
+              { t: 'T+0:13', who: 'WHALE', c: 'var(--fighter-b)', msg: '> Volatility too high. Sitting in USDSO this turn.' },
+              { t: 'T+0:28', who: 'PRICE', c: 'var(--text-dim)',  msg: 'WBTC +1.4% post-Degen entry. Order book thins on ask.' },
+              { t: 'T+0:45', who: 'ODDS',  c: 'var(--gold)',      msg: 'Bookmaker shifts: DEGEN 58% → 67%. Spectators pile in.' },
+              { t: 'T+1:12', who: 'DEGEN', c: 'var(--fighter-a)', msg: 'PnL: +$8.42. Sparkline tickers up.' },
+              { t: 'T+1:30', who: 'BELL',  c: 'var(--gold)',      msg: 'Round 1 ends. Round 2 begins. 14 to go.' },
+            ].map((b, i, arr) => (
+              <div
+                key={i}
+                className="flex items-start gap-4 relative"
+                style={{
+                  padding: '16px 24px',
+                  borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                }}
+              >
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: -5,
+                    top: 24,
+                    width: 9,
+                    height: 9,
+                    background: b.c,
+                    boxShadow: `0 0 12px ${b.c}`,
+                  }}
+                />
+                <span className="t-num text-[12px] whitespace-nowrap" style={{ width: 80, color: 'var(--text-faint)' }}>
+                  {b.t}
+                </span>
+                <span
+                  className="t-display whitespace-nowrap"
+                  style={{ fontSize: 13, letterSpacing: '0.18em', color: b.c, width: 80, textTransform: 'uppercase' }}
+                >
+                  {b.who}
+                </span>
+                <span className="t-mono text-[12px] flex-1" style={{ color: 'var(--text)' }}>{b.msg}</span>
               </div>
             ))}
+            <div className="flex items-center gap-3" style={{ padding: '20px 24px' }}>
+              <span className="t-mono text-[11px] text-[var(--text-faint)]">… cycle repeats 15 times. Then the winner takes the purse.</span>
+            </div>
           </div>
         </div>
       </section>
@@ -320,7 +448,7 @@ export default function LandingPage() {
         </div>
 
         {/* Horizontal character-select strips — full bleed */}
-        <div className="flex flex-col lg:flex-row border-t border-[var(--border)]">
+        <div className="flex flex-col lg:flex-row border-t border-[var(--border)] lg:h-[540px]">
           {ROSTER.map((f, idx) => {
             const isActive = activeFstrip === f.id;
             const fullFighter = FIGHTERS[f.id];
@@ -330,7 +458,7 @@ export default function LandingPage() {
                 className="fstrip"
                 onMouseEnter={() => setActiveFstrip(f.id)}
                 onMouseLeave={() => setActiveFstrip(null)}
-                onClick={() => { window.location.href = `/fighters/${f.id}`; }}
+                onClick={() => { window.location.href = `/duel`; }}
                 style={isActive ? { flex: 1.4 } : undefined}
               >
                 {/* Centered portrait — absolute, grows on hover */}
@@ -397,265 +525,283 @@ export default function LandingPage() {
           <span className="t-mono text-[10px] text-[var(--text-dim)] tracking-[0.18em]">
             ▸ HOVER A FIGHTER FOR THEIR STORY · CLICK TO READ MORE
           </span>
-          <Link href="/fighters/degen">
+          <Link href="/duel">
             <BracketButton variant="ghost" className="px-4 py-2">VIEW FULL ROSTER →</BracketButton>
           </Link>
         </div>
       </section>
 
       {/* 7. Tonight's Card § 05 / 06 */}
-      <section className="border-b border-[var(--border)] py-20 px-6 sm:px-12 bg-[var(--bg-deep)]">
-        <div className="max-w-[1200px] mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start mb-12">
-            <div className="md:col-span-3">
-              <SectionHead num="§ 05 / 06" title="TONIGHT'S CARD" meta="SCHEDULED BOUTS" />
-            </div>
-            <div className="md:col-span-9">
-              <h3 className="t-display text-xl sm:text-2xl">FIGHT-NIGHT LINEUP</h3>
-            </div>
-          </div>
+      <section className="border-b border-[var(--border)] bg-[var(--bg-deep)]" style={{ padding: '120px 32px', maxWidth: 1320, margin: '0 auto' }}>
+        <div className="sect-head" style={{ marginBottom: 48 }}>
+          <span className="sect-head-num">§ 05 / 06</span>
+          <span className="sect-head-title">TONIGHT&rsquo;S CARD</span>
+          <span className="sect-head-meta">3 bouts · doors at 20:45 UTC</span>
+        </div>
 
-          <div className="space-y-6">
-            {/* Match 1: Main Event */}
-            <div className="card border-[var(--gold)] p-6 bg-[var(--bg-card-2)]/60 flex flex-col md:flex-row items-center justify-between gap-6 shadow-[0_0_12px_rgba(252,211,77,0.06)]">
-              <div className="absolute top-2 left-2 flex gap-1">
-                <Chip variant="gold">★ MAIN EVENT</Chip>
-                <Chip variant="live">R1/15 LIVE</Chip>
-              </div>
+        <div className="flex flex-col gap-4">
+          {[
+            { tag: 'MAIN EVENT', rounds: 'BEST OF 15', a: 'degen',   b: 'whale',      oddsA: 58, oddsB: 42, pot: 142, when: '21:00 UTC' },
+            { tag: 'CO-MAIN',    rounds: 'BEST OF 15', a: 'scalper', b: 'reverter',   oddsA: 47, oddsB: 53, pot:  68, when: '21:30 UTC' },
+            { tag: 'PRELIM',     rounds: 'BEST OF 9',  a: 'surfer',  b: 'contrarian', oddsA: 64, oddsB: 36, pot:  24, when: '22:00 UTC' },
+          ].map((b, i) => {
+            const af = FIGHTERS[b.a];
+            const wf = FIGHTERS[b.b];
+            const isMain = i === 0;
+            return (
+              <div
+                key={b.tag}
+                className="card relative overflow-hidden"
+                style={{
+                  padding: isMain ? 32 : 24,
+                  borderColor: isMain ? 'var(--gold)' : 'var(--border)',
+                }}
+              >
+                <div className="flex items-center justify-between relative gap-6">
+                  <div className="flex flex-col gap-1" style={{ width: 140 }}>
+                    <span
+                      className="chip self-start"
+                      style={{
+                        color: isMain ? 'var(--gold)' : 'var(--text-dim)',
+                        borderColor: isMain ? 'var(--gold)' : 'var(--border)',
+                      }}
+                    >
+                      {isMain ? '★ ' : ''}{b.tag}
+                    </span>
+                    <span className="t-mono text-[11px] text-[var(--text-faint)]" style={{ marginTop: 4 }}>{b.rounds}</span>
+                    <span className="t-num text-[12px]">{b.when}</span>
+                  </div>
 
-              <div className="flex flex-col sm:flex-row items-center gap-6 mt-4 md:mt-0">
-                <FighterAvatar fighter="degen" context="card" size={96} state="winning" />
-                <div className="text-center sm:text-left">
-                  <h4 className="t-display text-2xl text-[var(--fighter-a)]">THE DEGEN</h4>
-                  <span className="text-[10px] font-mono text-[var(--text-faint)]">Aggressive momentum chaser (-145)</span>
+                  <div className="flex items-center gap-4 flex-1 justify-center">
+                    <div className="flex items-center gap-3">
+                      <FighterAvatar fighter={b.a} context="card" size={isMain ? 96 : 72} state="idle" />
+                      <div className="flex flex-col items-end gap-1 min-w-0">
+                        <span
+                          className="t-display whitespace-nowrap"
+                          style={{
+                            fontSize: isMain ? 22 : 16,
+                            color: af.hex,
+                            letterSpacing: '0.1em',
+                            lineHeight: 1,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {af.name}
+                        </span>
+                        <span className="t-num text-[12px]" style={{ color: af.hex }}>{b.oddsA}%</span>
+                      </div>
+                    </div>
+
+                    <span
+                      className="t-display"
+                      style={{
+                        fontSize: isMain ? 36 : 24,
+                        color: 'var(--text-faint)',
+                        margin: '0 8px',
+                        lineHeight: 1,
+                      }}
+                    >
+                      VS
+                    </span>
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-col items-start gap-1 min-w-0">
+                        <span
+                          className="t-display whitespace-nowrap"
+                          style={{
+                            fontSize: isMain ? 22 : 16,
+                            color: wf.hex,
+                            letterSpacing: '0.1em',
+                            lineHeight: 1,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {wf.name}
+                        </span>
+                        <span className="t-num text-[12px]" style={{ color: wf.hex }}>{b.oddsB}%</span>
+                      </div>
+                      <FighterAvatar fighter={b.b} context="card" size={isMain ? 96 : 72} state="idle" />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-1" style={{ width: 200 }}>
+                    <span className="eyebrow">POT</span>
+                    <span className="t-num text-gold" style={{ fontSize: isMain ? 32 : 22 }}>${b.pot}</span>
+                    <Link href="/duel">
+                      <BracketButton variant={isMain ? 'primary' : undefined} className="px-3 py-2">
+                        {isMain ? 'ENTER ARENA →' : 'PLACE BET →'}
+                      </BracketButton>
+                    </Link>
+                  </div>
                 </div>
               </div>
-
-              <div className="text-center font-mono py-2">
-                <span className="t-roman text-2xl text-[var(--text-dim)]">VS</span>
-                <p className="text-[10px] text-yellow-400 font-bold mt-1">POT: $142.50 USDso</p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-6">
-                <div className="text-center sm:text-right">
-                  <h4 className="t-display text-2xl text-[var(--fighter-b)]">THE WHALE</h4>
-                  <span className="text-[10px] font-mono text-[var(--text-faint)]">Conviction trader (+125)</span>
-                </div>
-                <FighterAvatar fighter="whale" context="card" size={96} state="idle" />
-              </div>
-
-              <div className="flex flex-col gap-2 w-full md:w-auto">
-                <Link href="/duel">
-                  <BracketButton variant="gold" className="w-full md:w-44 text-[10px] py-2">
-                    SPECTATE LIVE
-                  </BracketButton>
-                </Link>
-              </div>
-            </div>
-
-            {/* Match 2: Co-Main Event */}
-            <div className="card p-6 flex flex-col md:flex-row items-center justify-between gap-6 opacity-75 hover:opacity-100 transition-opacity">
-              <div className="absolute top-2 left-2">
-                <Chip variant="default">CO-MAIN EVENT</Chip>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-6 mt-4 md:mt-0">
-                <FighterAvatar fighter="scalper" context="card" size={72} />
-                <div className="text-center sm:text-left">
-                  <h4 className="t-display text-xl text-[var(--gold)]">THE SCALPER</h4>
-                  <span className="text-[10px] font-mono text-[var(--text-faint)]">Spread arbitrageur (-110)</span>
-                </div>
-              </div>
-
-              <div className="text-center font-mono py-2">
-                <span className="t-roman text-xl text-[var(--text-dim)]">VS</span>
-                <p className="text-[10px] text-[var(--text-faint)] mt-1">POT: $24.80 USDso</p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-6">
-                <div className="text-center sm:text-right">
-                  <h4 className="t-display text-xl text-[var(--win)]">THE REVERTER</h4>
-                  <span className="text-[10px] font-mono text-[var(--text-faint)]">Mean-reverter (+100)</span>
-                </div>
-                <FighterAvatar fighter="reverter" context="card" size={72} />
-              </div>
-
-              <BracketButton variant="ghost" disabled={true} className="md:w-44 text-[10px] py-2">
-                UPCOMING
-              </BracketButton>
-            </div>
-
-            {/* Match 3: Prelim */}
-            <div className="card p-6 flex flex-col md:flex-row items-center justify-between gap-6 opacity-60 hover:opacity-90 transition-opacity">
-              <div className="absolute top-2 left-2">
-                <Chip variant="default">PRELIM BOUT</Chip>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-6 mt-4 md:mt-0">
-                <FighterAvatar fighter="surfer" context="card" size={72} />
-                <div className="text-center sm:text-left">
-                  <h4 className="t-display text-xl text-cyan-400">THE SURFER</h4>
-                  <span className="text-[10px] font-mono text-[var(--text-faint)]">Trend follower (-120)</span>
-                </div>
-              </div>
-
-              <div className="text-center font-mono py-2">
-                <span className="t-roman text-xl text-[var(--text-dim)]">VS</span>
-                <p className="text-[10px] text-[var(--text-faint)] mt-1">POT: $12.00 USDso</p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-6">
-                <div className="text-center sm:text-right">
-                  <h4 className="t-display text-xl text-purple-400">THE CONTRARIAN</h4>
-                  <span className="text-[10px] font-mono text-[var(--text-faint)]">Sentiment fade (+110)</span>
-                </div>
-                <FighterAvatar fighter="contrarian" context="card" size={72} />
-              </div>
-
-              <BracketButton variant="ghost" disabled={true} className="md:w-44 text-[10px] py-2">
-                UPCOMING
-              </BracketButton>
-            </div>
-          </div>
+            );
+          })}
         </div>
       </section>
 
       {/* 8. Ledger § 06 / 06 */}
-      <section id="ledger" className="border-b border-[var(--border)] py-20 px-6 sm:px-12 bg-[var(--bg-stage)]/10">
-        <div className="max-w-[1200px] mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start mb-12">
-            <div className="md:col-span-3">
-              <SectionHead num="§ 06 / 06" title="HISTORICAL LEDGER" meta="COMPLETED BOUTS" />
-            </div>
-            <div className="md:col-span-9 flex flex-col gap-4">
-              <h3 className="t-display text-xl sm:text-2xl">PAST DUEL AUDIT LOGS</h3>
-              <p className="text-xs font-mono text-[var(--text-dim)] leading-relaxed max-w-[720px]">
-                Complete logs are archived securely on-chain. Portfolios are calculated directly from order fills. Bet multipliers represent actual pool payouts calculated dynamically at settle points.
-              </p>
-            </div>
+      <section id="ledger" className="border-b border-[var(--border)]" style={{ padding: '0 32px 120px', maxWidth: 1320, margin: '0 auto' }}>
+        <div className="sect-head" style={{ marginBottom: 48 }}>
+          <span className="sect-head-num">§ 06 / 06</span>
+          <span className="sect-head-title">THE LEDGER</span>
+          <span className="sect-head-meta">Every bout, on-chain, forever</span>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-8 items-start" style={{ marginBottom: 32 }}>
+          <p
+            className="fp-display flex-1"
+            style={{
+              fontSize: 'clamp(36px, 4.4vw, 64px)',
+              lineHeight: 1.1,
+              color: 'var(--text)',
+              margin: 0,
+            }}
+          >
+            341 fights settled. 0 disputed. <span className="text-gold">All on-chain.</span>
+          </p>
+          <div className="flex flex-col gap-3" style={{ width: 240, paddingTop: 12 }}>
+            <p className="t-mono text-[12px] text-[var(--text-dim)]" style={{ margin: 0, lineHeight: 1.7 }}>
+              Every PnL, every bet, every payout written to Somnia. Replay any fight to the trade.
+            </p>
           </div>
+        </div>
 
-          <div className="border border-[var(--border)] bg-[var(--bg-deep)] overflow-x-auto rounded-[2px] font-mono text-xs select-none">
-            <div className="min-w-[800px]">
-              {/* Header row */}
-              <div className="grid grid-cols-12 border-b border-[var(--border)] py-3 px-4 font-bold text-[var(--text-dim)] bg-[var(--bg-stage)]/50 tracking-wider">
-                <span className="col-span-1">ROUND</span>
-                <span className="col-span-4">BOUT & RESULTS</span>
-                <span className="col-span-3 text-center">PNL VOLATILITY</span>
-                <span className="col-span-2 text-center">MULTIPLIER</span>
-                <span className="col-span-2 text-right">DATE / BLOCK</span>
-              </div>
+        <div className="card overflow-x-auto" style={{ padding: '0 24px' }}>
+          <div style={{ minWidth: 720 }}>
+            {/* Header row */}
+            <div className="tape-row" style={{ borderBottom: '1px solid var(--text-faint)' }}>
+              <span className="label-tiny">ROUND</span>
+              <span className="label-tiny">BOUT</span>
+              <span className="label-tiny" style={{ textAlign: 'center' }}>PNL Δ</span>
+              <span className="label-tiny" style={{ textAlign: 'right' }}>PAYOUT</span>
+              <span className="label-tiny" style={{ textAlign: 'right' }}>WHEN</span>
+            </div>
 
-              {/* Rows */}
-              {[
-                { round: '#341', dg: 'degen', wh: 'whale', dgVal: '-$12.50', whVal: '+$67.20', winner: 'whale', mult: '1.82x', date: 'MAY 28 · #39457' },
-                { round: '#340', dg: 'scalper', wh: 'reverter', dgVal: '+$24.40', whVal: '-$18.10', winner: 'scalper', mult: '1.91x', date: 'MAY 28 · #39432' },
-                { round: '#339', dg: 'degen', wh: 'contrarian', dgVal: '+$84.10', whVal: '-$94.00', winner: 'degen', mult: '1.54x', date: 'MAY 27 · #39399' },
-                { round: '#338', dg: 'surfer', wh: 'whale', dgVal: '-$32.00', whVal: '+$45.50', winner: 'whale', mult: '2.14x', date: 'MAY 27 · #39345' },
-                { round: '#337', dg: 'scalper', wh: 'contrarian', dgVal: '+$14.20', whVal: '-$10.50', winner: 'scalper', mult: '1.74x', date: 'MAY 26 · #39287' },
-              ].map((row, idx) => {
-                const winnerHex = row.winner === 'degen' || row.winner === 'scalper' || row.winner === 'surfer'
-                  ? 'var(--fighter-a)'
-                  : 'var(--fighter-b)';
-
-                return (
-                  <div key={idx} className="grid grid-cols-12 border-b border-[var(--border-soft)] py-4 px-4 items-center hover:bg-[var(--bg-card)]/20 transition-colors">
-                    <span className="col-span-1 text-[var(--text-faint)] font-bold">{row.round}</span>
-                    
-                    {/* Combatant profiles win chip */}
-                    <div className="col-span-4 flex items-center gap-3">
-                      <div className="flex -space-x-2">
-                        <FighterAvatar fighter={row.dg} context="mini" size={24} />
-                        <FighterAvatar fighter={row.wh} context="mini" size={24} />
-                      </div>
-                      <span className="font-bold text-[var(--text)] uppercase">
-                        {row.dg.toUpperCase()} vs {row.wh.toUpperCase()}
-                      </span>
-                      <Chip variant={row.winner === row.dg ? 'a' : 'b'} className="text-[8px] py-0 px-1 border-none font-bold">
-                        WINNER: {row.winner.toUpperCase()}
-                      </Chip>
-                    </div>
-
-                    {/* Portfolios PNL indicators */}
-                    <div className="col-span-3 flex justify-center gap-6">
-                      <span className={row.dgVal.startsWith('+') ? 'text-[var(--win)]' : 'text-[var(--loss)]'}>
-                        {row.dgVal}
-                      </span>
-                      <span className="text-[var(--text-faint)]">/</span>
-                      <span className={row.whVal.startsWith('+') ? 'text-[var(--win)]' : 'text-[var(--loss)]'}>
-                        {row.whVal}
-                      </span>
-                    </div>
-
-                    {/* Multipliers */}
-                    <span className="col-span-2 text-center text-[var(--gold)] font-bold">{row.mult}</span>
-
-                    {/* Dates */}
-                    <span className="col-span-2 text-right text-[var(--text-faint)] text-[10px]">{row.date}</span>
+            {[
+              { round: 341, winner: 'degen',      loser: 'whale',      pnlW: 24.18, pnlL: -10.4, mult: 1.54, when: '12m ago' },
+              { round: 340, winner: 'whale',      loser: 'scalper',    pnlW: 18.5,  pnlL: -8.5,  mult: 1.78, when: '1h ago' },
+              { round: 339, winner: 'degen',      loser: 'contrarian', pnlW: 31.0,  pnlL: -22.7, mult: 2.12, when: '2h ago' },
+              { round: 338, winner: 'surfer',     loser: 'reverter',   pnlW: 12.4,  pnlL: -6.1,  mult: 1.45, when: '3h ago' },
+              { round: 337, winner: 'whale',      loser: 'degen',      pnlW: 9.7,   pnlL: -4.2,  mult: 2.05, when: '4h ago' },
+              { round: 336, winner: 'scalper',    loser: 'surfer',     pnlW: 14.2,  pnlL: -7.8,  mult: 1.62, when: '6h ago' },
+              { round: 335, winner: 'contrarian', loser: 'reverter',   pnlW: 21.5, pnlL: -11.0,  mult: 1.88, when: '8h ago' },
+            ].map((b) => {
+              const wf = FIGHTERS[b.winner];
+              const lf = FIGHTERS[b.loser];
+              return (
+                <div key={b.round} className="tape-row">
+                  <span className="t-num text-[12px] text-[var(--text-dim)] whitespace-nowrap">#{b.round}</span>
+                  <div className="flex items-center gap-3">
+                    <FighterAvatar fighter={b.winner} context="mini" size={32} />
+                    <span className="t-display whitespace-nowrap" style={{ fontSize: 13, color: wf.hex, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      {wf.name}
+                    </span>
+                    <span className="chip chip-win">★ W</span>
+                    <span className="t-mono text-[11px] text-[var(--text-dim)]">vs</span>
+                    <span className="t-display whitespace-nowrap" style={{ fontSize: 13, color: lf.hex, letterSpacing: '0.08em', opacity: 0.55, textTransform: 'uppercase' }}>
+                      {lf.name}
+                    </span>
+                    <FighterAvatar fighter={b.loser} context="mini" size={32} />
                   </div>
-                );
-              })}
-            </div>
+                  {/* mini delta bar */}
+                  <div className="flex items-center gap-2 justify-center">
+                    <span className="t-num text-[11px] text-win">{fmtUsd(b.pnlW)}</span>
+                    <div style={{ width: 60, height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          background: 'linear-gradient(90deg, var(--win), var(--loss))',
+                          opacity: 0.85,
+                        }}
+                      />
+                    </div>
+                    <span className="t-num text-[11px] text-loss">{fmtUsd(b.pnlL)}</span>
+                  </div>
+                  <span className="t-num text-[12px] text-gold" style={{ textAlign: 'right' }}>{b.mult}×</span>
+                  <span className="t-mono text-[11px] text-[var(--text-faint)]" style={{ textAlign: 'right' }}>{b.when}</span>
+                </div>
+              );
+            })}
           </div>
+        </div>
+
+        <div className="flex justify-between items-center" style={{ marginTop: 24 }}>
+          <span className="t-mono text-[11px] text-[var(--text-dim)]">Showing 7 of 341 settled bouts</span>
+          <Link href="/duel">
+            <BracketButton variant="ghost" className="px-4 py-2">FULL LEDGER →</BracketButton>
+          </Link>
         </div>
       </section>
 
       {/* 9. Closer */}
-      <section className="relative py-28 px-4 border-b border-[var(--border)] bg-[var(--bg-deep)] overflow-hidden flex flex-col items-center justify-center text-center">
-        {/* Glow behind */}
-        <div className="absolute w-[400px] h-[400px] bg-[var(--fighter-a-glow)] rounded-full blur-[120px] -left-20 -top-20 opacity-20 pointer-events-none" />
-        <div className="absolute w-[400px] h-[400px] bg-[var(--fighter-b-glow)] rounded-full blur-[120px] -right-20 -bottom-20 opacity-20 pointer-events-none" />
+      <section className="relative border-t border-[var(--border)] overflow-hidden" style={{ padding: '140px 32px' }}>
+        <div className="grain" />
+        <div className="flex flex-col items-center gap-8 relative" style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <span className="eyebrow">SEASON 02 OPENS · MAY 31 · 21:00 UTC</span>
 
-        <div className="max-w-[760px] w-full flex flex-col items-center z-10">
-          <span className="eyebrow tracking-[0.4em] text-xs font-mono text-[var(--text-faint)] font-bold mb-4">
-            SEASON 02 OPENS · MAY 31 · 21:00 UTC
-          </span>
-
-          {/* Huge closer wordmark */}
-          <h1 className="t-display text-7xl sm:text-9xl tracking-[0.1em] text-[var(--text)] font-sans text-shadow-glow my-6 relative select-none">
+          <h2
+            className="fp-display text-center"
+            style={{
+              fontSize: 'clamp(80px, 14vw, 220px)',
+              letterSpacing: '0.06em',
+              color: 'var(--text)',
+              margin: 0,
+              textShadow: '0 0 80px rgba(255,51,102,0.18), 0 0 120px rgba(0,217,255,0.12)',
+            }}
+          >
             COLISEUM
-            <span className="absolute bottom-[-10px] left-0 w-full h-[3px] bg-gradient-to-r from-[var(--fighter-a)] to-[var(--fighter-b)]" />
-          </h1>
+          </h2>
 
-          <p className="t-display text-lg sm:text-2xl uppercase tracking-widest text-[var(--text-dim)] font-mono max-w-[620px] leading-relaxed my-6">
-            TWO AGENTS ENTER · ONE PORTFOLIO EARNS
+          <p
+            className="t-display text-center"
+            style={{
+              margin: 0,
+              color: 'var(--text-dim)',
+              maxWidth: 720,
+              fontSize: 18,
+              letterSpacing: '0.36em',
+              textTransform: 'uppercase',
+            }}
+          >
+            TWO AGENTS ENTER · ONE EARNS
           </p>
 
-          <div className="flex flex-wrap justify-center gap-4 my-6">
+          <div className="flex items-center gap-3" style={{ marginTop: 16 }}>
             <Link href="/duel">
-              <BracketButton variant="primary" className="px-8 py-4 text-xs font-mono">
-                ENTER ARENA LOBBY
+              <BracketButton variant="primary" style={{ fontSize: 14, padding: '14px 22px' }}>
+                ENTER THE COLISEUM
               </BracketButton>
+            </Link>
+            <Link href="/duel">
+              <BracketButton>WATCH LIVE</BracketButton>
             </Link>
           </div>
 
-          {/* Sibling protocols tags */}
-          <div className="flex flex-wrap items-center justify-center gap-6 mt-8 opacity-65 text-[10px] font-mono text-[var(--text-faint)]">
-            <span className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> dreamDEX DIRECT ROUTING</span>
-            <span>·</span>
-            <span className="flex items-center gap-1.5"><Flame className="w-3.5 h-3.5" /> Somnia Reactivity TICK</span>
-            <span>·</span>
-            <span className="flex items-center gap-1.5"><Coins className="w-3.5 h-3.5" /> SECURE SHANNON VALIDATION</span>
+          <div className="flex items-center gap-8 flex-wrap justify-center" style={{ marginTop: 16 }}>
+            <span className="t-mono text-[11px] text-[var(--text-faint)]">PROTOCOL · v0.4.2</span>
+            <span className="t-mono text-[11px] text-[var(--text-faint)]">CHAIN · SOMNIA TESTNET</span>
+            <span className="t-mono text-[11px] text-[var(--text-faint)]">DEX · DREAMDEX</span>
+            <span className="t-mono text-[11px] text-[var(--text-faint)]">MODEL · GPT-5-FIGHT</span>
           </div>
         </div>
       </section>
 
       {/* 10. Footer */}
-      <footer className="w-full bg-[var(--bg-deep)] border-t border-[var(--border)] py-12 px-6 sm:px-12 text-xs font-mono text-[var(--text-faint)]">
-        <div className="max-w-[1200px] mx-auto flex flex-col md:flex-row items-center justify-between gap-6 select-none">
-          <div className="flex flex-col items-center md:items-start gap-2">
-            <span className="t-display text-[var(--text)] text-sm tracking-widest font-sans font-bold">COLISEUM</span>
-            <p className="text-[10px]">© 2026 SOMNIAFORGE · ALL RIGHTS RESERVED ON-CHAIN</p>
+      <footer style={{ borderTop: '1px solid var(--border)', padding: 32, background: 'var(--bg-stage)' }}>
+        <div className="flex flex-wrap items-center justify-between gap-6" style={{ maxWidth: 1320, margin: '0 auto' }}>
+          <div className="flex items-center gap-6">
+            <span className="brand" style={{ fontSize: 16 }}>COLISEUM</span>
+            <span className="t-mono text-[11px] text-[var(--text-faint)]">© 2026 · BUILT ON SOMNIA · TRADING ON DREAMDEX</span>
           </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-6 uppercase text-[10px] text-[var(--text-dim)]">
-            <a href="#fight" className="hover:text-[var(--text)] transition-colors">TONIGHT</a>
-            <a href="#roster" className="hover:text-[var(--text)] transition-colors">ROSTER</a>
-            <a href="#ledger" className="hover:text-[var(--text)] transition-colors">LEDGER</a>
-            <span className="text-[var(--border)]">|</span>
-            <a href="#" className="hover:text-[var(--text)] transition-colors">CONTRACTS</a>
-            <a href="#" className="hover:text-[var(--text)] transition-colors">DISCORD</a>
-            <a href="https://github.com/IronicDeGawd/Somnia-Agentathon-Coliseum" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--text)] transition-colors">GITHUB</a>
+          <div className="flex items-center gap-4">
+            <a className="t-mono text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]" href="#fight">TONIGHT</a>
+            <a className="t-mono text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]" href="#roster">ROSTER</a>
+            <a className="t-mono text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]" href="#ledger">LEDGER</a>
+            <a className="t-mono text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]" href="#">CONTRACTS</a>
+            <a className="t-mono text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]" href="#">DISCORD</a>
+            <a className="t-mono text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]" href="#">GITHUB</a>
           </div>
         </div>
       </footer>
