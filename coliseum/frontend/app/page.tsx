@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { Volume2, VolumeX, ShieldCheck, Flame, Trophy, Coins, History, TrendingUp, AlertTriangle } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
@@ -10,20 +10,9 @@ import { FIGHTERS, ROSTER, GLYPHS } from '@/lib/fighters';
 import { fmtUsd, fmtPct } from '@/lib/format';
 
 export default function LandingPage() {
-  const [countdown, setCountdown] = useState(42);
   const [activeFstrip, setActiveFstrip] = useState<string | null>(null);
   const [backedFighter, setBackedFighter] = useState<string | null>(null);
   const [backingAmount, setBackingAmount] = useState<number>(0);
-  const [bellIn, setBellIn] = useState(20);
-
-  // Simple game ticking simulation for timers
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCountdown((prev) => (prev > 0 ? prev - 1 : 45));
-      setBellIn((prev) => (prev > 0 ? prev - 1 : 20));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const handleBack = (fighterId: string, amount: number) => {
     setBackedFighter(fighterId);
@@ -88,9 +77,9 @@ export default function LandingPage() {
           {/* 3 Large display statistics */}
           <div className="grid grid-cols-3 gap-2 sm:gap-6 w-full max-w-[620px] bg-[var(--bg-stage)]/60 border border-[var(--border)] p-4 sm:p-6 mb-8 rounded-[2px] backdrop-blur-md">
             <div className="flex flex-col items-center border-r border-[var(--border-soft)]">
-              <span className="text-[10px] text-[var(--text-dim)] font-mono tracking-widest">BELL IN</span>
-              <span className="t-num text-2xl sm:text-4xl text-[var(--gold)] mt-1 sm:mt-2">
-                00:{String(bellIn).padStart(2, "0")}
+              <span className="text-[10px] text-[var(--text-dim)] font-mono tracking-widest">NEXT BOUT</span>
+              <span className="t-num text-lg sm:text-2xl text-[var(--gold)] mt-1 sm:mt-2 tracking-widest">
+                ON DEMAND
               </span>
             </div>
             <div className="flex flex-col items-center border-r border-[var(--border-soft)]">
@@ -122,11 +111,11 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          {/* Locked / timer parameters */}
+          {/* Bet confirmation / spectator note */}
           <div className="mt-6 flex flex-col items-center gap-2">
             <p className="text-[10px] text-[var(--text-faint)] uppercase font-mono tracking-[0.15em] flex items-center gap-1.5">
               <Dot variant="warn" pulse={true} className="w-1.5 h-1.5" />
-              BETS LOCK IN {countdown} SECONDS · AUTO-SETTLING SECURELY
+              BETS LOCK WHEN DUEL STARTS · ON-CHAIN SETTLEMENT
             </p>
             {backedFighter && (
               <Chip variant="gold" className="text-[9px] animate-bounce">

@@ -34,18 +34,22 @@ export const Avatar: React.FC<AvatarProps> = ({
   const tier = fData.tier || 'AGGRESSOR';
 
   // Determine seed for DiceBear based on fighter variant style
-  let avatarSeed = fData.seedBottts || 'default-seed-1';
-  let avatarStyle = 'bottts-neutral';
+  // shield → bottts-neutral (seedBottts)
+  // helm   → pixel-art-neutral (seedPixel)   — matches original design
+  // tarot  → adventurer-neutral (seedAdventurer)
+  let avatarSeed: string;
+  let avatarUrl: string;
 
-  if (variant === 'tarot') {
+  if (variant === 'helm') {
     avatarSeed = fData.seedPixel || 'pixel-seed-1';
-    avatarStyle = 'pixel-art-neutral';
-  } else if (variant === 'helm') {
+    avatarUrl = `https://api.dicebear.com/9.x/pixel-art-neutral/svg?seed=${encodeURIComponent(avatarSeed)}&backgroundColor=transparent&radius=0`;
+  } else if (variant === 'tarot') {
     avatarSeed = fData.seedAdventurer || 'adventurer-seed-1';
-    avatarStyle = 'adventurer-neutral';
+    avatarUrl = `https://api.dicebear.com/9.x/adventurer-neutral/svg?seed=${encodeURIComponent(avatarSeed)}&backgroundColor=transparent&radius=0`;
+  } else {
+    avatarSeed = fData.seedBottts || 'default-seed-1';
+    avatarUrl = `https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${encodeURIComponent(avatarSeed)}&backgroundType=solid&backgroundColor=transparent&radius=0`;
   }
-
-  const avatarUrl = `https://api.dicebear.com/9.x/${avatarStyle}/svg?seed=${avatarSeed}&backgroundColor=transparent&radius=0`;
 
   // Clip path polygon strings
   const polygons = {
