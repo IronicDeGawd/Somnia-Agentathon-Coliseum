@@ -28,12 +28,15 @@ async function main() {
 
   const arenaAddr = manifest?.contracts?.Arena?.address as `0x${string}` | undefined;
   const usdsoAddr = manifest?.external?.usdso as `0x${string}` | undefined;
+  const regAddr   = manifest?.contracts?.FighterRegistry?.address as `0x${string}` | undefined;
 
   if (!arenaAddr) throw new Error("Arena address missing from manifest.");
   if (!usdsoAddr) throw new Error("USDso address missing from manifest.external.");
+  if (!regAddr)   throw new Error("FighterRegistry address missing from manifest.");
 
-  console.log(`  Reusing Arena:  ${arenaAddr}`);
-  console.log(`  Reusing USDso:  ${usdsoAddr}`);
+  console.log(`  Reusing Arena:    ${arenaAddr}`);
+  console.log(`  Reusing USDso:    ${usdsoAddr}`);
+  console.log(`  Reusing Registry: ${regAddr}`);
 
   const [wallet] = await hre.viem.getWalletClients();
   const deployer = wallet.account.address;
@@ -42,7 +45,7 @@ async function main() {
 
   // ── Deploy Matchmaker(arena, usdso) ───────────────────────────────────────
   console.log("\nDeploying Matchmaker...");
-  const matchmaker = await hre.viem.deployContract("Matchmaker", [arenaAddr, usdsoAddr]);
+  const matchmaker = await hre.viem.deployContract("Matchmaker", [arenaAddr, usdsoAddr, regAddr]);
   console.log(`  Matchmaker:     ${matchmaker.address}`);
 
   // ── Sanity reads against the live Arena ───────────────────────────────────

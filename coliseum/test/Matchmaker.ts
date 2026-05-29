@@ -13,9 +13,12 @@ async function deploy() {
   const mockUsdso = await hre.viem.deployContract("MockERC20", ["USDso", "USDso"]);
   const mockArena = await hre.viem.deployContract("MockArenaMatchmaker", [mockUsdso.address]);
 
+  // MockArenaMatchmaker also exposes FIGHTER_COUNT(), so it doubles as the
+  // registry stub for the fighter-index validation.
   const mm = await hre.viem.deployContract("Matchmaker", [
     mockArena.address,
     mockUsdso.address,
+    mockArena.address,
   ]);
 
   // Fund alice and bob with 1000 USDso each

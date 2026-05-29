@@ -29,7 +29,6 @@ interface IArena {
     function minDepositFor(uint16 turns) external view returns (uint256);
     function recoverFunds(uint256 duelId) external;
     function PLATFORM_FEE() external view returns (uint256);
-    function FIGHTER_COUNT() external view returns (uint8);
 
     // Field order: 0=fighterA, 1=fighterB, 2=creator, 3=startBlock,
     // 4=lastTurnBlock, 5=completedCallbacks, 6=turns, 7=poolMask,
@@ -48,6 +47,11 @@ interface IERC20M {
     function balanceOf(address account) external view returns (uint256);
 }
 
+interface IRegistry {
+    // FIGHTER_COUNT lives on the FighterRegistry, NOT on Arena.
+    function FIGHTER_COUNT() external view returns (uint8);
+}
+
 contract Matchmaker {
 
     // ─── Ownership ───────────────────────────────────────────────────────────
@@ -57,8 +61,9 @@ contract Matchmaker {
 
     // ─── Immutables ───────────────────────────────────────────────────────────
 
-    IArena  public immutable arena;
-    IERC20M public immutable usdso;
+    IArena    public immutable arena;
+    IERC20M   public immutable usdso;
+    IRegistry public immutable registry;
 
     // Mirrors ArenaTypes.DuelStatus.Resolved = 3.
     // If Arena's enum ever changes, update this constant.
@@ -147,10 +152,11 @@ contract Matchmaker {
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 
-    constructor(address _arena, address _usdso) {
-        owner = msg.sender;
-        arena = IArena(_arena);
-        usdso = IERC20M(_usdso);
+    constructor(address _arena, address _usdso, address _registry) {
+        owner    = msg.sender;
+        arena    = IArena(_arena);
+        usdso    = IERC20M(_usdso);
+        registry = IRegistry(_registry);
     }
 
     // ─── Queue ────────────────────────────────────────────────────────────────
@@ -164,8 +170,9 @@ contract Matchmaker {
         if (turns != 3 && turns != 6 && turns != 9 && turns != 15)
             revert InvalidTier();
 
-        // Validate fighter index against on-chain registry (M-1 fix)
-        if (fighter >= arena.FIGHTER_COUNT()) revert InvalidFighter();
+        // Validate fighter index against the FighterRegistry (M-1 fix).
+        // NOTE: FIGHTER_COUNT lives on the registry, not on Arena.
+        if (fighter >= registry.FIGHTER_COUNT()) revert InvalidFighter();
 
         uint256 half = halfDeposit(turns);
 
