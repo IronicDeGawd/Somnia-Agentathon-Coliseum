@@ -8,15 +8,9 @@ import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 export const somniaTestnet = defineChain({
   id: 50312,
   name: 'Somnia Shannon Testnet',
-  nativeCurrency: {
-    name: 'Somnia Token',
-    symbol: 'STT',
-    decimals: 18,
-  },
+  nativeCurrency: { name: 'Somnia Token', symbol: 'STT', decimals: 18 },
   rpcUrls: {
-    default: {
-      http: ['https://api.infra.testnet.somnia.network'],
-    },
+    default: { http: ['https://api.infra.testnet.somnia.network'] },
   },
   blockExplorers: {
     default: {
@@ -27,12 +21,17 @@ export const somniaTestnet = defineChain({
   testnet: true,
 });
 
-// RainbowKit config. A WalletConnect projectId is required for the
-// WalletConnect/mobile options; injected wallets (MetaMask, Rabby, etc.)
-// work without it. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID for full support.
+// WalletConnect Cloud project id — client-side, NOT a secret (it's baked into
+// the client bundle by design). Shared across the SomniaForge workspace; rotate
+// via cloud.reown.com. Env override wins; the shared id is the fallback so the
+// full wallet list (Rainbow, MetaMask, WalletConnect QR, Coinbase) works
+// out of the box.
+const WC_PROJECT_ID =
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '6af78a1e30c8055287399862f108dc91';
+
 export const config = getDefaultConfig({
   appName: 'Coliseum',
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? 'coliseum_testnet_demo',
+  projectId: WC_PROJECT_ID,
   chains: [somniaTestnet],
   transports: {
     [somniaTestnet.id]: http(),

@@ -2,12 +2,13 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { formatUnits } from 'viem';
-import { useWatchContractEvent, useAccount } from 'wagmi';
+import { useWatchContractEvent, useAccount, useChainId, useSwitchChain } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
 import { useQueueState } from '@/hooks/useQueueState';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { somniaTestnet } from '@/lib/chain';
 
 const TIER_POOLS: Record<number, string[]> = {
   3:  ['SOMI'],
@@ -52,6 +53,9 @@ function QueueInner({
 
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
+  const chainId = useChainId();
+  const { switchChain, isPending: isSwitching } = useSwitchChain();
+  const wrongNetwork = isConnected && chainId !== somniaTestnet.id;
 
   const [matchedDuelId, setMatchedDuelId] = useState<bigint | null>(null);
   const [queued, setQueued] = useState(false);
@@ -385,7 +389,7 @@ function QueueInner({
         </div>
       )}
 
-      {/* Submit — connect first if no wallet, else queue */}
+      {/* Submit — connect → switch network → queue */}
       {!isConnected ? (
         <button
           className="bk bk-primary"
@@ -393,6 +397,22 @@ function QueueInner({
           onClick={() => openConnectModal?.()}
         >
           CONNECT WALLET TO QUEUE
+        </button>
+      ) : wrongNetwork ? (
+        <button
+          className="bk bk-primary"
+          style={{
+            width: '100%',
+            padding: '14px',
+            letterSpacing: '0.08em',
+            fontSize: '13px',
+            color: 'var(--loss)',
+            borderColor: 'var(--loss)',
+          }}
+          disabled={isSwitching}
+          onClick={() => switchChain({ chainId: somniaTestnet.id })}
+        >
+          {isSwitching ? 'SWITCHING…' : 'SWITCH TO SOMNIA TESTNET'}
         </button>
       ) : (
         <button

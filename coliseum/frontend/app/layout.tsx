@@ -14,8 +14,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" data-palette="violet" className="h-full antialiased">
-      <body className="min-h-full flex flex-col font-mono bg-[var(--bg-deep)] text-[var(--text)] select-none">
+    <html lang="en" data-palette="violet" className="h-full antialiased" suppressHydrationWarning>
+      <body
+        className="min-h-full flex flex-col font-mono bg-[var(--bg-deep)] text-[var(--text)] select-none"
+        suppressHydrationWarning
+      >
         {/* Render the scanlines globally */}
         <CrtBg />
         <Providers>{children}</Providers>

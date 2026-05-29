@@ -92,7 +92,7 @@ export const AppTopBar: React.FC = () => {
                   </button>
                 ) : chain.unsupported ? (
                   <button className="bk" onClick={openChainModal} type="button" style={{ color: 'var(--loss)', borderColor: 'var(--loss)' }}>
-                    WRONG NETWORK
+                    ⚠ SWITCH NETWORK
                   </button>
                 ) : (
                   <button
