@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { formatUnits } from 'viem';
-import { useStartDuel } from '@/hooks/useStartDuel';
-import { useUSDsoBalance } from '@/hooks/useUSDsoBalance';
-import { ROSTER } from '@/lib/fighters';
+import { useWatchContractEvent } from 'wagmi';
+import { useQueue } from '@/hooks/useQueue';
+import { useQueueState } from '@/hooks/useQueueState';
+import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
+import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 
-// Maps turn count to pool labels for the tier selector
 const TIER_POOLS: Record<number, string[]> = {
   3:  ['SOMI'],
   6:  ['SOMI', 'WETH'],
@@ -18,142 +19,202 @@ const TURN_OPTIONS = [3, 6, 9, 15] as const;
 type TurnOption = typeof TURN_OPTIONS[number];
 
 interface DuelCreatorProps {
-  onDuelCreated?: (duelId: bigint) => void;
+  onMatchFound?: (duelId: bigint) => void;
 }
 
-// Inner component that has valid hook args
-function DuelCreatorInner({
-  fighterA,
-  fighterB,
+// Inner: re-created when fighter/turns change so hooks get stable args
+function QueueInner({
+  fighter,
   turns,
-  onDuelCreated,
-  onFighterAChange,
-  onFighterBChange,
+  onMatchFound,
+  onFighterChange,
   onTurnsChange,
 }: {
-  fighterA: number;
-  fighterB: number;
+  fighter: number;
   turns: TurnOption;
-  onDuelCreated?: (duelId: bigint) => void;
-  onFighterAChange: (id: number) => void;
-  onFighterBChange: (id: number) => void;
+  onMatchFound?: (duelId: bigint) => void;
+  onFighterChange: (idx: number) => void;
   onTurnsChange: (t: TurnOption) => void;
 }) {
-  const { balance, formatted: balanceFormatted, isLoading: balanceLoading } = useUSDsoBalance();
-  const { startDuel, totalRequired, isPending, isSuccess, error } = useStartDuel(fighterA, fighterB, turns);
+  const {
+    halfDeposit,
+    usdsoBalance,
+    hasEnough,
+    enterQueue,
+    cancelQueue,
+    isPending,
+    isSuccess,
+    error,
+  } = useQueue(fighter, turns);
 
-  const [createdDuelId, setCreatedDuelId] = useState<bigint | null>(null);
-  const [phase, setPhase] = useState<'idle' | 'approving' | 'creating' | 'done'>('idle');
-  const [localError, setLocalError] = useState<string | null>(null);
+  const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
 
-  const totalRequiredFormatted = totalRequired !== null
-    ? Number(formatUnits(totalRequired, 18)).toFixed(2)
+  const [matchedDuelId, setMatchedDuelId] = useState<bigint | null>(null);
+  const [queued, setQueued] = useState(false);
+
+  // When enterQueue succeeds, flip into waiting state
+  useEffect(() => {
+    if (isSuccess && !isPending) {
+      setQueued(true);
+    }
+  }, [isSuccess, isPending]);
+
+  // Watch MatchStarted on the Matchmaker contract
+  useWatchContractEvent({
+    address: CONTRACT_ADDRESSES.Matchmaker,
+    abi: ABIS.Matchmaker,
+    eventName: 'MatchStarted',
+    onLogs(logs) {
+      for (const log of logs) {
+        const args = (log as unknown as { args?: { duelId?: bigint } }).args;
+        if (args?.duelId !== undefined) {
+          setMatchedDuelId(args.duelId);
+          setQueued(false);
+          onMatchFound?.(args.duelId);
+          refetchSlots();
+        }
+      }
+    },
+  });
+
+  const halfDepositFormatted = halfDeposit !== null
+    ? Number(formatUnits(halfDeposit, 18)).toFixed(2)
     : '—';
 
-  const hasSufficientBalance = totalRequired !== null && balance >= totalRequired;
+  const balanceFormatted = Number(formatUnits(usdsoBalance, 18)).toFixed(2);
 
-  const handleSubmit = useCallback(async () => {
-    setLocalError(null);
-    setPhase('approving');
+  const currentSlot = slots[turns] ?? null;
+  const fighterVisual = FIGHTER_VISUAL_MAP[fighter];
+  const fighterRoster = ROSTER[fighter];
 
-    const duelId = await startDuel();
+  const handleEnterQueue = useCallback(async () => {
+    await enterQueue();
+  }, [enterQueue]);
 
-    if (duelId !== null) {
-      setCreatedDuelId(duelId);
-      setPhase('done');
-      onDuelCreated?.(duelId);
-    } else if (error) {
-      setLocalError(error.message);
-      setPhase('idle');
-    } else {
-      // startDuel returned null but no error — tx went through, duelId unresolved
-      setPhase('done');
-    }
-  }, [startDuel, error, onDuelCreated]);
+  const handleCancelQueue = useCallback(async () => {
+    await cancelQueue();
+    setQueued(false);
+  }, [cancelQueue]);
 
-  // Sync phase with isPending
-  const displayPhase = isPending ? (phase === 'approving' ? 'approving' : 'creating') : phase;
+  // Match found state
+  if (matchedDuelId !== null) {
+    return (
+      <div className="col gap-24">
+        <div
+          className="panel pad-24 col gap-16"
+          style={{
+            borderColor: 'var(--win)',
+            textAlign: 'center',
+            animation: 'pulse 0.6s ease-in-out 3',
+          }}
+        >
+          <div
+            className="t-display t-up"
+            style={{ color: 'var(--win)', fontSize: '13px', letterSpacing: '0.12em' }}
+          >
+            MATCH FOUND!
+          </div>
+          <div
+            className="t-mono"
+            style={{ color: 'var(--win)', fontSize: '28px', fontWeight: 700 }}
+          >
+            DUEL #{matchedDuelId.toString()}
+          </div>
+          <a
+            href={`/duel/${matchedDuelId.toString()}`}
+            className="bk bk-primary"
+            style={{
+              display: 'block',
+              padding: '12px',
+              textAlign: 'center',
+              letterSpacing: '0.08em',
+              fontSize: '13px',
+              textDecoration: 'none',
+            }}
+          >
+            ENTER THE ARENA →
+          </a>
+        </div>
+      </div>
+    );
+  }
 
-  const canSubmit =
-    fighterA !== fighterB &&
-    totalRequired !== null &&
-    hasSufficientBalance &&
-    !isPending &&
-    displayPhase !== 'done';
+  // Waiting room state
+  if (queued) {
+    return (
+      <div className="col gap-24">
+        <div className="sect-head">
+          <span className="sect-head-num">02</span>
+          <span className="sect-head-title">WAITING FOR OPPONENT</span>
+        </div>
 
-  const needsValidPair = fighterA === fighterB;
+        {/* Queued fighter display */}
+        <div className="panel pad-24 col gap-16" style={{ textAlign: 'center' }}>
+          <div className="eyebrow t-dim">QUEUED AS</div>
+          <div
+            className="t-mono"
+            style={{
+              fontSize: '22px',
+              fontWeight: 700,
+              color: fighterVisual?.hex ?? 'var(--text)',
+              letterSpacing: '0.04em',
+            }}
+          >
+            {fighterRoster?.name ?? `FIGHTER ${fighter}`}
+          </div>
+          <div className="t-sm t-dim">
+            {turns}-round tier · {TIER_POOLS[turns].join(' + ')}
+          </div>
 
-  const submitLabel = (() => {
-    if (displayPhase === 'approving') return 'Waiting for approval…';
-    if (displayPhase === 'creating') return 'Creating duel…';
-    if (displayPhase === 'done') return createdDuelId !== null ? `Duel #${createdDuelId} created!` : 'Duel created!';
-    return 'APPROVE + CREATE DUEL';
-  })();
+          {/* Animated pulse indicator */}
+          <div className="row jc-c gap-8" style={{ marginTop: '8px' }}>
+            <span className="dot pulse" style={{ background: 'var(--gold)' }} />
+            <span className="t-sm t-dim">Waiting for opponent…</span>
+          </div>
+        </div>
 
+        {/* Cancel */}
+        <button
+          className="bk bk-ghost"
+          style={{
+            width: '100%',
+            padding: '12px',
+            opacity: isPending ? 0.45 : 1,
+            cursor: isPending ? 'not-allowed' : 'pointer',
+            letterSpacing: '0.08em',
+            fontSize: '12px',
+          }}
+          disabled={isPending}
+          onClick={handleCancelQueue}
+        >
+          {isPending ? 'CANCELLING…' : 'CANCEL QUEUE'}
+        </button>
+
+        {error && (
+          <div
+            className="panel pad-16 t-xs"
+            style={{ color: 'var(--loss)', borderColor: 'var(--loss)', wordBreak: 'break-word' }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Setup state — pick fighter, tier, enter queue
   return (
     <div className="col gap-24">
 
       {/* Header */}
       <div className="sect-head">
         <span className="sect-head-num">01</span>
-        <span className="sect-head-title">START A DUEL</span>
+        <span className="sect-head-title">ENTER THE ARENA</span>
       </div>
 
-      {/* Fighter A */}
+      {/* Fighter picker */}
       <div className="col gap-12">
-        <div className="eyebrow" style={{ color: 'var(--fighter-a)' }}>FIGHTER A</div>
-        <div
-          className="row gap-8"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: '8px',
-          }}
-        >
-          {ROSTER.map((f, idx) => {
-            const selected = fighterA === idx;
-            const disabledByB = fighterB === idx;
-            return (
-              <button
-                key={f.id}
-                className={`bk${selected ? ' bk-a' : ''}`}
-                style={{
-                  borderColor: selected ? 'var(--fighter-a)' : disabledByB ? 'var(--border)' : f.hex,
-                  opacity: disabledByB ? 0.35 : 1,
-                  cursor: disabledByB ? 'not-allowed' : 'pointer',
-                  fontSize: '11px',
-                  padding: '8px 6px',
-                  letterSpacing: '0.04em',
-                }}
-                disabled={disabledByB}
-                onClick={() => onFighterAChange(idx)}
-              >
-                <span
-                  className="t-mono t-xs"
-                  style={{ color: selected ? 'var(--fighter-a)' : f.hex }}
-                >
-                  {f.initials}
-                </span>
-                <span
-                  className="t-xs t-up"
-                  style={{
-                    display: 'block',
-                    color: selected ? 'var(--fighter-a)' : 'var(--text)',
-                    marginTop: '2px',
-                    fontSize: '9px',
-                  }}
-                >
-                  {f.name.replace('THE ', '')}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Fighter B */}
-      <div className="col gap-12">
-        <div className="eyebrow" style={{ color: 'var(--fighter-b)' }}>FIGHTER B</div>
+        <div className="eyebrow">CHOOSE YOUR FIGHTER</div>
         <div
           style={{
             display: 'grid',
@@ -162,26 +223,31 @@ function DuelCreatorInner({
           }}
         >
           {ROSTER.map((f, idx) => {
-            const selected = fighterB === idx;
-            const disabledByA = fighterA === idx;
+            const selected = fighter === idx;
             return (
               <button
                 key={f.id}
-                className={`bk${selected ? ' bk-b' : ''}`}
+                className={`bk${selected ? ' bk-primary' : ''}`}
                 style={{
-                  borderColor: selected ? 'var(--fighter-b)' : disabledByA ? 'var(--border)' : f.hex,
-                  opacity: disabledByA ? 0.35 : 1,
-                  cursor: disabledByA ? 'not-allowed' : 'pointer',
+                  borderColor: selected ? f.hex : 'var(--border)',
+                  boxShadow: selected ? `0 0 8px ${f.hex}55` : 'none',
+                  cursor: 'pointer',
                   fontSize: '11px',
-                  padding: '8px 6px',
+                  padding: '10px 6px',
                   letterSpacing: '0.04em',
+                  transition: 'border-color 0.15s, box-shadow 0.15s',
                 }}
-                disabled={disabledByA}
-                onClick={() => onFighterBChange(idx)}
+                onClick={() => onFighterChange(idx)}
               >
                 <span
                   className="t-mono t-xs"
-                  style={{ color: selected ? 'var(--fighter-b)' : f.hex }}
+                  style={{
+                    display: 'block',
+                    color: f.hex,
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                  }}
                 >
                   {f.initials}
                 </span>
@@ -189,12 +255,24 @@ function DuelCreatorInner({
                   className="t-xs t-up"
                   style={{
                     display: 'block',
-                    color: selected ? 'var(--fighter-b)' : 'var(--text)',
-                    marginTop: '2px',
+                    color: selected ? 'var(--text)' : 'var(--text-dim)',
+                    marginTop: '4px',
                     fontSize: '9px',
                   }}
                 >
                   {f.name.replace('THE ', '')}
+                </span>
+                <span
+                  className="label-tiny"
+                  style={{
+                    display: 'block',
+                    color: 'var(--text-dim)',
+                    marginTop: '2px',
+                    fontSize: '8px',
+                    opacity: 0.7,
+                  }}
+                >
+                  {f.tier}
                 </span>
               </button>
             );
@@ -244,94 +322,96 @@ function DuelCreatorInner({
         </div>
       </div>
 
-      {/* Deposit + Balance */}
+      {/* Queue slot info + Deposit */}
       <div className="panel pad-16 col gap-12">
+        {/* Who's waiting */}
+        <div className="row jc-sb ai-c">
+          <span className="t-sm t-dim">Opponent in queue</span>
+          {slotLoading ? (
+            <span className="t-xs t-dim">…</span>
+          ) : currentSlot ? (
+            <span className="row gap-8 ai-c">
+              <span className="dot dot-warn pulse" />
+              <span className="t-sm t-mono" style={{ color: 'var(--gold)' }}>
+                {ROSTER[currentSlot.fighter]?.name ?? `FIGHTER ${currentSlot.fighter}`}
+              </span>
+            </span>
+          ) : (
+            <span className="t-xs t-dim">No opponent yet</span>
+          )}
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--border)' }} />
+
         <div className="row jc-sb ai-c">
           <span className="t-sm t-dim">Required deposit</span>
           <span className="t-mono text-gold" style={{ fontSize: '15px' }}>
-            {totalRequiredFormatted} USDso
+            {halfDepositFormatted} USDso
           </span>
         </div>
         <div className="row jc-sb ai-c">
           <span className="t-sm t-dim">Your balance</span>
-          <span className={`t-mono ${hasSufficientBalance || balanceLoading ? '' : 'text-loss'}`}
-                style={{ fontSize: '13px' }}>
-            {balanceLoading ? '...' : `${balanceFormatted} USDso`}
+          <span
+            className="t-mono"
+            style={{
+              fontSize: '13px',
+              color: hasEnough ? 'var(--text)' : 'var(--loss)',
+            }}
+          >
+            {balanceFormatted} USDso
           </span>
         </div>
-        {!hasSufficientBalance && !balanceLoading && totalRequired !== null && (
+        {!hasEnough && halfDeposit !== null && (
           <div
             className="t-xs"
             style={{ color: 'var(--loss)', borderTop: '1px solid var(--border)', paddingTop: '8px' }}
           >
-            Insufficient balance. You need {totalRequiredFormatted} USDso to start this duel.
+            Insufficient balance. You need {halfDepositFormatted} USDso to enter.
           </div>
         )}
       </div>
 
-      {/* Validation hint */}
-      {needsValidPair && (
-        <div className="t-xs t-dim" style={{ textAlign: 'center' }}>
-          Fighter A and Fighter B must be different.
-        </div>
-      )}
-
       {/* Error */}
-      {(error || localError) && displayPhase !== 'done' && (
+      {error && (
         <div
           className="panel pad-16 t-xs"
           style={{ color: 'var(--loss)', borderColor: 'var(--loss)', wordBreak: 'break-word' }}
         >
-          {localError ?? error?.message}
-        </div>
-      )}
-
-      {/* Success */}
-      {displayPhase === 'done' && (
-        <div
-          className="panel pad-16 t-xs"
-          style={{ color: 'var(--win)', borderColor: 'var(--win)', textAlign: 'center' }}
-        >
-          {createdDuelId !== null
-            ? `Duel #${createdDuelId} created! The arena is ready.`
-            : 'Duel created! Waiting for confirmation.'}
+          {error}
         </div>
       )}
 
       {/* Submit */}
       <button
-        className={`bk bk-primary${canSubmit ? '' : ''}`}
+        className="bk bk-primary"
         style={{
           width: '100%',
           padding: '14px',
-          opacity: canSubmit ? 1 : 0.45,
-          cursor: canSubmit ? 'pointer' : 'not-allowed',
+          opacity: hasEnough && !isPending ? 1 : 0.45,
+          cursor: hasEnough && !isPending ? 'pointer' : 'not-allowed',
           letterSpacing: '0.08em',
           fontSize: '13px',
         }}
-        disabled={!canSubmit}
-        onClick={handleSubmit}
+        disabled={!hasEnough || isPending}
+        onClick={handleEnterQueue}
       >
-        {submitLabel}
+        {isPending ? 'APPROVING + QUEUEING…' : 'ENTER QUEUE'}
       </button>
     </div>
   );
 }
 
-export function DuelCreator({ onDuelCreated }: DuelCreatorProps) {
-  const [fighterA, setFighterA] = useState(0);
-  const [fighterB, setFighterB] = useState(1);
+export function DuelCreator({ onMatchFound }: DuelCreatorProps) {
+  const [fighter, setFighter] = useState(0);
   const [turns, setTurns] = useState<TurnOption>(6);
 
   return (
     <div className="card pad-24">
-      <DuelCreatorInner
-        fighterA={fighterA}
-        fighterB={fighterB}
+      <QueueInner
+        fighter={fighter}
         turns={turns}
-        onDuelCreated={onDuelCreated}
-        onFighterAChange={setFighterA}
-        onFighterBChange={setFighterB}
+        onMatchFound={onMatchFound}
+        onFighterChange={setFighter}
         onTurnsChange={setTurns}
       />
     </div>

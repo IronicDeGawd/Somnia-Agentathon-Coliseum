@@ -10,8 +10,9 @@ import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import { DuelCreator } from '@/components/shared/DuelCreator';
 import DuelCard from '@/components/shared/DuelCard';
 import { useActiveDuel } from '@/hooks/useActiveDuel';
+import { useQueueState, type QueueTier } from '@/hooks/useQueueState';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
-import { ROSTER } from '@/lib/fighters';
+import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { fmtUsd, fmtTime } from '@/lib/format';
 
 // On-chain fighter index → local fighter roster id (FighterRegistry order matches ROSTER order)
@@ -29,6 +30,7 @@ export default function LobbyPage() {
   const [creatorExpanded, setCreatorExpanded] = useState(false);
 
   const { activeDuelId, duel, isLoading: isDuelLoading } = useActiveDuel();
+  const { slots: queueSlots, isLoading: isQueueLoading } = useQueueState();
 
   useEffect(() => {
     const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
@@ -334,7 +336,87 @@ export default function LobbyPage() {
         )}
       </section>
 
-      {/* ── § 02 CREATE NEW DUEL ───────────────────────────────────── */}
+      {/* ── § 02 · QUEUE STATE ────────────────────────────────────── */}
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+        <div className="sect-head">
+          <span className="sect-head-num">§ 02</span>
+          <span className="sect-head-title">QUEUE STATE</span>
+          <span className="sect-head-meta">
+            {isQueueLoading ? 'loading…' : 'matchmaker slots — join a tier to queue up'}
+          </span>
+        </div>
+
+        <div className="row gap-16">
+          {([3, 6, 9, 15] as QueueTier[]).map((turns) => {
+            const TIER_POOL_LABELS: Record<QueueTier, string> = {
+              3:  'SOMI',
+              6:  'SOMI · WETH',
+              9:  'SOMI · WETH · WBTC',
+              15: 'ALL POOLS',
+            };
+            const slot = queueSlots[turns];
+            const fighterName = slot
+              ? (ROSTER.find(r => r.id === fighterIndexToId(slot.fighter))?.name ?? `FIGHTER #${slot.fighter}`)
+              : null;
+            const fighterHex = slot
+              ? (FIGHTER_VISUAL_MAP[slot.fighter]?.hex ?? 'var(--text-dim)')
+              : null;
+
+            return (
+              <div
+                key={turns}
+                className="card pad-16 col gap-12 flex-1"
+                style={{ minWidth: 0 }}
+              >
+                {/* Tier label */}
+                <div className="row jc-sb ai-c">
+                  <span className="t-display t-up" style={{ fontSize: 18, letterSpacing: '0.08em', color: 'var(--text)' }}>
+                    {turns} ROUNDS
+                  </span>
+                  {slot ? (
+                    <Chip variant="live"><Dot variant="a" pulse /> WAITING</Chip>
+                  ) : (
+                    <Chip variant="default">OPEN</Chip>
+                  )}
+                </div>
+
+                {/* Pool label */}
+                <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>
+                  {TIER_POOL_LABELS[turns]}
+                </span>
+
+                <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
+
+                {/* Status line */}
+                {slot ? (
+                  <div className="row ai-c gap-8">
+                    <span
+                      className="t-mono t-xs"
+                      style={{ color: fighterHex ?? 'var(--text)' }}
+                    >
+                      ● {fighterName}
+                    </span>
+                    <span className="t-mono t-xs t-dim">waiting for opponent</span>
+                  </div>
+                ) : (
+                  <span className="t-mono t-xs t-dim">no one waiting — be first</span>
+                )}
+
+                {/* JOIN button */}
+                <button
+                  className="bk bk-ghost"
+                  style={{ padding: '8px 16px', letterSpacing: '0.08em', marginTop: 4 }}
+                  onClick={() => setCreatorExpanded(true)}
+                >
+                  JOIN →
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ── § 02.5 CREATE NEW DUEL ────────────────────────────────── */}
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div
           className="sect-head"
@@ -348,7 +430,7 @@ export default function LobbyPage() {
 
         {creatorExpanded && (
           <div style={{ maxWidth: 520 }}>
-            <DuelCreator onDuelCreated={() => setCreatorExpanded(false)} />
+            <DuelCreator onMatchFound={() => setCreatorExpanded(false)} />
           </div>
         )}
       </section>

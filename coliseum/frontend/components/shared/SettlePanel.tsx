@@ -1,15 +1,18 @@
 'use client';
 
 import { formatUnits } from 'viem';
+import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useSettleBets } from '@/hooks/useSettleBets';
 import { useFighters } from '@/hooks/useFighters';
+import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface SettlePanelProps {
   duelId: bigint;
   isCreator: boolean;
+  matchmakerDuel?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -18,9 +21,110 @@ function formatUsdso(raw: bigint, decimals = 2): string {
   return Number(formatUnits(raw, 18)).toFixed(decimals);
 }
 
+// ─── Matchmaker Claim Section ─────────────────────────────────────────────────
+
+function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
+  const { address } = useAccount();
+
+  const { data: matchData, isLoading } = useReadContract({
+    address: CONTRACT_ADDRESSES.Matchmaker,
+    abi: ABIS.Matchmaker,
+    functionName: 'matches',
+    args: [duelId],
+  });
+
+  const { writeContract, isPending } = useWriteContract();
+
+  if (isLoading || !matchData) {
+    return (
+      <div className="col gap-8">
+        <div className="eyebrow t-dim">Your Winnings</div>
+        <div className="t-dim t-sm">Loading match data…</div>
+      </div>
+    );
+  }
+
+  const [playerA, playerB, totalPot, recovered, settledA, settledB] = matchData as [
+    `0x${string}`,
+    `0x${string}`,
+    bigint,
+    boolean,
+    boolean,
+    boolean,
+  ];
+
+  const isPlayerA = address?.toLowerCase() === playerA?.toLowerCase();
+  const isPlayerB = address?.toLowerCase() === playerB?.toLowerCase();
+  const isParticipant = isPlayerA || isPlayerB;
+
+  if (!isParticipant) return null;
+
+  const alreadyClaimed = isPlayerA ? settledA : settledB;
+
+  function handleClaim() {
+    writeContract({
+      address: CONTRACT_ADDRESSES.Matchmaker,
+      abi: ABIS.Matchmaker,
+      functionName: 'claimWinnings',
+      args: [duelId],
+    });
+  }
+
+  return (
+    <div className="col gap-12">
+      <div className="eyebrow t-dim">Your Winnings</div>
+
+      <div className="panel pad-16 col gap-8">
+        <div className="row jc-sb ai-c">
+          <span className="t-sm t-dim">Your role</span>
+          <span
+            className="t-sm t-mono"
+            style={{ color: isPlayerA ? 'var(--fighter-a)' : 'var(--fighter-b)' }}
+          >
+            {isPlayerA ? 'Player A' : 'Player B'}
+          </span>
+        </div>
+        <div className="row jc-sb ai-c">
+          <span className="t-sm t-dim">Total pot</span>
+          <span className="t-sm t-mono t-num">{formatUsdso(totalPot)} USDso</span>
+        </div>
+        {!recovered && (
+          <p className="t-xs t-faint" style={{ margin: 0 }}>
+            Winnings will be claimable once the Arena resolves the duel.
+          </p>
+        )}
+      </div>
+
+      {recovered && !alreadyClaimed && (
+        <button
+          className="bk bk-primary"
+          onClick={handleClaim}
+          disabled={isPending}
+          style={{ width: '100%' }}
+        >
+          {isPending ? 'Claiming…' : 'CLAIM WINNINGS'}
+        </button>
+      )}
+
+      {alreadyClaimed && (
+        <div className="panel pad-16 row ai-c gap-8" style={{ borderColor: 'var(--win)' }}>
+          <span className="dot dot-win" />
+          <span className="t-sm text-win">Already claimed</span>
+        </div>
+      )}
+
+      {recovered && !alreadyClaimed && (
+        <p className="t-xs t-faint" style={{ margin: 0 }}>
+          Winner takes the full pot minus platform fee.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SettlePanel({ duelId, isCreator }: SettlePanelProps) {
+export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false }: SettlePanelProps) {
   const { duel, isLoading: duelLoading, winnerSlot } = useDuelState(duelId);
   const { fighters, isLoading: fightersLoading } = useFighters();
   const {
@@ -140,6 +244,9 @@ export default function SettlePanel({ duelId, isCreator }: SettlePanelProps) {
         </div>
       </div>
 
+      {/* ── Matchmaker PvP Claim Section ───────────────────────────────────────── */}
+      {matchmakerDuel && <MatchmakerClaimSection duelId={duelId} />}
+
       {/* ── User Bet Section ───────────────────────────────────────────────────── */}
       {userBet && (
         <div className="col gap-12">
@@ -229,7 +336,7 @@ export default function SettlePanel({ duelId, isCreator }: SettlePanelProps) {
       )}
 
       {/* ── Creator Recovery Section ──────────────────────────────────────────── */}
-      {isCreator && (
+      {isCreator && !matchmakerDuel && (
         <div className="col gap-12">
           <div className="eyebrow t-dim">Creator Recovery</div>
 

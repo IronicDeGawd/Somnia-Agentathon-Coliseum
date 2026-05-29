@@ -53,6 +53,26 @@ export default function ResultPage() {
   const fighterAIndex = duelRaw ? Number(duelRaw[0]) : undefined;
   const fighterBIndex = duelRaw ? Number(duelRaw[1]) : undefined;
 
+  // ── Matchmaker check (PvP duel detection) ─────────────────────────────────
+  // If the connected wallet is playerA or playerB in Matchmaker.matches(),
+  // this is a PvP Matchmaker duel. The Arena creator in that case is the
+  // Matchmaker contract, not a human, so we must not use duel.creator here.
+  const { data: matchData } = useReadContract({
+    address: CONTRACT_ADDRESSES.Matchmaker,
+    abi: ABIS.Matchmaker,
+    functionName: 'matches',
+    args: [duelId],
+    query: { enabled: duelId > BigInt(0) },
+  });
+
+  const matchPlayerA = matchData ? (matchData[0] as `0x${string}`) : undefined;
+  const matchPlayerB = matchData ? (matchData[1] as `0x${string}`) : undefined;
+
+  // A Matchmaker duel is one where at least one slot has a real player address.
+  const isMatchmakerDuel =
+    !!matchPlayerA &&
+    matchPlayerA !== '0x0000000000000000000000000000000000000000';
+
   // ── Simulation (visual fallback while loading) ────────────────────────────
   const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
   useEffect(() => {
@@ -62,7 +82,11 @@ export default function ResultPage() {
 
   // ── Derived display values ────────────────────────────────────────────────
   const isResolved = duel?.status === 3;
+
+  // For direct Arena duels (non-Matchmaker), the creator can recover funds.
+  // For Matchmaker duels the creator field points to the contract, not a player.
   const isCreator =
+    !isMatchmakerDuel &&
     !!userAddress &&
     !!duel?.creator &&
     duel.creator.toLowerCase() === userAddress.toLowerCase();
@@ -279,13 +303,15 @@ export default function ResultPage() {
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">SETTLEMENT</span>
           <span className="sect-head-meta">
-            {isCreator
+            {isMatchmakerDuel
+              ? 'pvp matchmaker duel · claim your winnings below'
+              : isCreator
               ? 'you created this duel · recover funds below'
               : 'settle bets or recover winnings'}
           </span>
         </div>
 
-        <SettlePanel duelId={duelId} isCreator={isCreator} />
+        <SettlePanel duelId={duelId} isCreator={isCreator} matchmakerDuel={isMatchmakerDuel} />
       </section>
 
       {/* Action row — centered horizontal */}

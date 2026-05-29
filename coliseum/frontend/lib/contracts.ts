@@ -5,6 +5,8 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0xdf5709661a3f16f4ef3ee8cc232a087f016dbf7f' as const,
   FighterRegistry: '0x5390b0656797b18258f2919a799abe956d21690f' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
+  // TODO: update after Matchmaker deploy
+  Matchmaker: '0x0000000000000000000000000000000000000000' as const,
 };
 
 export enum DuelStatus {
@@ -106,5 +108,23 @@ export const ABIS = {
     'function balanceOf(address account) view returns (uint256)',
     'function approve(address spender, uint256 amount) external returns (bool)',
     'function allowance(address owner, address spender) view returns (uint256)',
+  ]),
+
+  Matchmaker: parseAbi([
+    'function queue(uint8 fighter, uint16 turns) external',
+    'function cancelQueue(uint16 turns) external',
+    'function triggerPendingMatch() external',
+    'function claimWinnings(uint256 duelId) external',
+    'function halfDeposit(uint16 turns) view returns (uint256)',
+    'function getSlot(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
+    'function arenaFree() view returns (bool)',
+    'function slots(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
+    'function pending() view returns (address playerA, address playerB, uint8 fighterA, uint8 fighterB, uint16 turns, uint256 totalPot, bool exists)',
+    'function matches(uint256 duelId) view returns (address playerA, address playerB, uint256 totalPot, bool recovered, bool settledA, bool settledB)',
+    'event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit)',
+    'event QueueCancelled(address indexed player, uint16 turns, uint256 refund)',
+    'event MatchPending(address indexed playerA, address indexed playerB, uint16 turns)',
+    'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
+    'event WinningsClaimed(uint256 indexed duelId, address indexed player, uint256 amount)',
   ]),
 };

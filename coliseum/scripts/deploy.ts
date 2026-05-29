@@ -172,7 +172,15 @@ async function main() {
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);
 
-  // 4. Fund pools (testnet only, deployer must hold USDso and approve arena first)
+  // 4. Matchmaker — PvP matchmaking layer; pairs human players into Arena duels.
+  console.log("Deploying Matchmaker...");
+  const matchmaker = await hre.viem.deployContract(
+    "Matchmaker",
+    [arena.address, addresses.usdso]
+  );
+  console.log(`  Matchmaker:      ${matchmaker.address}`);
+
+  // 5. Fund pools (testnet only, deployer must hold USDso and approve arena first)
   if (!IS_LOCAL) {
     const perPool = parseEther(process.env.USDSO_PER_POOL ?? "50");
     const total = perPool * 3n;
@@ -194,7 +202,7 @@ async function main() {
     console.log("  Pools funded.");
   }
 
-  // 5. Write final deployment manifest
+  // 6. Write final deployment manifest
   const block = await publicClient.getBlockNumber();
   const manifest = {
     network,
@@ -208,6 +216,7 @@ async function main() {
         turnIntervalBlocks: turnIntervalBlocks.toString(),
       },
       Bookmaker: { address: bookmaker.address },
+      Matchmaker: { address: matchmaker.address },
     },
     external: addresses,
   };
@@ -215,13 +224,14 @@ async function main() {
   writeManifest(manifest);
   console.log(`\nDeployment manifest written to deployments/${network}.json`);
 
-  // 6. Summary table
+  // 7. Summary table
   console.log("\n┌────────────────────┬────────────────────────────────────────────┐");
   console.log("│ Contract           │ Address                                    │");
   console.log("├────────────────────┼────────────────────────────────────────────┤");
   console.log(`│ FighterRegistry    │ ${registry.address} │`);
   console.log(`│ Arena              │ ${arena.address} │`);
   console.log(`│ Bookmaker          │ ${bookmaker.address} │`);
+  console.log(`│ Matchmaker         │ ${matchmaker.address} │`);
   console.log("└────────────────────┴────────────────────────────────────────────┘");
   console.log("\nDeploy complete.");
 }
