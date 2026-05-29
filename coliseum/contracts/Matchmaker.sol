@@ -293,12 +293,17 @@ contract Matchmaker {
 
     // ─── Emergency rescue (H-1 fix) ──────────────────────────────────────────
 
-    /// @notice Owner-only: manually mark a match as recovered with zero pot.
-    ///         Use ONLY when Arena.recoverFunds reverts permanently for a duelId
-    ///         (e.g. both fighters held only base tokens, nothing to recover).
-    ///         Sets totalPot = 0 so both players get 0 — nobody gains, nobody loses
-    ///         more than they already have. Does NOT allow owner to steal funds.
-    ///         After this call, both players can call claimWinnings to acknowledge.
+    /// @notice Owner-only last-resort unbricking for a match whose Arena.recoverFunds
+    ///         reverts permanently (e.g. both fighters ended holding only base tokens,
+    ///         leaving nothing for Arena to return as USDso quote).
+    ///
+    ///         TRUST NOTE: this sets totalPot = 0, so claimWinnings pays both players 0.
+    ///         Both players LOSE their half-deposits — those funds remain stranded in
+    ///         Arena (this contract cannot pull them once recoverFunds reverts). The
+    ///         owner gains nothing (no tokens move to the owner), but the owner CAN grief
+    ///         by zeroing a duel whose funds were in fact recoverable. This is a known
+    ///         privileged capability; in production it should sit behind a timelock or
+    ///         multisig. Use only when recoverFunds is genuinely, permanently reverting.
     function emergencyZeroRecovery(uint256 duelId) external onlyOwner {
         Match storage m = matches[duelId];
         require(!m.recovered, "already recovered");
@@ -354,10 +359,14 @@ contract Matchmaker {
         uint256 required = minDep + arena.PLATFORM_FEE();
 
         if (total < required) {
-            // Price drifted up between queue and match — refund both players
+            // Price drifted up between queue and match — refund both players.
+            // C-1 fix: check transfer return values. On a non-reverting ERC-20
+            // that returns false, an unchecked transfer would silently strand
+            // both deposits with no recovery path. Reverting here rolls back the
+            // whole tx atomically (including any first transfer that succeeded).
             uint256 eachRefund = total / 2;
-            usdso.transfer(pA, eachRefund);
-            usdso.transfer(pB, total - eachRefund); // handles odd-wei dust
+            if (!usdso.transfer(pA, eachRefund)) revert TransferFailed();
+            if (!usdso.transfer(pB, total - eachRefund)) revert TransferFailed(); // odd-wei dust to pB
             emit MatchRefunded(pA, pB, turns, eachRefund, "deposit below required");
             return;
         }
