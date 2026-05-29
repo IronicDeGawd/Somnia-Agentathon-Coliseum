@@ -5,8 +5,7 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0xdf5709661a3f16f4ef3ee8cc232a087f016dbf7f' as const,
   FighterRegistry: '0x5390b0656797b18258f2919a799abe956d21690f' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  // TODO: update after Matchmaker deploy
-  Matchmaker: '0x0000000000000000000000000000000000000000' as const,
+  Matchmaker: '0x2a59e0e5c64e3479ff9f3953a3880b0895e4d628' as const,
 };
 
 export enum DuelStatus {
