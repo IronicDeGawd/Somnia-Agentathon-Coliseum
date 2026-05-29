@@ -8,16 +8,12 @@ import { useUIStore } from '@/store/ui';
 /**
  * In-app top bar (Lobby / Arena / Profile).
  *
- * Mirrors the design's `TopBar` in `Coliseum.html` (components.jsx:121-152):
- *   COLISEUM brand → /  (returns to landing)
- *   Nav: Lobby / Arena / Fighters + ← Landing
- *   Right: TESTNET warn-pulse chip + Connect Wallet / wallet pill + ♪ audio toggle
+ * Mirrors the design's `TopBar` in `Coliseum.html` (components.jsx:121-152)
+ * VERBATIM, using the design's own CSS utility classes (.row, .col, .ai-c,
+ * .gap-16, .grow, .nav-link, .brand, .chip, .dot, .bk).
  *
- * Active-screen highlighting via pathname.
- *
- * Note: wallet here is a local-state stub. Real wagmi/RainbowKit wiring is
- * tracked as a separate backend wiring task — see
- * context/plan/design-audit-issues.md.
+ * DO NOT mix Tailwind utilities into this component — the design CSS is the
+ * single source of truth.
  */
 export const AppTopBar: React.FC = () => {
   const audioOn = useUIStore((s) => s.audioOn);
@@ -28,25 +24,42 @@ export const AppTopBar: React.FC = () => {
   const [balance] = useState(25);
 
   const onLobby = pathname === '/duel';
-  const onArena = pathname.startsWith('/duel/') && !pathname.endsWith('/preduel') && !pathname.endsWith('/result');
+  const onArena =
+    pathname.startsWith('/duel/') &&
+    !pathname.endsWith('/preduel') &&
+    !pathname.endsWith('/result');
   const onProfile = pathname.startsWith('/fighters/');
-
-  const navClass = (active: boolean) => `nav-link ${active ? 'active' : ''}`;
 
   return (
     <div className="topbar">
-      <Link href="/" className="brand" style={{ textDecoration: 'none' }}>
+      <Link
+        href="/"
+        className="brand"
+        style={{ cursor: 'pointer', textDecoration: 'none' }}
+      >
         COLISEUM
       </Link>
 
-      <div className="flex items-center gap-4">
-        <Link href="/duel" className={navClass(onLobby)} style={{ textDecoration: 'none' }}>
+      <div className="row gap-16 ai-c">
+        <Link
+          href="/duel"
+          className={`nav-link ${onLobby ? 'active' : ''}`}
+          style={{ textDecoration: 'none' }}
+        >
           Lobby
         </Link>
-        <Link href="/duel/1" className={navClass(onArena)} style={{ textDecoration: 'none' }}>
+        <Link
+          href="/duel/1"
+          className={`nav-link ${onArena ? 'active' : ''}`}
+          style={{ textDecoration: 'none' }}
+        >
           Arena
         </Link>
-        <Link href="/fighters/degen" className={navClass(onProfile)} style={{ textDecoration: 'none' }}>
+        <Link
+          href="/fighters/degen"
+          className={`nav-link ${onProfile ? 'active' : ''}`}
+          style={{ textDecoration: 'none' }}
+        >
           Fighters
         </Link>
         <Link href="/" className="nav-link" style={{ textDecoration: 'none' }}>
@@ -56,7 +69,7 @@ export const AppTopBar: React.FC = () => {
 
       <div className="grow" />
 
-      <div className="flex items-center gap-3">
+      <div className="row gap-12 ai-c">
         <span className="chip">
           <span className="dot dot-warn pulse" /> TESTNET
         </span>
