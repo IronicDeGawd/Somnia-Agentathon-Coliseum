@@ -189,6 +189,10 @@ export default function ArenaPage() {
   const params = useParams();
   const layout = useUIStore((state) => state.layout) as Layout;
   const autoAdvance = true;
+  const turnsParam = Number(params?.turns ?? 15);
+  const totalTurns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
+    ? (turnsParam as 3 | 6 | 9 | 15)
+    : 15;
 
   const [simState, dispatch] = useReducer(simReducer, makeInitialSim());
   const [betPlaced, setBetPlaced] = useState<'degen' | 'whale' | null>(null);
@@ -264,7 +268,7 @@ export default function ArenaPage() {
             <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
               ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{simState.round}</span>
-              <span className="t-faint"> / 15</span>
+              <span className="t-faint"> / {totalTurns}</span>
             </span>
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
               BELL <span className="t-num" style={{ color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text)' }}>{fmtTime(simState.timeLeft)}</span>
@@ -291,7 +295,7 @@ export default function ArenaPage() {
           <div className="sect-head">
             <span className="sect-head-num">§ COMBATANTS</span>
             <span className="sect-head-title">RED CORNER · BLUE CORNER</span>
-            <span className="sect-head-meta">round {simState.round} of 15 · 90s per round</span>
+            <span className="sect-head-meta">round {simState.round} of {totalTurns} · ~600 blocks per round (~1 min)</span>
           </div>
 
           {layout === 'split' && (
@@ -345,7 +349,7 @@ export default function ArenaPage() {
           <div className="sect-head">
             <span className="sect-head-num">§ FEED</span>
             <span className="sect-head-title">FIGHTER REASONING</span>
-            <span className="sect-head-meta">LIVE LLM · CTX 8K · gpt-5-fight</span>
+            <span className="sect-head-meta">SOMNIA AGENTS · inferNumber(0..6)</span>
           </div>
           <div className="col gap-16">
             <div className="col gap-4">
@@ -379,8 +383,8 @@ export default function ArenaPage() {
         <div className="card pad-24 col gap-12">
           <div className="sect-head">
             <span className="sect-head-num">§ MARKET</span>
-            <span className="sect-head-title">WBTC / USDSO</span>
-            <span className="sect-head-meta">dreamDEX · order book live</span>
+            <span className="sect-head-title">WBTC/USDso</span>
+            <span className="sect-head-meta">dreamDEX · mid mark live</span>
           </div>
           <div className="row ai-c" style={{ gap: 32 }}>
             <div className="col gap-2" style={{ flexShrink: 0 }}>
@@ -428,7 +432,7 @@ export default function ArenaPage() {
           <div className="sect-head">
             <span className="sect-head-num">§ BOOK</span>
             <span className="sect-head-title">PLACE YOUR BET</span>
-            <span className="sect-head-meta">{betPlaced ? 'BET LOCKED' : 'BETS OPEN · one-click · no review'}</span>
+            <span className="sect-head-meta">{betPlaced ? 'BET LOCKED' : 'BETS OPEN WHILE DUEL ACTIVE · approve + placeBet'}</span>
           </div>
           <div className="col gap-8">
             <div className="row jc-sb ai-c">
@@ -451,11 +455,11 @@ export default function ArenaPage() {
                 </Chip>
               ) : (
                 <>
-                  <BracketButton variant="a" onClick={() => handleBet('degen', 2)}>BACK DEGEN +$2</BracketButton>
-                  <BracketButton variant="a" onClick={() => handleBet('degen', 5)}>+$5</BracketButton>
+                  <BracketButton variant="a" onClick={() => handleBet('degen', 2)}>BACK DEGEN +2 USDso</BracketButton>
+                  <BracketButton variant="a" onClick={() => handleBet('degen', 5)}>+5 USDso</BracketButton>
                   <span className="t-mono t-xs t-faint">·</span>
-                  <BracketButton variant="b" onClick={() => handleBet('whale', 2)}>BACK WHALE +$2</BracketButton>
-                  <BracketButton variant="b" onClick={() => handleBet('whale', 5)}>+$5</BracketButton>
+                  <BracketButton variant="b" onClick={() => handleBet('whale', 2)}>BACK WHALE +2 USDso</BracketButton>
+                  <BracketButton variant="b" onClick={() => handleBet('whale', 5)}>+5 USDso</BracketButton>
                 </>
               )}
             </div>
@@ -480,7 +484,7 @@ export default function ArenaPage() {
                     color: simState.degen.pnl >= simState.whale.pnl ? 'var(--fighter-a)' : 'var(--fighter-b)',
                   }}
                 >
-                  THE {simState.degen.pnl >= simState.whale.pnl ? 'DEGEN' : 'WHALE'} WINS
+                  THE {simState.degen.pnl >= simState.whale.pnl ? 'DEGEN' : 'WHALE'} WINS (winnerSlot {simState.degen.pnl >= simState.whale.pnl ? 0 : 1})
                 </span>
               </div>
             </div>

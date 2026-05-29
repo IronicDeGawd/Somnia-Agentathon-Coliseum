@@ -45,7 +45,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
             className="t-mono t-xs"
             style={{ letterSpacing: '0.28em', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}
           >
-            § FIGHTER FILE
+            § FIGHTER FILE · INDEX 0..5 · aggression/patience/risk stats
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
           <span className="chip" style={{ color: f.hex, borderColor: f.hex }}>
@@ -70,7 +70,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           </div>
           <div className="col gap-12 flex-1">
             <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>
-              SOMNIA · AGENT #{agentNumber}
+              SOMNIA · FIGHTER INDEX {fid}
             </span>
             <h1
               className="fp-display"
@@ -180,7 +180,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">DOSSIER</span>
-          <span className="sect-head-meta">the system prompt, in plain english</span>
+          <span className="sect-head-meta">system prompt (from FighterRegistry.fighters[i].systemPrompt)</span>
         </div>
         <div className="row gap-32 ai-s">
           <p
@@ -208,8 +208,8 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 80 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
-          <span className="sect-head-title">RECENT BOUTS</span>
-          <span className="sect-head-meta">last 5 fights · all settled on-chain</span>
+          <span className="sect-head-title">RECENT DUELS</span>
+          <span className="sect-head-meta">last {recentDuels.length} settled duels for this fighter (from Arena events)</span>
         </div>
 
         <div className="card" style={{ padding: '0 24px' }}>

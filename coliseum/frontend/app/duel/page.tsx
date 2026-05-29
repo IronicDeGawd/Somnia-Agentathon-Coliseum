@@ -19,14 +19,25 @@ export default function LobbyPage() {
     return () => clearInterval(clock);
   }, []);
 
+  // Indicative state — until on-chain wiring lands, these are static demo values.
+  const wbtcMid = '67,425.10';
+  const wethMid = '3,189.40';
+  const somiMid = '0.412';
+  const accruedFees = 142;
+  const nextDuelId = 342;
+  const activeDuelId = 341;
+  const currentTurn = 7;
+  const totalTurns = 15;
+  const turns = 15;
+
   // Ticker items rendered as a flat list of nodes, separated by · between each
   const tickerItemNodes: React.ReactNode[] = [
-    <>WBTC/USDSO <span className="t-num text-win">67,425.10</span> +0.34%</>,
-    <>ETH/USDSO <span className="t-num text-loss">3,148.20</span> −0.92%</>,
-    <>SOL/USDSO <span className="t-num text-win">142.88</span> +2.18%</>,
+    <>WBTC/USDso <span className="t-num text-win">{wbtcMid}</span></>,
+    <>WETH/USDso <span className="t-num">{wethMid}</span></>,
+    <>SOMI/USDso <span className="t-num">{somiMid}</span></>,
     <>VOLUME 24H <span className="t-num">$12.4M</span></>,
-    <>3 BOUTS ON THE CARD</>,
-    <>TODAY&rsquo;S PURSE <span className="t-num text-gold">$4,872</span></>,
+    <>ONE ARENA · ONE LIVE DUEL</>,
+    <>CUMULATIVE POT <span className="t-num text-gold">{fmtUsd(accruedFees)}</span></>,
   ];
 
   return (
@@ -49,9 +60,9 @@ export default function LobbyPage() {
             <div className="row gap-12 ai-c">
               <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>§ LOBBY · MAIN HALL</span>
               <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
-              <Chip variant="gold">▸ NEXT BOUT · ROUND #342</Chip>
+              <Chip variant="gold">▸ NEXT DUEL · #{nextDuelId}</Chip>
             </div>
-            <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em', whiteSpace: 'nowrap' }}>21:00 UTC · BEST OF 15 · TESTNET</span>
+            <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em', whiteSpace: 'nowrap' }}>BEST OF {turns} · SOMNIA SHANNON TESTNET</span>
           </div>
 
           {/* Big poster headline */}
@@ -134,7 +145,7 @@ export default function LobbyPage() {
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <span className="sect-head-title">LIVE NOW</span>
-          <span className="sect-head-meta">round #341 · in progress</span>
+          <span className="sect-head-meta">duel #{activeDuelId} · round {currentTurn}/{totalTurns}</span>
         </div>
 
         <div className="card corner-card acc-a glow-a" style={{ overflow: 'hidden' }}>
@@ -150,7 +161,7 @@ export default function LobbyPage() {
           >
             <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
             <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
-              R<span className="t-num" style={{ color: 'var(--text)' }}>{sim.round}/15</span>
+              R<span className="t-num" style={{ color: 'var(--text)' }}>{sim.round}/{turns}</span>
               <span style={{ margin: '0 8px' }}>·</span>
               <span className="t-num" style={{ color: 'var(--text)' }}>{fmtTime(sim.timeLeft)}</span> left
             </span>
@@ -219,7 +230,7 @@ export default function LobbyPage() {
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">STANDINGS</span>
-          <span className="sect-head-meta">season 02 · all-time leaderboard</span>
+          <span className="sect-head-meta"></span>
         </div>
 
         <div className="card" style={{ padding: '0 24px' }}>
@@ -291,7 +302,7 @@ export default function LobbyPage() {
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
           <span className="sect-head-title">YOUR LEDGER</span>
-          <span className="sect-head-meta">lifetime PnL · +$48.92 across 12 bouts</span>
+          <span className="sect-head-meta">bets placed via Bookmaker (from on-chain events for the connected wallet)</span>
         </div>
 
         <div className="row gap-16">

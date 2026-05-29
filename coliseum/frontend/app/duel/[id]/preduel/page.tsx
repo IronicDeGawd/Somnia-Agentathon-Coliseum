@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
@@ -16,7 +16,7 @@ interface CornerProps {
 
 function Corner({ id, side }: CornerProps) {
   const f = FIGHTERS[id];
-  const odds = id === 'degen' ? '58%' : '42%';
+  const odds = id === 'degen' ? '{fighterA} odds {oddsA_bps/100}% (BPS, clamped 5–95%)' : '{fighterB} odds {oddsB_bps/100}% = 100% − oddsA (clamped 5–95%)';
   const cornerLabel = side === 'a' ? 'RED CORNER' : 'BLUE CORNER';
   return (
     <div
@@ -112,7 +112,7 @@ function Corner({ id, side }: CornerProps) {
           <span className="label-tiny">RECORD</span>
           <span className="t-num t-sm">{f.record.w}W · {f.record.l}L</span>
         </div>
-        <BracketButton variant={side}>BACK +$2</BracketButton>
+        <BracketButton variant={side}>BACK +2 USDso</BracketButton>
       </div>
     </div>
   );
@@ -120,6 +120,17 @@ function Corner({ id, side }: CornerProps) {
 
 export default function PreDuelPage() {
   const router = useRouter();
+  const params = useParams();
+  const duelId = String(params?.id ?? '342');
+  const turnsParam = Number(params?.turns ?? 15);
+  const turns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
+    ? (turnsParam as 3 | 6 | 9 | 15)
+    : 15;
+  // Indicative pot — minDepositFor scales roughly with active pool count.
+  // Healthy book example from progress.md: 6-turn SOMI+WETH ≈ 24 USDso.
+  const potByTier: Record<3 | 6 | 9 | 15, number> = { 3: 12, 6: 24, 9: 48, 15: 80 };
+  const pot = potByTier[turns];
+  const n = 24;
   const [t, setT] = useState(30);
 
   useEffect(() => {
@@ -148,13 +159,13 @@ export default function PreDuelPage() {
             className="t-mono t-xs"
             style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}
           >
-            § PRE-DUEL · ROUND #342
+            § PRE-DUEL · DUEL #{duelId}
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
           <Chip variant="gold">▸ MAIN EVENT</Chip>
         </div>
         <div className="row gap-12 ai-c">
-          <span className="label-tiny">BETS LOCK IN</span>
+          <span className="label-tiny">BETS OPEN WHILE DUEL ACTIVE — odds locked at placement</span>
           <span
             className="t-num"
             style={{ fontSize: 24, color: t <= 10 ? 'var(--loss)' : 'var(--gold)' }}
@@ -202,7 +213,7 @@ export default function PreDuelPage() {
               VS
             </span>
             <span className="t-mono t-xs t-faint" style={{ textAlign: 'center' }}>
-              BEST OF<br />15 TURNS
+              BEST OF<br />{turns} ROUNDS
             </span>
           </div>
           <Corner id="whale" side="b" />
@@ -213,19 +224,12 @@ export default function PreDuelPage() {
           <div className="row gap-24 ai-c">
             <div className="col gap-2">
               <span className="eyebrow">PURSE</span>
-              <span className="t-num text-gold" style={{ fontSize: 22 }}>$142 USDSO</span>
+              <span className="t-num text-gold" style={{ fontSize: 22 }}>{pot} USDso</span>
             </div>
             <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
             <div className="col gap-2">
-              <span className="eyebrow">SPECTATORS</span>
-              <span className="t-num" style={{ fontSize: 22 }}>47</span>
-            </div>
-            <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-            <div className="col gap-2">
-              <span className="eyebrow">HEAD-TO-HEAD</span>
-              <span className="t-mono t-sm">
-                DEGEN <span className="t-num">1</span>—<span className="t-num">2</span> WHALE
-              </span>
+              <span className="eyebrow">BETTORS (unique placeBet addresses)</span>
+              <span className="t-num" style={{ fontSize: 22 }}>{n}</span>
             </div>
           </div>
           <BracketButton variant="primary" onClick={() => router.push('/duel/1')}>

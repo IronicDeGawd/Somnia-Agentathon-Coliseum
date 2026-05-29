@@ -2,7 +2,7 @@
 
 import React, { useReducer, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
@@ -17,6 +17,12 @@ interface ResultBet {
 
 export default function ResultPage() {
   const router = useRouter();
+  const params = useParams();
+  const duelId = String(params?.id ?? '342');
+  const turnsParam = Number(params?.turns ?? 15);
+  const turns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
+    ? (turnsParam as 3 | 6 | 9 | 15)
+    : 15;
   const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
 
   useEffect(() => {
@@ -40,7 +46,7 @@ export default function ResultPage() {
   const payout = betWon && bet ? bet.amount * (100 / odds) : 0;
   const profit = payout - (bet ? bet.amount : 0);
 
-  const payoutMeta = bet ? (betWon ? 'winning ticket · claimable' : 'losing ticket · settled') : 'no bet placed';
+  const payoutMeta = bet ? (betWon ? 'winning ticket · settleBets pays automatically' : 'losing ticket · stake forfeited to pool') : 'no bet placed';
 
   return (
     <div className="col">
@@ -53,7 +59,7 @@ export default function ResultPage() {
       >
         <div className="row gap-12 ai-c">
           <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>
-            § POST-DUEL · ROUND #341
+            § POST-DUEL · DUEL #{duelId}
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
           <Chip variant="gold">★ SETTLED · ON-CHAIN</Chip>
@@ -109,7 +115,7 @@ export default function ResultPage() {
                 className="t-display t-up"
                 style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}
               >
-                PNL DECISION
+                PNL on mid mark prices at finalizeDuel (or snapshot if emergencyFinalize)
               </span>
             </div>
           </div>
@@ -121,7 +127,7 @@ export default function ResultPage() {
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <span className="sect-head-title">FINAL TAPE</span>
-          <span className="sect-head-meta">15 rounds settled · {sim.spectators} spectators</span>
+          <span className="sect-head-meta">{turns} rounds settled · {sim.spectators} bettors</span>
         </div>
 
         <div className="row gap-16" style={{ alignItems: 'stretch' }}>
@@ -144,13 +150,13 @@ export default function ResultPage() {
             </div>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Best round</span><span className="t-num text-win">+$8.92</span>
+              <span>Last mark snapshot</span><span className="t-num text-win">on-chain</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Worst round</span><span className="t-num text-loss">−$2.10</span>
+              <span>Per-round detail</span><span className="t-num t-dim">via indexer</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Trades executed</span><span className="t-num" style={{ color: 'var(--text)' }}>23</span>
+              <span>Orders filled</span><span className="t-num" style={{ color: 'var(--text)' }}>23</span>
             </div>
           </div>
 
@@ -173,13 +179,13 @@ export default function ResultPage() {
             </div>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Best round</span><span className="t-num text-win">+$4.20</span>
+              <span>Last mark snapshot</span><span className="t-num text-win">on-chain</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Worst round</span><span className="t-num text-loss">−$6.80</span>
+              <span>Per-round detail</span><span className="t-num t-dim">via indexer</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Trades executed</span><span className="t-num" style={{ color: 'var(--text)' }}>11</span>
+              <span>Orders filled</span><span className="t-num" style={{ color: 'var(--text)' }}>11</span>
             </div>
           </div>
         </div>
@@ -217,7 +223,7 @@ export default function ResultPage() {
                     <span className="t-num text-win" style={{ fontSize: 36 }}>+${payout.toFixed(2)}</span>
                     <span className="t-mono t-xs t-dim">profit ${profit.toFixed(2)}</span>
                   </div>
-                  <BracketButton variant="gold">CLAIM PAYOUT →</BracketButton>
+                  <BracketButton variant="gold">TRIGGER SETTLEMENT →</BracketButton>
                 </>
               ) : (
                 <>
