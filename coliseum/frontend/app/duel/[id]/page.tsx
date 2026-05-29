@@ -1,430 +1,518 @@
 'use client';
 
-import React, { useReducer, useEffect, useState, useRef } from 'react';
+import React, { useReducer, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { Play, TrendingUp, Users, Coins, HelpCircle, Shield, Award, Terminal, Activity, ArrowUpRight, ArrowDownRight, Square } from 'lucide-react';
+import { useParams } from 'next/navigation';
 import { TopBar } from '@/components/shared/TopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
 import { AnimatedNumber } from '@/components/shared/AnimatedNumber';
 import { Typewriter } from '@/components/shared/Typewriter';
-import { BracketButton, Chip, Dot, SectionHead } from '@/components/shared/OtherHUD';
+import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import { useUIStore } from '@/store/ui';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { FIGHTERS } from '@/lib/fighters';
-import { fmtUsd, fmtPct } from '@/lib/format';
+import { fmtUsd, fmtPct, fmtTime } from '@/lib/format';
+
+type Layout = 'split' | 'oneUp' | 'stacked';
+
+interface Holding {
+  token: string;
+  amount: string | number;
+  pct?: number;
+}
+
+interface SimFighter {
+  pnl: number;
+  history: number[];
+  holdings: Holding[];
+  reasoning: string;
+  thinking?: boolean;
+}
+
+const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | 'b'; tier: string; rank: string; winning: boolean }) => {
+  const isRight = side === 'b';
+  return (
+    <div
+      className="flex items-center justify-between"
+      style={{
+        padding: '8px 12px',
+        background: `linear-gradient(${isRight ? 270 : 90}deg, ${hex}26, transparent 70%)`,
+        borderBottom: `1px solid ${hex}55`,
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-flex items-center justify-center"
+          style={{
+            width: 22, height: 22, background: hex, color: '#0a0612',
+            fontFamily: 'var(--fnt-display)', fontWeight: 700, fontSize: 14,
+          }}
+        >{rank}</span>
+        <span className="t-display t-up" style={{ fontSize: 13, color: hex, letterSpacing: '0.18em' }}>
+          FIGHTER {isRight ? 'B' : 'A'}
+        </span>
+        <span className="t-mono t-xs t-dim">·</span>
+        <span className="t-mono t-xs t-dim">{tier}</span>
+      </div>
+      <span className={`chip ${winning ? 'chip-win' : 'chip-loss'}`}>
+        <span className={`dot ${winning ? 'dot-win' : 'dot-loss'} pulse`} />
+        {winning ? 'WINNING' : 'LOSING'}
+      </span>
+    </div>
+  );
+};
+
+function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string }) {
+  const totals = holdings.map((h) => {
+    const num = typeof h.amount === 'number' ? h.amount : parseFloat(String(h.amount).replace(/[^0-9.-]/g, '')) || 0;
+    return num;
+  });
+  const max = Math.max(...totals, 1);
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="label-tiny">HOLDINGS</span>
+      <div className="flex flex-col gap-2">
+        {holdings.map((h, i) => (
+          <div key={h.token} className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 min-w-0">
+                <span style={{ width: 6, height: 6, background: color, display: 'inline-block', boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />
+                <span className="t-mono t-xs t-dim whitespace-nowrap">{h.token}</span>
+              </span>
+              <span className="t-num t-sm whitespace-nowrap">{typeof h.amount === 'number' ? h.amount : h.amount}</span>
+            </div>
+            <div style={{ height: 2, background: 'var(--bg-card-2)', position: 'relative' }}>
+              <div style={{ position: 'absolute', inset: 0, width: `${(totals[i] / max) * 100}%`, background: color, opacity: 0.7 }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FighterCardSplit({
+  fighter,
+  pnl,
+  history,
+  holdings,
+  layout,
+}: {
+  fighter: { id: string; name: string; hex: string; side: 'a' | 'b'; tier: string; tagline: string; rank: string };
+  pnl: number;
+  history: number[];
+  holdings: Holding[];
+  layout: Layout;
+}) {
+  const winning = pnl >= 0;
+  const { hex, side, name, tier, tagline, rank } = fighter;
+  const portraitSize = layout === 'oneUp' ? 220 : layout === 'stacked' ? 100 : 160;
+  const sparklineW = layout === 'oneUp' ? 600 : layout === 'stacked' ? 300 : 420;
+  const pct = (pnl / 300) * 100;
+
+  if (layout === 'stacked') {
+    return (
+      <div
+        className={`card ${winning ? `glow-${side}` : ''}`}
+        style={{ border: `1px solid ${hex}`, overflow: 'hidden', transition: 'box-shadow 600ms ease' }}
+      >
+        <RIBBON hex={hex} side={side} tier={tier} rank={rank} winning={winning} />
+        <div className="flex items-start gap-4" style={{ padding: 16 }}>
+          <FighterAvatar fighter={fighter.id} context="arena" size={portraitSize} state={winning ? 'winning' : 'losing'} />
+          <div className="flex flex-col gap-2 grow min-w-0">
+            <div className="flex justify-between items-center">
+              <span className="t-display t-up" style={{ fontSize: 18, color: hex, letterSpacing: '0.12em' }}>{name}</span>
+              <span className="t-mono t-xs t-dim">&ldquo;{tagline}&rdquo;</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="label-tiny">PNL</span>
+                <span className="t-num" style={{ fontSize: 26, lineHeight: 1, color: winning ? 'var(--win)' : 'var(--loss)' }}>
+                  <AnimatedNumber value={pnl} formatter={fmtUsd} duration={500} />
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="label-tiny">CHANGE</span>
+                <span className="t-num t-sm" style={{ color: winning ? 'var(--win)' : 'var(--loss)' }}>
+                  {winning ? '▲' : '▼'} <AnimatedNumber value={pct} formatter={fmtPct} duration={500} />
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <Sparkline data={history} color={hex} width={sparklineW} height={36} />
+              </div>
+            </div>
+            <HoldingsBlock holdings={holdings} color={hex} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`card ${winning ? `glow-${side}` : ''}`}
+      style={{ border: `1px solid ${hex}`, overflow: 'hidden', transition: 'box-shadow 600ms ease' }}
+    >
+      <RIBBON hex={hex} side={side} tier={tier} rank={rank} winning={winning} />
+      <div className="flex flex-col" style={{ padding: 20, gap: 14 }}>
+        <div className="flex items-start gap-4">
+          <div style={{ flexShrink: 0 }}>
+            <FighterAvatar fighter={fighter.id} context="arena" size={portraitSize} state={winning ? 'winning' : 'losing'} />
+          </div>
+          <div className="flex flex-col gap-2 grow min-w-0">
+            <div className="flex flex-col gap-0.5">
+              <span className="t-display t-up" style={{ fontSize: layout === 'oneUp' ? 24 : 20, color: hex, letterSpacing: '0.12em', lineHeight: 1.1 }}>{name}</span>
+              <span className="t-mono t-xs t-dim">&ldquo;{tagline}&rdquo;</span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="label-tiny">ROUND PNL</span>
+              <span className="t-num" style={{ fontSize: layout === 'oneUp' ? 40 : 32, lineHeight: 1, color: winning ? 'var(--win)' : 'var(--loss)' }}>
+                <AnimatedNumber value={pnl} formatter={fmtUsd} duration={500} />
+              </span>
+              <span className="t-num t-sm" style={{ color: winning ? 'var(--win)' : 'var(--loss)' }}>
+                {winning ? '▲▲▲' : '▼▼▼'} <AnimatedNumber value={pct} formatter={fmtPct} duration={500} />
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="flex justify-between items-center gap-3">
+            <span className="label-tiny">PNL TIMELINE</span>
+            <span className="t-mono t-xs t-dim">ROUND 1—{history.length}</span>
+          </div>
+          <Sparkline data={history} color={hex} width={sparklineW} height={44} />
+        </div>
+
+        <hr className="divider" />
+        <HoldingsBlock holdings={holdings} color={hex} />
+      </div>
+    </div>
+  );
+}
 
 export default function ArenaPage() {
-  const router = useRouter();
   const params = useParams();
-  const layout = useUIStore((state) => state.layout);
-  const audioOn = useUIStore((state) => state.audioOn);
+  const layout = useUIStore((state) => state.layout) as Layout;
 
   const [simState, dispatch] = useReducer(simReducer, makeInitialSim());
-  const [activeTab, setActiveTab] = useState<'holdings' | 'orderbook'>('holdings');
   const [betPlaced, setBetPlaced] = useState<'degen' | 'whale' | null>(null);
   const [betAmount, setBetAmount] = useState<number>(0);
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [balance, setBalance] = useState(25);
 
-  // Clock Ticker to advance time and auto-advance turns
   useEffect(() => {
-    const clock = setInterval(() => {
-      dispatch({ type: 'TICK' });
-    }, 1000);
+    const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
     return () => clearInterval(clock);
   }, []);
 
-  const handleAdvance = () => {
-    dispatch({ type: 'ADVANCE' });
-  };
+  const handleAdvance = () => dispatch({ type: 'ADVANCE' });
+  const handleFastForward = () => dispatch({ type: 'FAST_FORWARD' });
 
-  const handleFastForward = () => {
-    dispatch({ type: 'FAST_FORWARD' });
-  };
-
-  const handlePlaceBet = (fighter: 'degen' | 'whale', amount: number) => {
+  const handleBet = (fighter: 'degen' | 'whale', amount: number) => {
+    if (!walletConnected) {
+      setWalletConnected(true);
+      return;
+    }
+    if (betPlaced || balance < amount) return;
     setBetPlaced(fighter);
-    setBetAmount((prev) => prev + amount);
+    setBetAmount(amount);
+    setBalance(balance - amount);
     dispatch({ type: 'PLACE_BET', fighter, amount, odds: fighter === 'degen' ? simState.oddsDegen : 100 - simState.oddsDegen });
   };
 
-  // Determine leader for border glow
-  const degenVal = simState.degen.pnl;
-  const whaleVal = simState.whale.pnl;
-  const degenIsLeading = degenVal >= whaleVal;
+  const degenF = {
+    id: 'degen',
+    name: FIGHTERS.degen.name,
+    hex: FIGHTERS.degen.hex,
+    side: 'a' as const,
+    tier: FIGHTERS.degen.tier,
+    tagline: FIGHTERS.degen.tagline,
+    rank: FIGHTERS.degen.rank,
+  };
+  const whaleF = {
+    id: 'whale',
+    name: FIGHTERS.whale.name,
+    hex: FIGHTERS.whale.hex,
+    side: 'b' as const,
+    tier: FIGHTERS.whale.tier,
+    tagline: FIGHTERS.whale.tagline,
+    rank: FIGHTERS.whale.rank,
+  };
 
-  // Simple BID/ASK heatmap grid items
-  const heatmapFills = [
-    { type: 'bid', size: 45, opacity: 0.6 },
-    { type: 'bid', size: 12, opacity: 0.25 },
-    { type: 'ask', size: 8, opacity: 0.2 },
-    { type: 'ask', size: 34, opacity: 0.55 },
-    { type: 'bid', size: 70, opacity: 0.8 },
-    { type: 'ask', size: 55, opacity: 0.75 },
-    { type: 'bid', size: 23, opacity: 0.4 },
-    { type: 'ask', size: 18, opacity: 0.35 },
-  ];
+  const degenCard = (
+    <FighterCardSplit fighter={degenF} pnl={simState.degen.pnl} history={simState.degen.history} holdings={simState.degen.holdings as Holding[]} layout={layout} />
+  );
+  const whaleCard = (
+    <FighterCardSplit fighter={whaleF} pnl={simState.whale.pnl} history={simState.whale.history} holdings={simState.whale.holdings as Holding[]} layout={layout} />
+  );
+
+  const duelOver = simState.round > 15 || simState.timeLeft <= 0;
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
-      {/* top status area */}
       <TopBar showNavigation={false} />
 
-      {/* Arena status sub-bar */}
-      <section className="border-b border-[var(--border)] px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 font-mono uppercase text-xs" style={{ background: 'linear-gradient(90deg, var(--fighter-a-soft) 0%, transparent 35%, transparent 65%, var(--fighter-b-soft) 100%)' }}>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-[var(--text-faint)] font-bold">§ ARENA</span>
-          <Chip variant="live">MAIN EVENT</Chip>
-          <span className="font-bold text-[var(--text)]">ROUND #{simState.round}/15</span>
-          <span className="text-[var(--gold)] flex items-center gap-1">
-            <Dot variant="gold" pulse={true} className="w-1.5 h-1.5" />
-            TURN CLOCK: {simState.timeLeft}s
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-6">
-          <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-cyan-400" /> {simState.spectators} WATCHING</span>
-          <span className="flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5 text-[var(--win)]" /> POT: {fmtUsd(simState.pot)}</span>
-          <span className="h-4 w-[1px] bg-[var(--border)]" />
-          <Link href="/duel">
-            <BracketButton variant="ghost" className="text-[10px] py-1 px-3">
-              LEAVE ARENA
-            </BracketButton>
-          </Link>
-        </div>
-      </section>
-
-      {/* Main Grid: Combatants & Sidebar details */}
-      <main className="flex-1 shell-pad grid grid-cols-1 xl:grid-cols-12 gap-8 py-8 items-start">
-        
-        {/* Left 8 Cols: Fighting Ring Combatants & LLM Feed */}
-        <div className="xl:col-span-8 flex flex-col gap-8">
-          
-          {/* § COMBATANTS */}
-          <div>
-            <div className="sect-head mb-4">
-              <span className="sect-head-num">§ COMBATANTS</span>
-              <span className="sect-head-title">RED CORNER · BLUE CORNER</span>
-              <span className="sect-head-meta">round {simState.round} of 15 · 90s per round</span>
-            </div>
-
-            {/* Layout modes controlled by state */}
-            <div className={`grid gap-6 ${
-              layout === 'split' ? 'grid-cols-1 md:grid-cols-2' :
-              layout === 'oneUp' ? 'grid-cols-1' :
-              'grid-cols-1'
-            }`}>
-
-              {/* Fighter A: THE DEGEN Card */}
-              <div
-                className={`card rounded-[2px] transition-all duration-300 flex flex-col overflow-hidden ${
-                  degenIsLeading && degenVal >= 0 ? 'shadow-[0_0_24px_rgba(255,51,102,0.18)]' : ''
-                } ${layout === 'oneUp' && !degenIsLeading ? 'scale-95 opacity-75' : ''}`}
-                style={{ minHeight: layout === 'stacked' ? '280px' : '380px', borderColor: '#ff3366' }}
-              >
-                {/* Ribbon header — gradient tint, rank chip, tier, winning/losing badge */}
-                <div
-                  className="flex justify-between items-center px-3 py-2"
-                  style={{
-                    background: 'linear-gradient(90deg, rgba(255,51,102,0.15), transparent 70%)',
-                    borderBottom: '1px solid rgba(255,51,102,0.33)',
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="inline-flex items-center justify-center w-[22px] h-[22px] font-bold"
-                      style={{ background: '#ff3366', color: '#0a0612', fontFamily: 'var(--fnt-display)', fontSize: 14 }}
-                    >S</span>
-                    <span className="t-display uppercase" style={{ fontSize: 13, color: '#ff3366', letterSpacing: '0.18em' }}>
-                      FIGHTER A
-                    </span>
-                    <span className="t-mono text-[10px] text-[var(--text-dim)]">·</span>
-                    <span className="t-mono text-[10px] text-[var(--text-dim)]">AGGRESSOR</span>
-                  </div>
-                  <Chip variant={degenVal >= 0 ? 'win' : 'loss'}>
-                    <Dot variant={degenVal >= 0 ? 'win' : 'loss'} pulse className="mr-1" />
-                    {degenVal >= 0 ? 'WINNING' : 'LOSING'}
-                  </Chip>
-                </div>
-
-                {/* Profile row */}
-                <div className="flex items-center gap-4 p-5">
-                  <FighterAvatar fighter="degen" context="arena" size={layout === 'stacked' ? 64 : 80} state={degenIsLeading ? 'winning' : 'idle'} />
-                  <div>
-                    <h3 className="t-display text-xl text-[var(--fighter-a)] uppercase" style={{ letterSpacing: '0.12em' }}>THE DEGEN</h3>
-                    <p className="text-[10px] text-[var(--text-dim)] font-mono italic">&ldquo;Send it. Always.&rdquo;</p>
-                  </div>
-                </div>
-
-                {/* PNL Block */}
-                <div className="px-5 py-4 border-t border-[var(--border-soft)] flex items-center justify-between gap-4">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] text-[var(--text-faint)] font-mono uppercase tracking-wider">ROUND PNL</span>
-                    <div className="flex items-baseline gap-3">
-                      <span
-                        className="t-num leading-none"
-                        style={{ fontSize: 32, color: degenVal >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                      >
-                        <AnimatedNumber value={degenVal} formatter={fmtUsd} duration={500} />
-                      </span>
-                      <span
-                        className="t-num"
-                        style={{ fontSize: 13, color: degenVal >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                      >
-                        {degenVal >= 0 ? '▲▲▲' : '▼▼▼'} <AnimatedNumber value={(degenVal / 300) * 100} formatter={fmtPct} duration={500} />
-                      </span>
-                    </div>
-                  </div>
-                  <div className="w-48 h-11 hidden sm:block">
-                    <Sparkline data={simState.degen.history} color="var(--fighter-a)" height={44} />
-                  </div>
-                </div>
-
-                {/* Holdings */}
-                <div className="px-5 pb-5 pt-3 border-t border-[var(--border-soft)] space-y-2.5">
-                  <span className="text-[10px] text-[var(--text-faint)] font-mono uppercase tracking-wider block">PORTFOLIO</span>
-                  {simState.degen.holdings.map((hold) => (
-                    <div key={hold.token} className="flex flex-col gap-1">
-                      <div className="flex justify-between items-center text-[10px] font-mono text-[var(--text-dim)]">
-                        <span><span className="text-[var(--text)]">{hold.token}</span> · {hold.amount}</span>
-                        <span className="t-num">{hold.pct}%</span>
-                      </div>
-                      <div className="w-full h-1 bg-[var(--bg-deep)] overflow-hidden">
-                        <div className="h-full" style={{ width: `${hold.pct}%`, background: 'var(--fighter-a)' }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Fighter B: THE WHALE Card */}
-              <div
-                className={`card rounded-[2px] transition-all duration-300 flex flex-col overflow-hidden ${
-                  !degenIsLeading && whaleVal >= 0 ? 'shadow-[0_0_24px_rgba(0,217,255,0.18)]' : ''
-                } ${layout === 'oneUp' && degenIsLeading ? 'scale-95 opacity-75' : ''}`}
-                style={{ minHeight: layout === 'stacked' ? '280px' : '380px', borderColor: '#00d9ff' }}
-              >
-                {/* Ribbon header — mirrored, gradient runs from the right */}
-                <div
-                  className="flex justify-between items-center px-3 py-2"
-                  style={{
-                    background: 'linear-gradient(270deg, rgba(0,217,255,0.15), transparent 70%)',
-                    borderBottom: '1px solid rgba(0,217,255,0.33)',
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="inline-flex items-center justify-center w-[22px] h-[22px] font-bold"
-                      style={{ background: '#00d9ff', color: '#0a0612', fontFamily: 'var(--fnt-display)', fontSize: 14 }}
-                    >S</span>
-                    <span className="t-display uppercase" style={{ fontSize: 13, color: '#00d9ff', letterSpacing: '0.18em' }}>
-                      FIGHTER B
-                    </span>
-                    <span className="t-mono text-[10px] text-[var(--text-dim)]">·</span>
-                    <span className="t-mono text-[10px] text-[var(--text-dim)]">TACTICIAN</span>
-                  </div>
-                  <Chip variant={whaleVal >= 0 ? 'win' : 'loss'}>
-                    <Dot variant={whaleVal >= 0 ? 'win' : 'loss'} pulse className="mr-1" />
-                    {whaleVal >= 0 ? 'WINNING' : 'LOSING'}
-                  </Chip>
-                </div>
-
-                <div className="flex items-center gap-4 p-5">
-                  <FighterAvatar fighter="whale" context="arena" size={layout === 'stacked' ? 64 : 80} state={!degenIsLeading ? 'winning' : 'idle'} />
-                  <div>
-                    <h3 className="t-display text-xl text-[var(--fighter-b)] uppercase" style={{ letterSpacing: '0.12em' }}>THE WHALE</h3>
-                    <p className="text-[10px] text-[var(--text-dim)] font-mono italic">&ldquo;I&rsquo;ll wait for it.&rdquo;</p>
-                  </div>
-                </div>
-
-                <div className="px-5 py-4 border-t border-[var(--border-soft)] flex items-center justify-between gap-4">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] text-[var(--text-faint)] font-mono uppercase tracking-wider">ROUND PNL</span>
-                    <div className="flex items-baseline gap-3">
-                      <span
-                        className="t-num leading-none"
-                        style={{ fontSize: 32, color: whaleVal >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                      >
-                        <AnimatedNumber value={whaleVal} formatter={fmtUsd} duration={500} />
-                      </span>
-                      <span
-                        className="t-num"
-                        style={{ fontSize: 13, color: whaleVal >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                      >
-                        {whaleVal >= 0 ? '▲▲▲' : '▼▼▼'} <AnimatedNumber value={(whaleVal / 300) * 100} formatter={fmtPct} duration={500} />
-                      </span>
-                    </div>
-                  </div>
-                  <div className="w-48 h-11 hidden sm:block">
-                    <Sparkline data={simState.whale.history} color="var(--fighter-b)" height={44} />
-                  </div>
-                </div>
-
-                <div className="px-5 pb-5 pt-3 border-t border-[var(--border-soft)] space-y-2.5">
-                  <span className="text-[10px] text-[var(--text-faint)] font-mono uppercase tracking-wider block">PORTFOLIO</span>
-                  {simState.whale.holdings.map((hold) => (
-                    <div key={hold.token} className="flex flex-col gap-1">
-                      <div className="flex justify-between items-center text-[10px] font-mono text-[var(--text-dim)]">
-                        <span><span className="text-[var(--text)]">{hold.token}</span> · {hold.amount}</span>
-                        <span className="t-num">{hold.pct}%</span>
-                      </div>
-                      <div className="w-full h-1 bg-[var(--bg-deep)] overflow-hidden">
-                        <div className="h-full" style={{ width: `${hold.pct}%`, background: 'var(--fighter-b)' }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* § FEED: Reasoning panel */}
-          <div>
-            <div className="sect-head mb-4">
-              <span className="sect-head-num">§ FEED</span>
-              <span className="sect-head-title">FIGHTER REASONING</span>
-              <span className="sect-head-meta">live logs · llm inference</span>
-            </div>
-
-            <div className="card p-6 bg-black/60 rounded-[2px] border-slate-800 font-mono text-xs text-[var(--text-dim)] leading-relaxed space-y-4 max-h-[300px] overflow-y-auto">
-              {/* Degen Reasoning */}
-              <div className="flex items-start gap-3">
-                <span className="text-[var(--fighter-a)] font-bold font-sans tracking-wide">DG:</span>
-                <div className="flex-1 bg-[var(--bg-stage)]/40 p-3 border border-l-2 border-l-[var(--fighter-a)] border-[var(--border-soft)]">
-                  <Typewriter text={simState.degen.reasoning} speed={35} className="text-[var(--text)] font-mono" />
-                </div>
-              </div>
-
-              {/* Whale Reasoning */}
-              <div className="flex items-start gap-3">
-                <span className="text-[var(--fighter-b)] font-bold font-sans tracking-wide">WH:</span>
-                <div className="flex-1 bg-[var(--bg-stage)]/40 p-3 border border-l-2 border-l-[var(--fighter-b)] border-[var(--border-soft)]">
-                  <Typewriter text={simState.whale.reasoning} speed={35} className="text-[var(--text)] font-mono" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Right 4 Cols: Marketplace orderbook, betting slots, and manual tickers */}
-        <div className="xl:col-span-4 space-y-8">
-          
-          {/* § MARKETPLACE DETAILS */}
-          <div>
-            <div className="sect-head mb-4">
-              <span className="sect-head-num">§ MARKET</span>
-              <span className="sect-head-title">WBTC / USDSO</span>
-              <span className="sect-head-meta">dreamDEX · order book live</span>
-            </div>
-
-            <div className="card p-4 bg-[var(--bg-stage)]/20 rounded-[2px] space-y-4">
-              {/* bid ask cards */}
-              <div className="grid grid-cols-2 gap-4 text-xs font-mono text-center">
-                <div className="border border-[var(--border-soft)] p-2">
-                  <span className="text-[9px] text-[var(--text-faint)] uppercase font-bold">BEST BID</span>
-                  <span className="text-sm font-bold text-[var(--win)] block mt-1">${simState.market.bid}</span>
-                </div>
-                <div className="border border-[var(--border-soft)] p-2">
-                  <span className="text-[9px] text-[var(--text-faint)] uppercase font-bold">BEST ASK</span>
-                  <span className="text-sm font-bold text-[var(--loss)] block mt-1">${simState.market.ask}</span>
-                </div>
-              </div>
-
-              {/* Heatmap Grid blocks */}
-              <div className="grid grid-cols-8 gap-1.5 h-16 border border-slate-900 p-1.5 bg-black/40">
-                {heatmapFills.map((fill, i) => (
-                  <div
-                    key={i}
-                    className={`h-full transition-all duration-300 ${
-                      fill.type === 'bid' ? 'bg-[var(--win)]' : 'bg-[var(--loss)]'
-                    }`}
-                    style={{ opacity: fill.opacity }}
-                  />
-                ))}
-              </div>
-
-              <div className="flex justify-between text-[10px] font-mono text-[var(--text-faint)] uppercase pt-1">
-                <span>VOL 24H: ${simState.market.vol.toLocaleString()}</span>
-                <span>RATIO: {simState.market.buyRatio * 100}% BUY</span>
-              </div>
-            </div>
-          </div>
-
-          {/* § BOOK BETTING DRAWERS */}
-          <div>
-            <div className="sect-head mb-4">
-              <span className="sect-head-num">§ BOOK</span>
-              <span className="sect-head-title">PLACE YOUR BET</span>
-              <span className="sect-head-meta">{betPlaced ? 'BET LOCKED' : 'BETS OPEN'}</span>
-            </div>
-
-            <div className="card border-[var(--border)] mt-4 p-4 bg-[var(--bg-deep)]/90 rounded-[2px] space-y-4">
-              <div className="flex justify-between items-center text-[10px] font-mono text-[var(--text-dim)] uppercase">
-                <span>DEGEN odds: {simState.oddsDegen}%</span>
-                <span>WHALE odds: {100 - simState.oddsDegen}%</span>
-              </div>
-              <OddsBar oddsA={simState.oddsDegen} oddsB={100 - simState.oddsDegen} />
-
-              {/* Wallet connection / placement */}
-              <div className="border-t border-[var(--border-soft)] pt-4 space-y-3">
-                {betPlaced ? (
-                  <div className="text-center py-2 border border-dashed border-[var(--gold)]/30 rounded-[2px] bg-yellow-950/10">
-                    <p className="text-[10px] font-bold text-[var(--gold)] uppercase">
-                      BET CONFIRMED AT LOCKED ODDS!
-                    </p>
-                    <p className="text-xs font-mono text-[var(--text)] mt-1">
-                      ${betAmount.toFixed(2)} USDSO STAKED ON {betPlaced.toUpperCase()}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-[10px] text-[var(--text-faint)] font-bold uppercase text-center mb-2">
-                      SELECT COMBATANT TO BACK
-                    </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <BracketButton variant="a" onClick={() => handlePlaceBet('degen', 2)} className="text-[10px] py-2 leading-none">
-                        BACK DEGEN +$2
-                      </BracketButton>
-                      <BracketButton variant="b" onClick={() => handlePlaceBet('whale', 2)} className="text-[10px] py-2 leading-none">
-                        BACK WHALE +$2
-                      </BracketButton>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Simulation advances controllers */}
-          <div className="space-y-3 border-t border-[var(--border)] pt-6">
-            <span className="text-[10px] text-[var(--text-faint)] font-bold uppercase block tracking-wider text-center">
-              DEMO SIMULATOR INTERACTION CONTROLS
+      {/* ArenaStatusBar — broadcast slate */}
+      <div style={{ background: 'var(--bg-stage)', borderBottom: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+        <div
+          style={{
+            position: 'absolute', inset: 0,
+            background: 'linear-gradient(90deg, var(--fighter-a-soft), transparent 30%, transparent 70%, var(--fighter-b-soft))',
+            pointerEvents: 'none',
+          }}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-3 relative">
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>§ ARENA · MAIN EVENT</span>
+            <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
+            <Chip variant="live"><Dot variant="a" pulse className="mr-1" /> LIVE</Chip>
+            <span className="t-mono t-xs" style={{ color: 'var(--text-dim)' }}>
+              ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{simState.round}</span>
+              <span className="t-faint"> / 15</span>
             </span>
-            
-            {simState.round >= 15 ? (
-              <Link href={`/duel/${params?.id || 1}/result`} className="block w-full">
-                <BracketButton variant="gold" className="w-full text-xs py-3.5 leading-none">
-                  ★ BOUT CONCLUDED. SEE WINNER →
-                </BracketButton>
-              </Link>
-            ) : (
-              <div className="grid grid-cols-2 gap-4">
-                <BracketButton variant="primary" onClick={handleAdvance} className="text-[10px] py-2">
-                  ADVANCE TURN (R+{simState.round})
-                </BracketButton>
-                <BracketButton variant="ghost" onClick={handleFastForward} className="text-[10px] py-2 border-[var(--border)] hover:border-slate-600">
-                  FAST-FORWARD Match
-                </BracketButton>
-              </div>
-            )}
+            <span className="t-mono t-xs" style={{ color: 'var(--text-dim)' }}>
+              BELL <span className="t-num" style={{ color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text)' }}>{fmtTime(simState.timeLeft)}</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="t-mono t-xs t-dim">
+              <span className="t-num" style={{ color: 'var(--text)' }}>{simState.spectators}</span> watching
+            </span>
+            <span className="t-mono t-xs t-dim">
+              POT <span className="t-num text-gold">${simState.pot}</span>
+            </span>
+            <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
+            <Link href="/duel">
+              <BracketButton variant="ghost" className="px-3 py-1.5">LEAVE ←</BracketButton>
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="shell-pad flex flex-col gap-6 py-6" style={{ maxWidth: 1440, margin: '0 auto', width: '100%' }}>
+        {/* § COMBATANTS */}
+        <div className="flex flex-col gap-3">
+          <div className="sect-head">
+            <span className="sect-head-num">§ COMBATANTS</span>
+            <span className="sect-head-title">RED CORNER · BLUE CORNER</span>
+            <span className="sect-head-meta">round {simState.round} of 15 · 90s per round</span>
           </div>
 
+          {layout === 'split' && (
+            <div className="flex items-stretch gap-4">
+              <div className="flex flex-col gap-4 flex-1">{degenCard}</div>
+              <div className="flex flex-col items-center justify-center" style={{ width: 80 }}>
+                <span
+                  className="t-display vs-pop"
+                  style={{
+                    fontSize: 56,
+                    background: 'linear-gradient(180deg, var(--fighter-a), var(--fighter-b))',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  }}
+                >
+                  VS
+                </span>
+              </div>
+              <div className="flex flex-col gap-4 flex-1">{whaleCard}</div>
+            </div>
+          )}
+
+          {layout === 'oneUp' && (() => {
+            const dWin = simState.degen.pnl >= simState.whale.pnl;
+            const Hero = dWin ? degenCard : whaleCard;
+            const Other = dWin ? whaleCard : degenCard;
+            return (
+              <div className="flex items-stretch gap-4">
+                <div style={{ flex: 1.6 }}>{Hero}</div>
+                <div style={{ flex: 1, opacity: 0.85, transform: 'scale(0.97)' }}>{Other}</div>
+              </div>
+            );
+          })()}
+
+          {layout === 'stacked' && (
+            <div className="flex flex-col gap-3">
+              {degenCard}
+              <div className="flex items-center justify-center">
+                <span className="t-display" style={{ fontSize: 24, color: 'var(--text-faint)' }}>— VS —</span>
+              </div>
+              {whaleCard}
+            </div>
+          )}
         </div>
 
-      </main>
+        {/* § FEED — Reasoning */}
+        <div
+          className="card pad-24 flex flex-col gap-4"
+          style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%), var(--bg-card)' }}
+        >
+          <div className="sect-head">
+            <span className="sect-head-num">§ FEED</span>
+            <span className="sect-head-title">FIGHTER REASONING</span>
+            <span className="sect-head-meta">LIVE LLM · CTX 8K · gpt-5-fight</span>
+          </div>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <Dot variant="a" pulse={simState.degen.thinking} />
+                <span className="label-tiny" style={{ color: 'var(--fighter-a)' }}>
+                  {FIGHTERS.degen.name} {simState.degen.thinking ? 'THINKING…' : 'DECIDED'}
+                </span>
+              </div>
+              <div className="t-mono t-sm" style={{ color: 'var(--text)', paddingLeft: 16, lineHeight: 1.5, minHeight: 22 }}>
+                <span className="t-dim">{'> '}</span>
+                <Typewriter text={simState.degen.reasoning} speed={42} />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <Dot variant="b" pulse={simState.whale.thinking} />
+                <span className="label-tiny" style={{ color: 'var(--fighter-b)' }}>
+                  {FIGHTERS.whale.name} {simState.whale.thinking ? 'THINKING…' : 'DECIDED'}
+                </span>
+              </div>
+              <div className="t-mono t-sm" style={{ color: 'var(--text)', paddingLeft: 16, lineHeight: 1.5, minHeight: 22 }}>
+                <span className="t-dim">{'> '}</span>
+                <Typewriter text={simState.whale.reasoning} speed={42} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* § MARKET — WBTC ticker */}
+        <div className="card pad-24 flex flex-col gap-3">
+          <div className="sect-head">
+            <span className="sect-head-num">§ MARKET</span>
+            <span className="sect-head-title">WBTC / USDSO</span>
+            <span className="sect-head-meta">dreamDEX · order book live</span>
+          </div>
+          <div className="flex items-center gap-8">
+            <div className="flex flex-col gap-0.5" style={{ flexShrink: 0 }}>
+              <span className="label-tiny">BID</span>
+              <span className="t-num" style={{ fontSize: 18 }}>${simState.market.bid.toFixed(2)}</span>
+            </div>
+            <div className="flex flex-col gap-0.5" style={{ flexShrink: 0 }}>
+              <span className="label-tiny">ASK</span>
+              <span className="t-num" style={{ fontSize: 18 }}>${simState.market.ask.toFixed(2)}</span>
+            </div>
+            <div className="flex flex-col gap-0.5" style={{ flexShrink: 0 }}>
+              <span className="label-tiny">24H</span>
+              <span className="t-num" style={{ fontSize: 18, color: simState.market.change >= 0 ? 'var(--win)' : 'var(--loss)' }}>
+                {fmtPct(simState.market.change)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 grow">
+              <span className="label-tiny">LAST FILLS — {(simState.market.buyRatio * 100).toFixed(0)}% BUYS</span>
+              <div className="flex gap-0.5 items-center">
+                {Array.from({ length: 28 }).map((_, i) => {
+                  const buy = i < simState.market.buyRatio * 28;
+                  return (
+                    <span
+                      key={i}
+                      style={{
+                        flex: 1,
+                        height: 14,
+                        background: buy ? 'var(--win)' : 'var(--loss)',
+                        opacity: 0.85,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex flex-col gap-0.5 items-end" style={{ flexShrink: 0 }}>
+              <span className="label-tiny">VOL 24H</span>
+              <span className="t-num text-gold" style={{ fontSize: 18 }}>${(simState.market.vol / 1_000).toFixed(1)}K</span>
+            </div>
+          </div>
+        </div>
+
+        {/* § BOOK — Betting Drawer */}
+        <div className="card pad-24 flex flex-col gap-3">
+          <div className="sect-head">
+            <span className="sect-head-num">§ BOOK</span>
+            <span className="sect-head-title">PLACE YOUR BET</span>
+            <span className="sect-head-meta">{betPlaced ? 'BET LOCKED' : 'BETS OPEN · one-click · no review'}</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="flex justify-between items-center">
+              <span className="t-mono t-xs" style={{ color: 'var(--fighter-a)' }}>
+                DEGEN <span className="t-num" style={{ fontSize: 16, marginLeft: 4 }}>{simState.oddsDegen}%</span>
+              </span>
+              <span className="t-mono t-xs" style={{ color: 'var(--fighter-b)' }}>
+                <span className="t-num" style={{ fontSize: 16, marginRight: 4 }}>{100 - simState.oddsDegen}%</span> WHALE
+              </span>
+            </div>
+            <OddsBar oddsA={simState.oddsDegen} oddsB={100 - simState.oddsDegen} />
+          </div>
+          <div className="flex justify-between items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              {!walletConnected ? (
+                <BracketButton variant="primary" onClick={() => setWalletConnected(true)}>CONNECT TO BET</BracketButton>
+              ) : betPlaced ? (
+                <Chip variant="gold">
+                  <Dot variant="warn" className="mr-1" /> YOUR BET · ${betAmount} on {FIGHTERS[betPlaced].name}
+                </Chip>
+              ) : (
+                <>
+                  <BracketButton variant="a" onClick={() => handleBet('degen', 2)} className="px-3 py-2">BACK DEGEN +$2</BracketButton>
+                  <BracketButton variant="a" onClick={() => handleBet('degen', 5)} className="px-3 py-2">+$5</BracketButton>
+                  <span className="t-mono t-xs t-faint">·</span>
+                  <BracketButton variant="b" onClick={() => handleBet('whale', 2)} className="px-3 py-2">BACK WHALE +$2</BracketButton>
+                  <BracketButton variant="b" onClick={() => handleBet('whale', 5)} className="px-3 py-2">+$5</BracketButton>
+                </>
+              )}
+            </div>
+            <span className="t-mono t-xs t-dim">
+              BALANCE <span className="t-num text-gold">${balance.toFixed(2)}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Turn controls / end-of-duel */}
+        {duelOver ? (
+          <div
+            className="card flex items-center justify-between gap-4"
+            style={{ borderColor: 'var(--gold)', padding: 24 }}
+          >
+            <div className="flex items-center gap-4">
+              <Chip variant="gold">★ DUEL CONCLUDED</Chip>
+              <div className="flex flex-col gap-0.5">
+                <span className="label-tiny">FINAL VERDICT</span>
+                <span
+                  className="t-display t-up"
+                  style={{
+                    fontSize: 18,
+                    letterSpacing: '0.14em',
+                    color: simState.degen.pnl >= simState.whale.pnl ? 'var(--fighter-a)' : 'var(--fighter-b)',
+                  }}
+                >
+                  THE {simState.degen.pnl >= simState.whale.pnl ? 'DEGEN' : 'WHALE'} WINS
+                </span>
+              </div>
+            </div>
+            <Link href={`/duel/${params?.id ?? 1}/result`}>
+              <BracketButton variant="gold">SEE WINNER →</BracketButton>
+            </Link>
+          </div>
+        ) : (
+          <div
+            className="card flex items-center justify-between gap-3"
+            style={{ borderColor: 'var(--border)', padding: 16 }}
+          >
+            <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
+              ▸ NEXT TURN IN <span className="t-num" style={{ color: 'var(--text)' }}>{simState.turnIn}s</span> · AUTO ON
+            </span>
+            <div className="flex gap-2">
+              <BracketButton onClick={handleAdvance}>ADVANCE TURN ▸</BracketButton>
+              <BracketButton variant="ghost" onClick={handleFastForward}>▸▸ JUMP TO END</BracketButton>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
