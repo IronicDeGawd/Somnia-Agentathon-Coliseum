@@ -23,9 +23,9 @@ export const useDuelEvents = ({
     eventName: 'TurnAdvanced',
     onLogs(logs) {
       for (const log of logs) {
-        const { duelId, turn } = log.args;
-        if (duelId !== undefined && turn !== undefined && onTurnAdvanced) {
-          onTurnAdvanced(duelId, turn);
+        const { duelId, completedCallbacks } = log.args;
+        if (duelId !== undefined && completedCallbacks !== undefined && onTurnAdvanced) {
+          onTurnAdvanced(duelId, completedCallbacks);
         }
       }
     },
@@ -38,9 +38,9 @@ export const useDuelEvents = ({
     eventName: 'DuelResolved',
     onLogs(logs) {
       for (const log of logs) {
-        const { duelId, winnerSlot, payoutA, payoutB } = log.args;
-        if (duelId !== undefined && winnerSlot !== undefined && payoutA !== undefined && payoutB !== undefined && onDuelResolved) {
-          onDuelResolved(duelId, winnerSlot, payoutA, payoutB);
+        const { duelId, winnerFighterId, valueA, valueB } = log.args;
+        if (duelId !== undefined && winnerFighterId !== undefined && valueA !== undefined && valueB !== undefined && onDuelResolved) {
+          onDuelResolved(duelId, winnerFighterId, valueA, valueB);
         }
       }
     },
@@ -53,9 +53,9 @@ export const useDuelEvents = ({
     eventName: 'OddsUpdated',
     onLogs(logs) {
       for (const log of logs) {
-        const { duelId, degenOddsBps, whaleOddsBps } = log.args;
-        if (duelId !== undefined && degenOddsBps !== undefined && whaleOddsBps !== undefined && onOddsUpdated) {
-          onOddsUpdated(duelId, degenOddsBps, whaleOddsBps);
+        const { duelId, oddsA, oddsB } = log.args;
+        if (duelId !== undefined && oddsA !== undefined && oddsB !== undefined && onOddsUpdated) {
+          onOddsUpdated(duelId, oddsA, oddsB);
         }
       }
     },
@@ -68,9 +68,9 @@ export const useDuelEvents = ({
     eventName: 'FighterMoveRequested',
     onLogs(logs) {
       for (const log of logs) {
-        const { duelId, slot, prompt } = log.args;
-        if (duelId !== undefined && slot !== undefined && prompt !== undefined && onFighterMoveRequested) {
-          onFighterMoveRequested(duelId, slot, prompt);
+        const { duelId, fighterId } = log.args;
+        if (duelId !== undefined && fighterId !== undefined && onFighterMoveRequested) {
+          onFighterMoveRequested(duelId, fighterId, '');
         }
       }
     },

@@ -2,28 +2,101 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { formatUnits } from 'viem';
+import { useReadContract } from 'wagmi';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
-import { FIGHTERS } from '@/lib/fighters';
+import BetPanel from '@/components/shared/BetPanel';
+import { useDuelState } from '@/hooks/useDuelState';
+import { useFighters } from '@/hooks/useFighters';
 import { fmtTime } from '@/lib/format';
+import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import type { FighterData } from '@/hooks/useFighters';
 
-interface CornerProps {
-  id: 'degen' | 'whale';
-  side: 'a' | 'b';
+// ─── Pool mask bits (mirrors ArenaTypes) ─────────────────────────────────────
+const POOL_BIT_SOMI = 0x01;
+const POOL_BIT_WETH = 0x02;
+const POOL_BIT_WBTC = 0x04;
+
+const ARENA_STATUS_ACTIVE = 1;
+
+function poolTierLabel(poolMask: number): string {
+  const tokens: string[] = [];
+  if (poolMask & POOL_BIT_SOMI) tokens.push('SOMI');
+  if (poolMask & POOL_BIT_WETH) tokens.push('WETH');
+  if (poolMask & POOL_BIT_WBTC) tokens.push('WBTC');
+  return tokens.length > 0 ? tokens.join(' · ') : '—';
 }
 
-function Corner({ id, side }: CornerProps) {
-  const f = FIGHTERS[id];
-  const odds = id === 'degen' ? '{fighterA} odds {oddsA_bps/100}% (BPS, clamped 5–95%)' : '{fighterB} odds {oddsB_bps/100}% = 100% − oddsA (clamped 5–95%)';
+// ─── Full duel tuple (real ABI field order) ───────────────────────────────────
+// Arena.duels returns:
+//   0  fighterA         uint8
+//   1  fighterB         uint8
+//   2  creator          address
+//   3  startBlock       uint256
+//   4  lastTurnBlock    uint256
+//   5  completedCallbacks uint16
+//   6  turns            uint16
+//   7  poolMask         uint8
+//   8  status           uint8
+//   9  initialUsdsoPerFighter uint256
+//  10  lastAction       uint8[2]
+//  11  fundsRecovered   bool
+//  12  winnerSlot       uint8
+
+interface FullDuel {
+  fighterA: number;
+  fighterB: number;
+  creator: `0x${string}`;
+  turns: number;
+  poolMask: number;
+  status: number;
+  initialUsdsoPerFighter: bigint;
+  winnerSlot: number;
+}
+
+function parseFullDuel(raw: readonly unknown[]): FullDuel {
+  return {
+    fighterA:               Number(raw[0]),
+    fighterB:               Number(raw[1]),
+    creator:                raw[2] as `0x${string}`,
+    turns:                  Number(raw[6]),
+    poolMask:               Number(raw[7]),
+    status:                 Number(raw[8]),
+    initialUsdsoPerFighter: raw[9] as bigint,
+    winnerSlot:             Number(raw[12]),
+  };
+}
+
+// ─── Corner card ─────────────────────────────────────────────────────────────
+
+interface CornerProps {
+  fighter: FighterData;
+  side: 'a' | 'b';
+  oddsPercent: string;
+}
+
+function Corner({ fighter, side, oddsPercent }: CornerProps) {
+  const hex = fighter.hex;
   const cornerLabel = side === 'a' ? 'RED CORNER' : 'BLUE CORNER';
+
+  const avatarFighter = {
+    id: fighter.dicebearSeed,
+    name: fighter.name,
+    hex: fighter.hex,
+    rank: 'S' as const,
+    tier: 'FIGHTER',
+    seedBottts: fighter.dicebearSeed,
+  };
+
   return (
     <div
       className={`card ${side === 'a' ? 'glow-a' : 'glow-b'}`}
       style={{
         flex: 1,
-        borderColor: f.hex,
+        borderColor: hex,
         overflow: 'hidden',
         transform: side === 'a' ? 'translateX(-12px)' : 'translateX(12px)',
         opacity: 0,
@@ -35,8 +108,8 @@ function Corner({ id, side }: CornerProps) {
         className="row ai-c jc-sb"
         style={{
           padding: '10px 16px',
-          background: `linear-gradient(${side === 'a' ? 90 : 270}deg, ${f.hex}22, transparent 70%)`,
-          borderBottom: `1px solid ${f.hex}55`,
+          background: `linear-gradient(${side === 'a' ? 90 : 270}deg, ${hex}22, transparent 70%)`,
+          borderBottom: `1px solid ${hex}55`,
         }}
       >
         <div className="row gap-8 ai-c">
@@ -44,7 +117,7 @@ function Corner({ id, side }: CornerProps) {
             style={{
               width: 22,
               height: 22,
-              background: f.hex,
+              background: hex,
               color: '#0a0612',
               display: 'inline-flex',
               alignItems: 'center',
@@ -54,31 +127,30 @@ function Corner({ id, side }: CornerProps) {
               fontSize: 14,
             }}
           >
-            {f.rank}
+            {side === 'a' ? 'A' : 'B'}
           </span>
           <span
             className="t-display t-up"
-            style={{ fontSize: 13, color: f.hex, letterSpacing: '0.18em', whiteSpace: 'nowrap' }}
+            style={{ fontSize: 13, color: hex, letterSpacing: '0.18em', whiteSpace: 'nowrap' }}
           >
             {cornerLabel}
           </span>
-          <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>· {f.tier}</span>
         </div>
-        <span className="chip" style={{ color: f.hex, borderColor: f.hex }}>{odds}</span>
+        <span className="chip" style={{ color: hex, borderColor: hex }}>{oddsPercent}%</span>
       </div>
 
       {/* Portrait + name + tagline */}
       <div className="col gap-16 ai-c" style={{ padding: 24 }}>
-        <FighterAvatar fighter={id} context="card" size={220} state="winning" />
+        <FighterAvatar fighter={avatarFighter} context="card" size={220} state="winning" />
         <div className="col ai-c gap-4">
           <span
             className="t-display t-up"
-            style={{ fontSize: 24, letterSpacing: '0.1em', color: f.hex, lineHeight: 1, whiteSpace: 'nowrap' }}
+            style={{ fontSize: 24, letterSpacing: '0.1em', color: hex, lineHeight: 1, whiteSpace: 'nowrap' }}
           >
-            {f.name}
+            {fighter.name}
           </span>
           <span className="t-mono t-sm t-dim" style={{ fontStyle: 'italic', whiteSpace: 'nowrap' }}>
-            &ldquo;{f.tagline}&rdquo;
+            &ldquo;{fighter.tagline}&rdquo;
           </span>
         </div>
       </div>
@@ -87,19 +159,19 @@ function Corner({ id, side }: CornerProps) {
       <div className="col gap-10" style={{ padding: '0 24px 16px' }}>
         <div className="row jc-sb ai-c">
           <span className="label-tiny">AGGRESSION</span>
-          <Meter value={f.aggression} side={side} />
+          <Meter value={fighter.aggression} side={side} />
         </div>
         <div className="row jc-sb ai-c">
           <span className="label-tiny">PATIENCE</span>
-          <Meter value={f.patience} side={side} />
+          <Meter value={fighter.patience} side={side} />
         </div>
         <div className="row jc-sb ai-c">
           <span className="label-tiny">RISK</span>
-          <Meter value={f.risk} side={side} />
+          <Meter value={fighter.risk} side={side} />
         </div>
       </div>
 
-      {/* Footer: RECORD + BACK */}
+      {/* Footer */}
       <div
         className="row jc-sb ai-c"
         style={{
@@ -109,42 +181,98 @@ function Corner({ id, side }: CornerProps) {
         }}
       >
         <div className="col gap-2">
-          <span className="label-tiny">RECORD</span>
-          <span className="t-num t-sm">{f.record.w}W · {f.record.l}L</span>
+          <span className="label-tiny">WIN ODDS</span>
+          <span className="t-num t-sm" style={{ color: hex }}>{oddsPercent}%</span>
         </div>
-        <BracketButton variant={side}>BACK +2 USDso</BracketButton>
+        <span className="t-mono t-xs t-dim">{side === 'a' ? 'FIGHTER A' : 'FIGHTER B'}</span>
       </div>
     </div>
   );
 }
 
+function CornerSkeleton({ side }: { side: 'a' | 'b' }) {
+  return (
+    <div
+      className="card"
+      style={{ flex: 1, overflow: 'hidden', opacity: 0.4 }}
+    >
+      <div style={{ padding: 24, height: 400, background: 'var(--bg-card)' }} />
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function PreDuelPage() {
   const router = useRouter();
   const params = useParams();
-  const duelId = String(params?.id ?? '342');
-  const turnsParam = Number(params?.turns ?? 15);
-  const turns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
-    ? (turnsParam as 3 | 6 | 9 | 15)
-    : 15;
-  // Indicative pot — minDepositFor scales roughly with active pool count.
-  // Healthy book example from progress.md: 6-turn SOMI+WETH ≈ 24 USDso.
-  const potByTier: Record<3 | 6 | 9 | 15, number> = { 3: 12, 6: 24, 9: 48, 15: 80 };
-  const pot = potByTier[turns];
-  const n = 24;
+  const duelIdStr = String(params?.id ?? '1');
+  const duelIdBig = BigInt(duelIdStr);
+
+  // Full duel read with correct field mapping
+  const { data: duelRaw, isLoading: duelLoading } = useReadContract({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    functionName: 'duels',
+    args: [duelIdBig],
+    query: {
+      enabled: duelIdBig > BigInt(0),
+      refetchInterval: 10_000,
+    },
+  });
+
+  // Odds + bet totals from useDuelState
+  const { odds, totalBetsA, totalBetsB } = useDuelState(duelIdBig);
+
+  const { fighters, isLoading: fightersLoading } = useFighters();
+
   const [t, setT] = useState(30);
 
+  const fullDuel = duelRaw ? parseFullDuel(duelRaw as readonly unknown[]) : null;
+
+  // Auto-redirect if duel is already Active
+  useEffect(() => {
+    if (fullDuel && fullDuel.status === ARENA_STATUS_ACTIVE) {
+      router.push(`/duel/${duelIdStr}`);
+    }
+  }, [fullDuel, duelIdStr, router]);
+
+  // Countdown timer — navigate when it hits 0
   useEffect(() => {
     if (t <= 0) {
-      router.push('/duel/1');
+      router.push(`/duel/${duelIdStr}`);
       return;
     }
     const id = setTimeout(() => setT((x) => x - 1), 1000);
     return () => clearTimeout(id);
-  }, [t, router]);
+  }, [t, duelIdStr, router]);
+
+  // Resolve fighter data from on-chain fighter indexes
+  const fighterA = fullDuel ? fighters.find((f) => f.index === fullDuel.fighterA) : null;
+  const fighterB = fullDuel ? fighters.find((f) => f.index === fullDuel.fighterB) : null;
+
+  // Pot = initialUsdsoPerFighter * 2
+  const pot = fullDuel
+    ? Number(formatUnits(fullDuel.initialUsdsoPerFighter * BigInt(2), 18)).toFixed(2)
+    : '—';
+
+  const totalBetPool = Number(formatUnits(totalBetsA + totalBetsB, 18)).toFixed(2);
+
+  // Odds display
+  const oddsAPercent = odds ? (odds.degenBps / 100).toFixed(1) : '—';
+  const oddsBPercent = odds ? (odds.whaleBps  / 100).toFixed(1) : '—';
+
+  const turns    = fullDuel?.turns    ?? 15;
+  const poolMask = fullDuel?.poolMask ?? 0;
+  const tierLabel = poolMask > 0 ? poolTierLabel(poolMask) : '—';
+
+  const isActive   = fullDuel?.status === ARENA_STATUS_ACTIVE;
+  const dataReady  = !duelLoading && !fightersLoading && !!fullDuel && !!fighterA && !!fighterB;
 
   return (
     <div className="col" style={{ minHeight: '100vh', background: 'var(--bg-deep)' }}>
       <AppTopBar />
+
       {/* Status strip */}
       <div
         className="row ai-c jc-sb"
@@ -159,10 +287,16 @@ export default function PreDuelPage() {
             className="t-mono t-xs"
             style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}
           >
-            § PRE-DUEL · DUEL #{duelId}
+            § PRE-DUEL · DUEL #{duelIdStr}
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
           <Chip variant="gold">▸ MAIN EVENT</Chip>
+          {tierLabel !== '—' && (
+            <>
+              <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+              <span className="t-mono t-xs t-dim">{tierLabel}</span>
+            </>
+          )}
         </div>
         <div className="row gap-12 ai-c">
           <span className="label-tiny">BETS OPEN WHILE DUEL ACTIVE — odds locked at placement</span>
@@ -176,6 +310,7 @@ export default function PreDuelPage() {
       </div>
 
       <div className="shell-pad col gap-24" style={{ paddingTop: 32, paddingBottom: 32 }}>
+
         {/* Marquee headline */}
         <div className="col ai-c gap-4">
           <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>TALE OF THE TAPE</span>
@@ -190,15 +325,26 @@ export default function PreDuelPage() {
               color: 'var(--text)',
             }}
           >
-            <span className="text-a">THE DEGEN</span>
-            <span style={{ color: 'var(--text-faint)', margin: '0 16px' }}>vs</span>
-            <span className="text-b">THE WHALE</span>
+            {dataReady ? (
+              <>
+                <span className="text-a">{fighterA!.name}</span>
+                <span style={{ color: 'var(--text-faint)', margin: '0 16px' }}>vs</span>
+                <span className="text-b">{fighterB!.name}</span>
+              </>
+            ) : (
+              <span style={{ color: 'var(--text-dim)' }}>LOADING…</span>
+            )}
           </h1>
         </div>
 
         {/* Corner cards w/ gradient VS */}
         <div className="row gap-24 ai-c" style={{ alignItems: 'stretch' }}>
-          <Corner id="degen" side="a" />
+          {dataReady ? (
+            <Corner fighter={fighterA!} side="a" oddsPercent={oddsAPercent} />
+          ) : (
+            <CornerSkeleton side="a" />
+          )}
+
           <div className="col ai-c gap-12" style={{ width: 80, justifyContent: 'center' }}>
             <span
               className="t-display vs-pop"
@@ -216,8 +362,22 @@ export default function PreDuelPage() {
               BEST OF<br />{turns} ROUNDS
             </span>
           </div>
-          <Corner id="whale" side="b" />
+
+          {dataReady ? (
+            <Corner fighter={fighterB!} side="b" oddsPercent={oddsBPercent} />
+          ) : (
+            <CornerSkeleton side="b" />
+          )}
         </div>
+
+        {/* Bet panel — only when duel is active and data is ready */}
+        {dataReady && isActive && (
+          <BetPanel
+            duelId={duelIdBig}
+            fighterAName={fighterA!.name}
+            fighterBName={fighterB!.name}
+          />
+        )}
 
         {/* Bottom strip */}
         <div className="card pad-16 row jc-sb ai-c">
@@ -228,14 +388,20 @@ export default function PreDuelPage() {
             </div>
             <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
             <div className="col gap-2">
-              <span className="eyebrow">BETTORS (unique placeBet addresses)</span>
-              <span className="t-num" style={{ fontSize: 22 }}>{n}</span>
+              <span className="eyebrow">BET POOL</span>
+              <span className="t-num" style={{ fontSize: 22 }}>{totalBetPool} USDso</span>
+            </div>
+            <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
+            <div className="col gap-2">
+              <span className="eyebrow">TIER</span>
+              <span className="t-num" style={{ fontSize: 16 }}>{tierLabel}</span>
             </div>
           </div>
-          <BracketButton variant="primary" onClick={() => router.push('/duel/1')}>
+          <BracketButton variant="primary" onClick={() => router.push(`/duel/${duelIdStr}`)}>
             SKIP TO ARENA →
           </BracketButton>
         </div>
+
       </div>
     </div>
   );

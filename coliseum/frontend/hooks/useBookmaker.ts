@@ -11,7 +11,8 @@ export const useBookmaker = (duelId?: bigint) => {
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: ABIS.Bookmaker,
     functionName: 'currentOdds',
-    args: duelId !== undefined ? [duelId] : undefined,
+    // currentOdds(duelId, index) — index 0 = fighterA odds (BPS)
+    args: duelId !== undefined ? [duelId, BigInt(0)] : undefined,
     query: {
       enabled: duelId !== undefined,
     },
@@ -47,10 +48,12 @@ export const useBookmaker = (duelId?: bigint) => {
     });
   };
 
+  // oddsData is a single uint16 (BPS) for fighterA. WhaleOdds = 10000 - degenOdds.
+  const degenOddsBps = oddsData ? Number(oddsData) : 0;
   return {
     odds: oddsData ? {
-      degenOdds: oddsData[0] / 100, // convert BPS to percent
-      whaleOdds: oddsData[1] / 100, // convert BPS to percent
+      degenOdds: degenOddsBps / 100,
+      whaleOdds: (10000 - degenOddsBps) / 100,
     } : null,
     isLoading,
     refetch,

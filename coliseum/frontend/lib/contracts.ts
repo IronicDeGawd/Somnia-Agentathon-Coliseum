@@ -1,6 +1,5 @@
 import { parseAbi } from 'viem';
 
-// Addresses on Somnia Shannon testnet (Chain ID 50312)
 export const CONTRACT_ADDRESSES = {
   Arena: '0x2f38647596cda697f8fd674430cb4c9b31eb6a1b' as const,
   Bookmaker: '0xdf5709661a3f16f4ef3ee8cc232a087f016dbf7f' as const,
@@ -8,25 +7,99 @@ export const CONTRACT_ADDRESSES = {
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
 };
 
-// Compact modern human-readable ABIs for robust integration
+export enum DuelStatus {
+  None = 0,
+  Active = 1,
+  Finalizing = 2,
+  Resolved = 3,
+}
+
+export interface DuelData {
+  fighterA: number;
+  fighterB: number;
+  creator: `0x${string}`;
+  startBlock: bigint;
+  lastTurnBlock: bigint;
+  completedCallbacks: number;
+  turns: number;
+  poolMask: number;
+  status: DuelStatus;
+  initialUsdsoPerFighter: bigint;
+  lastAction: [number, number];
+  fundsRecovered: boolean;
+  winnerSlot: number;
+}
+
+export interface FighterData {
+  name: string;
+  tagline: string;
+  systemPrompt: string;
+  aggression: number;
+  patience: number;
+  risk: number;
+}
+
+export interface BetData {
+  bettor: `0x${string}`;
+  fighterId: number;
+  stake: bigint;
+  oddsAtPlacementBps: number;
+  settled: boolean;
+}
+
+export interface OddsData {
+  oddsA: number;
+  oddsB: number;
+}
+
 export const ABIS = {
   Arena: parseAbi([
-    'function duels(uint256 duelId) view returns (address creator, uint32 turns, uint32 poolMask, uint32 currentTurn, uint8 status, uint8 winnerSlot, uint256 quoteBalanceA, uint256 quoteBalanceB)',
-    'function minDepositFor(uint32 turns) view returns (uint256)',
-    'function startDuel(uint8 fighterA, uint8 fighterB, uint32 turns) external returns (uint256)',
+    'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, uint8[2] lastAction, bool fundsRecovered, uint8 winnerSlot)',
+    'function activeDuelId() view returns (uint256)',
+    'function minDepositFor(uint16 turns) view returns (uint256)',
+    'function nextDuelId() view returns (uint256)',
+    'function PLATFORM_FEE() view returns (uint256)',
+    'function TURN_INTERVAL_BLOCKS() view returns (uint256)',
+    'function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns) external returns (uint256)',
     'function finalizeDuel(uint256 duelId) external',
     'function recoverFunds(uint256 duelId) external',
-    'event TurnAdvanced(uint256 indexed duelId, uint32 indexed turn)',
-    'event DuelResolved(uint256 indexed duelId, uint8 indexed winnerSlot, uint256 payoutA, uint256 payoutB)',
-    'event FighterMoveRequested(uint256 indexed duelId, uint8 indexed slot, string prompt)',
+    'event DuelStarted(uint256 indexed duelId, uint8 indexed fighterA, uint8 indexed fighterB, address creator, uint16 turns, uint8 poolMask, uint256 startBlock)',
+    'event TurnAdvanced(uint256 indexed duelId, uint16 completedCallbacks, uint256 blockNumber)',
+    'event DuelResolved(uint256 indexed duelId, uint8 indexed winnerFighterId, uint256 valueA, uint256 valueB)',
+    'event FighterMoveRequested(uint256 indexed duelId, uint8 indexed fighterId, uint256 requestId)',
+    'event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, uint8 action, uint128 orderId)',
+    'event FighterMoveFailed(uint256 indexed duelId, uint8 indexed fighterId, string reason)',
+    'event DuelFundsRecovered(uint256 indexed duelId, address indexed creator, uint256 amount)',
+    'event MarkPriceSnapshot(uint256 indexed duelId, address indexed pool, uint256 markPrice, uint16 turnNum)',
+    'event DuelDegenerate(uint256 indexed duelId, address indexed pool, string reason)',
+    'event OrderPlaced(address indexed pool, uint8 indexed fighterId, uint256 indexed duelId, uint128 orderId, bool isBid, uint256 price, uint256 quantity, uint8 orderType)',
+    'event OrderRejected(address indexed pool, uint8 indexed fighterId, uint256 indexed duelId, bool isBid, uint256 price, uint256 quantity, uint8 orderType, string reason)',
   ]),
-  
+
   Bookmaker: parseAbi([
-    'function currentOdds(uint256 duelId) view returns (uint32 degenOddsBps, uint32 whaleOddsBps)',
-    'function placeBet(uint256 duelId, uint8 fighterSlot, uint256 amount) external',
+    'function currentOdds(uint256 duelId, uint256 index) view returns (uint16)',
+    'function bets(uint256 duelId, uint256 index) view returns (address bettor, uint8 fighterId, uint256 stake, uint16 oddsAtPlacementBps, bool settled)',
+    'function duelSettled(uint256 duelId) view returns (bool)',
+    'function rakeAccrued(uint256 duelId) view returns (uint256)',
+    'function pendingOddsRequest(uint256 duelId) view returns (bool)',
+    'function lastOddsUpdateBlock(uint256 duelId) view returns (uint256)',
+    'function placeBet(uint256 duelId, uint8 fighterId, uint256 stake) external',
     'function settleBets(uint256 duelId) external',
-    'event OddsUpdated(uint256 indexed duelId, uint32 degenOddsBps, uint32 whaleOddsBps)',
-    'event BetPlaced(uint256 indexed duelId, address indexed bettor, uint8 indexed slot, uint256 amount)',
+    'function initializeOdds(uint256 duelId, uint16 oddsA, uint16 oddsB) external',
+    'function updateOdds(uint256 duelId, uint16 oddsA, uint16 oddsB) external',
+    'event OddsInitialized(uint256 indexed duelId, uint16 oddsA, uint16 oddsB)',
+    'event OddsUpdated(uint256 indexed duelId, uint16 oddsA, uint16 oddsB)',
+    'event BetPlaced(uint256 indexed duelId, uint8 indexed fighterId, address indexed bettor, uint256 stake, uint16 oddsAtPlacementBps, uint256 betIndex)',
+    'event BetsSettled(uint256 indexed duelId, uint8 indexed winnerId, uint256 totalPayout, uint256 rake)',
+    'event RakeWithdrawn(uint256 indexed duelId, address indexed to, uint256 amount)',
+    'event OddsRequestSent(uint256 indexed duelId, uint256 indexed requestId, uint256 blockNumber)',
+    'event OddsRequestFailed(uint256 indexed duelId, string reason)',
+  ]),
+
+  FighterRegistry: parseAbi([
+    'function fighters(uint8 index) view returns (string name, string tagline, string systemPrompt, uint8 aggression, uint8 patience, uint8 risk)',
+    'function getFighter(uint8 id) view returns (string name, string tagline, string systemPrompt, uint8 aggression, uint8 patience, uint8 risk)',
+    'function FIGHTER_COUNT() view returns (uint8)',
   ]),
 
   USDso: parseAbi([

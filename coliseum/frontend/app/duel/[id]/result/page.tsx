@@ -3,50 +3,110 @@
 import React, { useReducer, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
+import { useAccount, useReadContract } from 'wagmi';
+import { formatUnits } from 'viem';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
+import SettlePanel from '@/components/shared/SettlePanel';
+import { useDuelState } from '@/hooks/useDuelState';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
-import { FIGHTERS } from '@/lib/fighters';
-import { fmtUsd, fmtPct, fmtTime } from '@/lib/format';
+import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
+import { fmtTime } from '@/lib/format';
+import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 
-interface ResultBet {
-  fighter: 'degen' | 'whale';
-  amount: number;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function fmtUsdso(raw: bigint): string {
+  return `$${Number(formatUnits(raw, 18)).toFixed(2)}`;
 }
+
+function fmtUsdsoNum(raw: bigint): number {
+  return Number(formatUnits(raw, 18));
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ResultPage() {
   const router = useRouter();
   const params = useParams();
-  const duelId = String(params?.id ?? '342');
-  const turnsParam = Number(params?.turns ?? 15);
-  const turns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
-    ? (turnsParam as 3 | 6 | 9 | 15)
-    : 15;
-  const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
+  const rawId = String(params?.id ?? '0');
+  const duelId = BigInt(rawId || '0');
 
+  const { address: userAddress } = useAccount();
+
+  // ── On-chain duel state ───────────────────────────────────────────────────
+  const { duel, isLoading, currentTurn } = useDuelState(duelId);
+
+  // Read the full Arena tuple to get fighterA / fighterB indexes.
+  // Tuple: (fighterA, fighterB, creator, startBlock, lastTurnBlock,
+  //         completedCallbacks, turns, poolMask, status,
+  //         initialUsdsoPerFighter, lastAction, fundsRecovered, winnerSlot)
+  const { data: duelRaw } = useReadContract({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    functionName: 'duels',
+    args: [duelId],
+    query: { enabled: duelId > BigInt(0) },
+  });
+
+  const fighterAIndex = duelRaw ? Number(duelRaw[0]) : undefined;
+  const fighterBIndex = duelRaw ? Number(duelRaw[1]) : undefined;
+
+  // ── Simulation (visual fallback while loading) ────────────────────────────
+  const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
   useEffect(() => {
     const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
     return () => clearInterval(clock);
   }, []);
 
-  // Mock the user's bet — in production this comes from chain reads / URL state.
-  const bet: ResultBet | null = { fighter: 'whale', amount: 5 };
+  // ── Derived display values ────────────────────────────────────────────────
+  const isResolved = duel?.status === 3;
+  const isCreator =
+    !!userAddress &&
+    !!duel?.creator &&
+    duel.creator.toLowerCase() === userAddress.toLowerCase();
 
-  const winnerId: 'degen' | 'whale' = sim.degen.pnl >= sim.whale.pnl ? 'degen' : 'whale';
-  const loserId: 'degen' | 'whale' = winnerId === 'degen' ? 'whale' : 'degen';
-  const w = FIGHTERS[winnerId];
-  const l = FIGHTERS[loserId];
-  const wPnl = winnerId === 'degen' ? sim.degen.pnl : sim.whale.pnl;
-  const lPnl = winnerId === 'degen' ? sim.whale.pnl : sim.degen.pnl;
-  const wPct = (wPnl / 300) * 100;
+  // winnerSlot: 0 = fighterA, 1 = fighterB, 255 = unset
+  const winnerSlotNum = isResolved && duel ? duel.winnerSlot : null;
+  const winnerFighterIndex =
+    winnerSlotNum === 0 ? fighterAIndex : winnerSlotNum === 1 ? fighterBIndex : undefined;
+  const loserFighterIndex =
+    winnerSlotNum === 0 ? fighterBIndex : winnerSlotNum === 1 ? fighterAIndex : undefined;
 
-  const betWon = bet !== null && bet.fighter === winnerId;
-  const odds = bet ? (bet.fighter === 'degen' ? sim.oddsDegen : 100 - sim.oddsDegen) : 0;
-  const payout = betWon && bet ? bet.amount * (100 / odds) : 0;
-  const profit = payout - (bet ? bet.amount : 0);
+  // Visual identity from FIGHTER_VISUAL_MAP (keyed by contract index 0–5)
+  const winnerVisual =
+    winnerFighterIndex !== undefined ? FIGHTER_VISUAL_MAP[winnerFighterIndex] : null;
+  const loserVisual =
+    loserFighterIndex !== undefined ? FIGHTER_VISUAL_MAP[loserFighterIndex] : null;
 
-  const payoutMeta = bet ? (betWon ? 'winning ticket · settleBets pays automatically' : 'losing ticket · stake forfeited to pool') : 'no bet placed';
+  // Fall back to sim outcome while loading / before resolution
+  const simWinnerId: 'degen' | 'whale' = sim.degen.pnl >= sim.whale.pnl ? 'degen' : 'whale';
+  const winnerId = winnerVisual ? winnerVisual.id : simWinnerId;
+  const loserId = loserVisual ? loserVisual.id : (winnerId === 'degen' ? 'whale' : 'degen');
+
+  const winnerFighter = FIGHTERS[winnerId];
+  const loserFighter = FIGHTERS[loserId];
+  const winnerHex = winnerFighter?.hex ?? winnerVisual?.hex ?? 'var(--gold)';
+
+  // On-chain balances when resolved; sim numbers otherwise
+  const winnerBalance: bigint | null =
+    isResolved && duel
+      ? winnerSlotNum === 0 ? duel.quoteBalanceA : duel.quoteBalanceB
+      : null;
+  const loserBalance: bigint | null =
+    isResolved && duel
+      ? winnerSlotNum === 0 ? duel.quoteBalanceB : duel.quoteBalanceA
+      : null;
+
+  const wPnlDisplay = winnerBalance !== null
+    ? fmtUsdso(winnerBalance)
+    : `$${Math.abs(winnerId === 'degen' ? sim.degen.pnl : sim.whale.pnl).toFixed(2)}`;
+  const lPnlDisplay = loserBalance !== null
+    ? fmtUsdso(loserBalance)
+    : `$${Math.abs(loserId === 'degen' ? sim.degen.pnl : sim.whale.pnl).toFixed(2)}`;
+
+  const turns = duel?.turns ?? 15;
 
   return (
     <div className="col">
@@ -59,10 +119,16 @@ export default function ResultPage() {
       >
         <div className="row gap-12 ai-c">
           <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>
-            § POST-DUEL · DUEL #{duelId}
+            § POST-DUEL · DUEL #{rawId}
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
-          <Chip variant="gold">★ SETTLED · ON-CHAIN</Chip>
+          {isLoading ? (
+            <Chip variant="gold">LOADING…</Chip>
+          ) : isResolved ? (
+            <Chip variant="gold">★ SETTLED · ON-CHAIN</Chip>
+          ) : (
+            <Chip variant="win">LIVE</Chip>
+          )}
         </div>
         <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
           NEXT BOUT IN <span className="t-num" style={{ color: 'var(--gold)' }}>{fmtTime(sim.countdown)}</span>
@@ -74,11 +140,13 @@ export default function ResultPage() {
         <div className="col ai-c gap-16" style={{ position: 'relative', maxWidth: 1200, margin: '0 auto' }}>
           <div className="row gap-16 ai-c">
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
-            <span className="eyebrow" style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}>★ WINNER ★</span>
+            <span className="eyebrow" style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}>
+              {isLoading ? 'LOADING…' : isResolved ? '★ WINNER ★' : '★ RESULT PENDING ★'}
+            </span>
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
           </div>
 
-          <div className="vs-pop" style={{ filter: `drop-shadow(0 0 60px ${w.hex})` }}>
+          <div className="vs-pop" style={{ filter: `drop-shadow(0 0 60px ${winnerHex})` }}>
             <FighterAvatar fighter={winnerId} context="card" size={220} state="victory" />
           </div>
 
@@ -90,23 +158,27 @@ export default function ResultPage() {
               lineHeight: 1,
               textAlign: 'center',
               margin: 0,
-              color: w.hex,
-              textShadow: `0 0 60px ${w.hex}`,
+              color: winnerHex,
+              textShadow: `0 0 60px ${winnerHex}`,
               whiteSpace: 'nowrap',
             }}
           >
-            {w.name}
+            {winnerFighter?.name ?? (isLoading ? 'LOADING…' : 'UNKNOWN')}
           </h1>
 
           <div className="row gap-32 ai-c" style={{ marginTop: 24 }}>
             <div className="col ai-c gap-2">
-              <span className="eyebrow">FINAL PNL</span>
-              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>{fmtUsd(wPnl)}</span>
+              <span className="eyebrow">FINAL PORTFOLIO</span>
+              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>
+                {wPnlDisplay}
+              </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
-              <span className="eyebrow">RETURN</span>
-              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>{fmtPct(wPct)}</span>
+              <span className="eyebrow">TURNS COMPLETED</span>
+              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>
+                {isResolved ? turns : currentTurn} / {turns}
+              </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
@@ -115,7 +187,7 @@ export default function ResultPage() {
                 className="t-display t-up"
                 style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}
               >
-                PNL on mid mark prices at finalizeDuel (or snapshot if emergencyFinalize)
+                {isResolved ? 'PNL on mid mark prices · finalizeDuel' : 'Duel in progress'}
               </span>
             </div>
           </div>
@@ -140,23 +212,28 @@ export default function ResultPage() {
                   <Chip variant="win">★ WON</Chip>
                   <span
                     className="t-display t-up"
-                    style={{ color: w.hex, fontSize: 18, letterSpacing: '0.12em' }}
+                    style={{ color: winnerHex, fontSize: 18, letterSpacing: '0.12em' }}
                   >
-                    {w.name}
+                    {winnerFighter?.name ?? 'Fighter A'}
                   </span>
                 </div>
               </div>
-              <span className="t-num text-win" style={{ fontSize: 28 }}>{fmtUsd(wPnl)}</span>
+              <span className="t-num text-win" style={{ fontSize: 28 }}>{wPnlDisplay}</span>
             </div>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Last mark snapshot</span><span className="t-num text-win">on-chain</span>
+              <span>Last mark snapshot</span>
+              <span className="t-num text-win">{isResolved ? 'on-chain' : 'pending'}</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Per-round detail</span><span className="t-num t-dim">via indexer</span>
+              <span>Per-round detail</span>
+              <span className="t-num t-dim">via indexer</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Orders filled</span><span className="t-num" style={{ color: 'var(--text)' }}>23</span>
+              <span>Fighter index</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>
+                {winnerFighterIndex !== undefined ? `#${winnerFighterIndex}` : '—'}
+              </span>
             </div>
           </div>
 
@@ -169,83 +246,52 @@ export default function ResultPage() {
                   <Chip variant="loss">LOST</Chip>
                   <span
                     className="t-display t-up"
-                    style={{ color: l.hex, fontSize: 18, letterSpacing: '0.12em' }}
+                    style={{ color: loserFighter?.hex ?? 'var(--text-dim)', fontSize: 18, letterSpacing: '0.12em' }}
                   >
-                    {l.name}
+                    {loserFighter?.name ?? 'Fighter B'}
                   </span>
                 </div>
               </div>
-              <span className="t-num text-loss" style={{ fontSize: 28 }}>{fmtUsd(lPnl)}</span>
+              <span className="t-num text-loss" style={{ fontSize: 28 }}>{lPnlDisplay}</span>
             </div>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Last mark snapshot</span><span className="t-num text-win">on-chain</span>
+              <span>Last mark snapshot</span>
+              <span className="t-num text-win">{isResolved ? 'on-chain' : 'pending'}</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Per-round detail</span><span className="t-num t-dim">via indexer</span>
+              <span>Per-round detail</span>
+              <span className="t-num t-dim">via indexer</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Orders filled</span><span className="t-num" style={{ color: 'var(--text)' }}>11</span>
+              <span>Fighter index</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>
+                {loserFighterIndex !== undefined ? `#${loserFighterIndex}` : '—'}
+              </span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* § 02 YOUR PAYOUT */}
+      {/* § 02 SETTLEMENT */}
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
-          <span className="sect-head-title">YOUR PAYOUT</span>
-          <span className="sect-head-meta">{payoutMeta}</span>
+          <span className="sect-head-title">SETTLEMENT</span>
+          <span className="sect-head-meta">
+            {isCreator
+              ? 'you created this duel · recover funds below'
+              : 'settle bets or recover winnings'}
+          </span>
         </div>
 
-        <div
-          className="card pad-24"
-          style={{ borderColor: betWon ? 'var(--win)' : bet ? 'var(--loss)' : 'var(--border)' }}
-        >
-          {bet ? (
-            <div className="row jc-sb ai-c">
-              <div className="col gap-4">
-                <span className="t-mono t-sm t-dim">YOU BACKED</span>
-                <span
-                  className="t-display t-up"
-                  style={{ fontSize: 22, color: FIGHTERS[bet.fighter].hex, letterSpacing: '0.12em' }}
-                >
-                  {FIGHTERS[bet.fighter].name}
-                </span>
-                <span className="t-mono t-xs t-faint">${bet.amount} @ {odds}%</span>
-              </div>
-
-              {betWon ? (
-                <>
-                  <div className="col ai-c gap-2">
-                    <span className="eyebrow">PAYOUT</span>
-                    <span className="t-num text-win" style={{ fontSize: 36 }}>+${payout.toFixed(2)}</span>
-                    <span className="t-mono t-xs t-dim">profit ${profit.toFixed(2)}</span>
-                  </div>
-                  <BracketButton variant="gold">TRIGGER SETTLEMENT →</BracketButton>
-                </>
-              ) : (
-                <>
-                  <div className="col ai-c gap-2">
-                    <span className="eyebrow">RESULT</span>
-                    <span className="t-num text-loss" style={{ fontSize: 36 }}>−${bet.amount.toFixed(2)}</span>
-                    <span className="t-mono t-xs t-dim">cope. lessons are expensive.</span>
-                  </div>
-                  <BracketButton variant="ghost" disabled>SETTLED</BracketButton>
-                </>
-              )}
-            </div>
-          ) : (
-            <span className="t-mono t-sm t-dim">No bet placed this round.</span>
-          )}
-        </div>
+        <SettlePanel duelId={duelId} isCreator={isCreator} />
       </section>
 
       {/* Action row — centered horizontal */}
       <section className="shell-pad" style={{ paddingTop: 16, paddingBottom: 80 }}>
         <div className="row gap-12 ai-c jc-c">
-          <Link href="/duel/1">
+          <Link href={`/duel/${rawId}`}>
             <BracketButton>WATCH REPLAY</BracketButton>
           </Link>
           <BracketButton variant="gold">SHARE CARD ⤴</BracketButton>

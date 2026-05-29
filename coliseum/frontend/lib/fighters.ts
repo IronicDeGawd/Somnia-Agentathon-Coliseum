@@ -77,7 +77,7 @@ export const FIGHTERS: Record<string, Fighter> = {
     name: "THE SCALPER",
     tagline: "Sip the spread.",
     side: "a",
-    hex: "#fcd34d",
+    hex: "#f97316",
     color: "var(--gold)",
     style: "Tight spreads, high frequency",
     risk: 3,
@@ -149,8 +149,8 @@ export const FIGHTERS: Record<string, Fighter> = {
     name: "THE CONTRARIAN",
     tagline: "Against the herd.",
     side: "b",
-    hex: "#b78bff",
-    color: "#b78bff",
+    hex: "#34d399",
+    color: "#34d399",
     style: "Sentiment fade",
     risk: 4,
     aggression: 4,
@@ -167,23 +167,103 @@ export const FIGHTERS: Record<string, Fighter> = {
     seedBottts: "contrarian-rev-5",
     seedPixel: "contrarian-pixel-5",
     seedAdventurer: "contrarian-warrior-2",
-  }
+  },
+  quant: {
+    id: "quant",
+    name: "THE QUANT",
+    tagline: "Mean reversion or nothing.",
+    side: "a",
+    hex: "#a78bfa",
+    color: "#a78bfa",
+    style: "Statistical mean-reversion",
+    risk: 2,
+    aggression: 1,
+    patience: 5,
+    record: { w: 0, l: 0 },
+    pnl: 0,
+    bestRound: { id: 0, pnl: 0 },
+    worstRound: { id: 0, pnl: 0 },
+    quote: "The model is always right.",
+    bio: "Trained on decades of order book data. Never trades on instinct — only on statistical edges. Waits for z-score deviations and fires with surgical precision when the model signals a reversion.",
+    initials: "QT",
+    rank: "A",
+    tier: "ANALYST",
+    seedBottts: "quant-model-1",
+    seedPixel: "quant-pixel-1",
+    seedAdventurer: "quant-mage-1",
+  },
+  diamond: {
+    id: "diamond",
+    name: "THE DIAMOND HAND",
+    tagline: "Never sell. Buy the dip.",
+    side: "b",
+    hex: "#fcd34d",
+    color: "#fcd34d",
+    style: "Long-only accumulator",
+    risk: 3,
+    aggression: 1,
+    patience: 5,
+    record: { w: 0, l: 0 },
+    pnl: 0,
+    bestRound: { id: 0, pnl: 0 },
+    worstRound: { id: 0, pnl: 0 },
+    quote: "Never sell.",
+    bio: "Accumulates through every drawdown. Selling is not in the vocabulary. Every dip is an opportunity to increase the position. Conviction so deep it borders on religion.",
+    initials: "DH",
+    rank: "A",
+    tier: "HOLDER",
+    seedBottts: "diamond-hold-1",
+    seedPixel: "diamond-pixel-1",
+    seedAdventurer: "diamond-paladin-1",
+  },
 };
 
 export const ROSTER = [
   { id: "whale",      name: "THE WHALE",      record: "12W-4L",  pnl: 340.5,  hex: "#00d9ff", seedBottts: "whale-deep-22",     initials: "WH", tier: "TACTICIAN", rank: "S" },
   { id: "degen",      name: "THE DEGEN",      record: "9W-7L",   pnl: 120.0,  hex: "#ff3366", seedBottts: "degen-fury-9",      initials: "DG", tier: "AGGRESSOR", rank: "S" },
-  { id: "scalper",    name: "THE SCALPER",    record: "8W-8L",   pnl: 45.0,   hex: "#fcd34d", seedBottts: "scalper-edge-12",   initials: "SC", tier: "SCALPER",   rank: "A" },
+  { id: "scalper",    name: "THE SCALPER",    record: "8W-8L",   pnl: 45.0,   hex: "#f97316", seedBottts: "scalper-edge-12",   initials: "SC", tier: "SCALPER",   rank: "A" },
   { id: "reverter",   name: "THE REVERTER",   record: "7W-9L",   pnl: -28.5,  hex: "#58e898", seedBottts: "reverter-tide-2",   initials: "RV", tier: "ORACLE",    rank: "A" },
   { id: "surfer",     name: "THE SURFER",     record: "6W-10L",  pnl: -64.2,  hex: "#7af0c6", seedBottts: "surfer-wave-8",     initials: "SF", tier: "RIDER",     rank: "B" },
-  { id: "contrarian", name: "THE CONTRARIAN", record: "5W-11L",  pnl: -110.7, hex: "#b78bff", seedBottts: "contrarian-rev-5",  initials: "CN", tier: "REBEL",     rank: "B" },
+  { id: "contrarian", name: "THE CONTRARIAN", record: "5W-11L",  pnl: -110.7, hex: "#34d399", seedBottts: "contrarian-rev-5",  initials: "CN", tier: "REBEL",     rank: "B" },
 ];
 
-export const GLYPHS: Record<string, string> = { 
-  degen: "△", 
-  whale: "◇", 
-  scalper: "✕", 
-  reverter: "○", 
-  surfer: "≋", 
-  contrarian: "▽" 
+export const GLYPHS: Record<string, string> = {
+  degen: "△",
+  whale: "◇",
+  scalper: "✕",
+  reverter: "○",
+  surfer: "≋",
+  contrarian: "▽",
+  quant: "∑",
+  diamond: "◆",
 };
+
+// Maps FighterRegistry contract indexes (0-5) to UI visual properties.
+// Registry order: 0=Degen, 1=Whale, 2=Quant, 3=DiamondHand, 4=Scalper, 5=Contrarian
+export interface FighterVisual {
+  id: string;
+  hex: string;
+  side: 'a' | 'b';
+  bgClass: string;
+}
+
+export const FIGHTER_VISUAL_MAP: Record<number, FighterVisual> = {
+  0: { id: 'degen',      hex: '#ff3366', side: 'a', bgClass: 'bg-fighter-a' },
+  1: { id: 'whale',      hex: '#00d9ff', side: 'b', bgClass: 'bg-fighter-b' },
+  2: { id: 'quant',      hex: '#a78bfa', side: 'a', bgClass: 'bg-purple-400' },
+  3: { id: 'diamond',    hex: '#fcd34d', side: 'b', bgClass: 'bg-yellow-300' },
+  4: { id: 'scalper',    hex: '#f97316', side: 'a', bgClass: 'bg-orange-500' },
+  5: { id: 'contrarian', hex: '#34d399', side: 'b', bgClass: 'bg-emerald-400' },
+};
+
+// Maps a contract uint8 fighter index to the design string ID.
+export function fighterIndexToId(index: number): string {
+  return FIGHTER_VISUAL_MAP[index]?.id ?? 'degen';
+}
+
+// Maps a design string ID back to the contract uint8 fighter index.
+// Returns -1 if not found.
+export function fighterIdToIndex(id: string): number {
+  const entry = Object.entries(FIGHTER_VISUAL_MAP).find(([, v]) => v.id === id);
+  return entry ? Number(entry[0]) : -1;
+}

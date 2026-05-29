@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useReducer, useEffect, useState } from 'react';
+import React, { useReducer, useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { AppTopBar } from '@/components/shared/AppTopBar';
@@ -10,7 +10,10 @@ import { OddsBar } from '@/components/shared/OddsBar';
 import { AnimatedNumber } from '@/components/shared/AnimatedNumber';
 import { Typewriter } from '@/components/shared/Typewriter';
 import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
+import BetPanel from '@/components/shared/BetPanel';
+import { RoundClock } from '@/components/shared/RoundClock';
 import { useUIStore } from '@/store/ui';
+import { useDuelState } from '@/hooks/useDuelState';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { FIGHTERS } from '@/lib/fighters';
 import { fmtUsd, fmtPct, fmtTime } from '@/lib/format';
@@ -22,6 +25,25 @@ interface Holding {
   amount: string | number;
   pct?: number;
 }
+
+// Visual identity per fighter index — mirrors VISUAL_IDENTITY in useFighters.ts.
+// These are the on-chain fighter indexes 0-5 from FighterRegistry.
+const FIGHTER_VISUAL_MAP: Record<number, {
+  hex: string;
+  side: 'a' | 'b';
+  tier: string;
+  rank: string;
+  fallbackId: string;   // key into FIGHTERS for avatar / tagline fallback
+}> = {
+  0: { hex: '#ff3366', side: 'a', tier: 'AGGRESSOR', rank: 'S', fallbackId: 'degen' },
+  1: { hex: '#00d9ff', side: 'b', tier: 'TACTICIAN', rank: 'S', fallbackId: 'whale' },
+  2: { hex: '#a78bfa', side: 'a', tier: 'QUANT',     rank: 'A', fallbackId: 'reverter' },
+  3: { hex: '#fcd34d', side: 'b', tier: 'HOLDER',    rank: 'A', fallbackId: 'scalper' },
+  4: { hex: '#f97316', side: 'a', tier: 'SCALPER',   rank: 'A', fallbackId: 'scalper' },
+  5: { hex: '#34d399', side: 'b', tier: 'REBEL',     rank: 'B', fallbackId: 'contrarian' },
+};
+
+const DEFAULT_VISUAL = { hex: '#ffffff', side: 'a' as const, tier: 'FIGHTER', rank: 'A', fallbackId: 'degen' };
 
 const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | 'b'; tier: string; rank: string; winning: boolean }) => {
   const isRight = side === 'b';
@@ -189,16 +211,31 @@ export default function ArenaPage() {
   const params = useParams();
   const layout = useUIStore((state) => state.layout) as Layout;
   const autoAdvance = true;
+
+  // Parse duel ID from URL params — BigInt for contract reads.
+  const rawId = params?.id;
+  const duelIdNum = rawId ? Number(rawId) : 0;
+  const duelId = BigInt(duelIdNum > 0 ? duelIdNum : 0) as bigint;
+
+  // ── Chain state ──────────────────────────────────────────────────────────────
+  const {
+    duel,
+    odds,
+    currentTurn,
+    isActive,
+    isResolved,
+    winnerSlot,
+    isLoading,
+    refetch,
+  } = useDuelState(duelId);
+
+  // ── Simulation (visual fallback when chain data is loading or absent) ────────
   const turnsParam = Number(params?.turns ?? 15);
   const totalTurns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
     ? (turnsParam as 3 | 6 | 9 | 15)
     : 15;
 
   const [simState, dispatch] = useReducer(simReducer, makeInitialSim());
-  const [betPlaced, setBetPlaced] = useState<'degen' | 'whale' | null>(null);
-  const [betAmount, setBetAmount] = useState<number>(0);
-  const [walletConnected, setWalletConnected] = useState(false);
-  const [balance, setBalance] = useState(25);
 
   useEffect(() => {
     const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
@@ -208,36 +245,65 @@ export default function ArenaPage() {
   const handleAdvance = () => dispatch({ type: 'ADVANCE' });
   const handleFastForward = () => dispatch({ type: 'FAST_FORWARD' });
 
-  const handleBet = (fighter: 'degen' | 'whale', amount: number) => {
-    if (!walletConnected) {
-      setWalletConnected(true);
-      return;
-    }
-    if (betPlaced || balance < amount) return;
-    setBetPlaced(fighter);
-    setBetAmount(amount);
-    setBalance(balance - amount);
-    dispatch({ type: 'PLACE_BET', fighter, amount, odds: fighter === 'degen' ? simState.oddsDegen : 100 - simState.oddsDegen });
-  };
+  // ── Derived display values: chain data when available, sim as fallback ───────
+  // Use chain currentTurn when the duel is loaded; fall back to sim round.
+  const displayRound = (!isLoading && duel) ? currentTurn  : simState.round;
+  const displayTurns = (!isLoading && duel) ? duel.turns   : totalTurns;
+  const duelActive   = (!isLoading && duel) ? isActive     : true;
+  const duelResolved = (!isLoading && duel) ? isResolved   : false;
+  const duelOver     = duelResolved || (simState.round > 15 || simState.timeLeft <= 0);
+
+  // Odds: chain BPS → percentage. Fall back to simState.oddsDegen while loading.
+  const oddsDegenPct = (!isLoading && odds)
+    ? Math.round(odds.degenBps / 100)
+    : simState.oddsDegen;
+  const oddsWhalePct = 100 - oddsDegenPct;
+
+  // Fighter indexes from the on-chain duel, defaulting to 0/1 (degen/whale) during load.
+  // The ABI tuple for duels() does not expose fighterA/fighterB in the current contracts.ts
+  // definition, so we cast through unknown and fall back safely if absent.
+  const duelAny = duel as unknown as Record<string, unknown> | null;
+  const fighterAIndex = (duelAny && typeof duelAny.fighterA === 'number') ? duelAny.fighterA : 0;
+  const fighterBIndex = (duelAny && typeof duelAny.fighterB === 'number') ? duelAny.fighterB : 1;
+
+  // Resolve visual identity for each fighter slot from the registry mapping.
+  const visualA = FIGHTER_VISUAL_MAP[fighterAIndex] ?? DEFAULT_VISUAL;
+  const visualB = FIGHTER_VISUAL_MAP[fighterBIndex] ?? { ...DEFAULT_VISUAL, side: 'b' as const };
+
+  // Fall back to FIGHTERS static data for name/tagline/avatar while waiting on chain.
+  const fallbackA = FIGHTERS[visualA.fallbackId] ?? FIGHTERS.degen;
+  const fallbackB = FIGHTERS[visualB.fallbackId] ?? FIGHTERS.whale;
 
   const degenF = {
-    id: 'degen',
-    name: FIGHTERS.degen.name,
-    hex: FIGHTERS.degen.hex,
+    id: visualA.fallbackId,
+    name: fallbackA.name,
+    hex: visualA.hex,
     side: 'a' as const,
-    tier: FIGHTERS.degen.tier,
-    tagline: FIGHTERS.degen.tagline,
-    rank: FIGHTERS.degen.rank,
+    tier: visualA.tier,
+    tagline: fallbackA.tagline,
+    rank: visualA.rank,
   };
   const whaleF = {
-    id: 'whale',
-    name: FIGHTERS.whale.name,
-    hex: FIGHTERS.whale.hex,
+    id: visualB.fallbackId,
+    name: fallbackB.name,
+    hex: visualB.hex,
     side: 'b' as const,
-    tier: FIGHTERS.whale.tier,
-    tagline: FIGHTERS.whale.tagline,
-    rank: FIGHTERS.whale.rank,
+    tier: visualB.tier,
+    tagline: fallbackB.tagline,
+    rank: visualB.rank,
   };
+
+  // Winner display: real winnerSlot from chain when resolved, else sim fallback.
+  const resolvedWinnerSlot = duelResolved && winnerSlot !== null ? winnerSlot : null;
+  const simWinnerIsA = simState.degen.pnl >= simState.whale.pnl;
+  const winnerSlotDisplay = resolvedWinnerSlot !== null ? resolvedWinnerSlot : (simWinnerIsA ? 0 : 1);
+  const winnerName = winnerSlotDisplay === 0 ? degenF.name : whaleF.name;
+
+  // Callback to refresh chain state whenever the RoundClock signals a new turn.
+  const handleTurnAdvanced = useCallback(() => {
+    refetch();
+    dispatch({ type: 'ADVANCE' });
+  }, [refetch]);
 
   const degenCard = (
     <FighterCardSplit fighter={degenF} pnl={simState.degen.pnl} history={simState.degen.history} holdings={simState.degen.holdings as Holding[]} layout={layout} />
@@ -245,8 +311,6 @@ export default function ArenaPage() {
   const whaleCard = (
     <FighterCardSplit fighter={whaleF} pnl={simState.whale.pnl} history={simState.whale.history} holdings={simState.whale.holdings as Holding[]} layout={layout} />
   );
-
-  const duelOver = simState.round > 15 || simState.timeLeft <= 0;
 
   return (
     <div className="col" style={{ minHeight: 'calc(100vh - 56px)' }}>
@@ -267,8 +331,8 @@ export default function ArenaPage() {
             <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
             <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
-              ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{simState.round}</span>
-              <span className="t-faint"> / {totalTurns}</span>
+              ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{displayRound}</span>
+              <span className="t-faint"> / {displayTurns}</span>
             </span>
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
               BELL <span className="t-num" style={{ color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text)' }}>{fmtTime(simState.timeLeft)}</span>
@@ -289,13 +353,23 @@ export default function ArenaPage() {
         </div>
       </div>
 
+      {/* RoundClock — turn progress driven by chain currentTurn */}
+      <div style={{ padding: '12px 24px', background: 'var(--bg-stage)', borderBottom: '1px solid var(--border)' }}>
+        <RoundClock
+          currentTurn={displayRound}
+          totalTurns={displayTurns}
+          isActive={duelActive}
+          onTurnAdvanced={handleTurnAdvanced}
+        />
+      </div>
+
       <div className="shell-pad col gap-24" style={{ flex: 1 }}>
         {/* § COMBATANTS */}
         <div className="col gap-12">
           <div className="sect-head">
             <span className="sect-head-num">§ COMBATANTS</span>
             <span className="sect-head-title">RED CORNER · BLUE CORNER</span>
-            <span className="sect-head-meta">round {simState.round} of {totalTurns} · ~600 blocks per round (~1 min)</span>
+            <span className="sect-head-meta">round {displayRound} of {displayTurns} · ~600 blocks per round (~1 min)</span>
           </div>
 
           {layout === 'split' && (
@@ -356,7 +430,7 @@ export default function ArenaPage() {
               <div className="row gap-8 ai-c">
                 <Dot variant="a" pulse={simState.degen.thinking} />
                 <span className="label-tiny" style={{ color: 'var(--fighter-a)', whiteSpace: 'nowrap' }}>
-                  {FIGHTERS.degen.name} {simState.degen.thinking ? 'THINKING…' : 'DECIDED'}
+                  {degenF.name} {simState.degen.thinking ? 'THINKING…' : 'DECIDED'}
                 </span>
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', paddingLeft: 16, lineHeight: 1.5, minHeight: 22 }}>
@@ -368,7 +442,7 @@ export default function ArenaPage() {
               <div className="row gap-8 ai-c">
                 <Dot variant="b" pulse={simState.whale.thinking} />
                 <span className="label-tiny" style={{ color: 'var(--fighter-b)', whiteSpace: 'nowrap' }}>
-                  {FIGHTERS.whale.name} {simState.whale.thinking ? 'THINKING…' : 'DECIDED'}
+                  {whaleF.name} {simState.whale.thinking ? 'THINKING…' : 'DECIDED'}
                 </span>
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', paddingLeft: 16, lineHeight: 1.5, minHeight: 22 }}>
@@ -427,46 +501,39 @@ export default function ArenaPage() {
           </div>
         </div>
 
-        {/* § BOOK — Betting Drawer */}
+        {/* § BOOK — Real BetPanel (chain) with sim odds bar as visual header */}
         <div className="card pad-24 col gap-12">
           <div className="sect-head">
             <span className="sect-head-num">§ BOOK</span>
             <span className="sect-head-title">PLACE YOUR BET</span>
-            <span className="sect-head-meta">{betPlaced ? 'BET LOCKED' : 'BETS OPEN WHILE DUEL ACTIVE · approve + placeBet'}</span>
+            <span className="sect-head-meta">{duelActive ? 'BETS OPEN WHILE DUEL ACTIVE · approve + placeBet' : 'BETS CLOSED'}</span>
           </div>
+
+          {/* Odds bar — uses real chain odds when loaded, sim otherwise */}
           <div className="col gap-8">
             <div className="row jc-sb ai-c">
               <span className="t-mono t-xs" style={{ color: 'var(--fighter-a)' }}>
-                DEGEN <span className="t-num" style={{ fontSize: 16, marginLeft: 4 }}>{simState.oddsDegen}%</span>
+                {degenF.name} <span className="t-num" style={{ fontSize: 16, marginLeft: 4 }}>{oddsDegenPct}%</span>
               </span>
               <span className="t-mono t-xs" style={{ color: 'var(--fighter-b)' }}>
-                <span className="t-num" style={{ fontSize: 16, marginRight: 4 }}>{100 - simState.oddsDegen}%</span> WHALE
+                <span className="t-num" style={{ fontSize: 16, marginRight: 4 }}>{oddsWhalePct}%</span> {whaleF.name}
               </span>
             </div>
-            <OddsBar oddsA={simState.oddsDegen} oddsB={100 - simState.oddsDegen} />
+            <OddsBar oddsA={oddsDegenPct} oddsB={oddsWhalePct} />
           </div>
-          <div className="row gap-12 ai-c jc-sb" style={{ flexWrap: 'wrap' }}>
-            <div className="row gap-8 ai-c" style={{ flexWrap: 'wrap' }}>
-              {!walletConnected ? (
-                <BracketButton variant="primary" onClick={() => setWalletConnected(true)}>CONNECT TO BET</BracketButton>
-              ) : betPlaced ? (
-                <Chip variant="gold">
-                  <Dot variant="warn" /> YOUR BET · ${betAmount} on {FIGHTERS[betPlaced].name}
-                </Chip>
-              ) : (
-                <>
-                  <BracketButton variant="a" onClick={() => handleBet('degen', 2)}>BACK DEGEN +2 USDso</BracketButton>
-                  <BracketButton variant="a" onClick={() => handleBet('degen', 5)}>+5 USDso</BracketButton>
-                  <span className="t-mono t-xs t-faint">·</span>
-                  <BracketButton variant="b" onClick={() => handleBet('whale', 2)}>BACK WHALE +2 USDso</BracketButton>
-                  <BracketButton variant="b" onClick={() => handleBet('whale', 5)}>+5 USDso</BracketButton>
-                </>
-              )}
+
+          {/* Real BetPanel — handles wallet connection, approve, placeBet */}
+          {duelIdNum > 0 ? (
+            <BetPanel
+              duelId={duelId}
+              fighterAName={degenF.name}
+              fighterBName={whaleF.name}
+            />
+          ) : (
+            <div className="panel pad-16" style={{ textAlign: 'center', color: 'var(--text-dim)' }}>
+              <span className="t-sm">No active duel</span>
             </div>
-            <span className="t-mono t-xs t-dim">
-              BALANCE <span className="t-num text-gold">${balance.toFixed(2)}</span>
-            </span>
-          </div>
+          )}
         </div>
 
         {/* Turn controls / end-of-duel */}
@@ -481,10 +548,10 @@ export default function ArenaPage() {
                   style={{
                     fontSize: 18,
                     letterSpacing: '0.14em',
-                    color: simState.degen.pnl >= simState.whale.pnl ? 'var(--fighter-a)' : 'var(--fighter-b)',
+                    color: winnerSlotDisplay === 0 ? 'var(--fighter-a)' : 'var(--fighter-b)',
                   }}
                 >
-                  THE {simState.degen.pnl >= simState.whale.pnl ? 'DEGEN' : 'WHALE'} WINS (winnerSlot {simState.degen.pnl >= simState.whale.pnl ? 0 : 1})
+                  {winnerName} WINS (winnerSlot {winnerSlotDisplay})
                 </span>
               </div>
             </div>

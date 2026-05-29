@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
-import { BracketButton, Chip } from '@/components/shared/OtherHUD';
-import { FIGHTERS, ROSTER } from '@/lib/fighters';
-import { fmtUsd } from '@/lib/format';
+import { BracketButton } from '@/components/shared/OtherHUD';
+import { fighterIdToIndex, fighterIndexToId } from '@/lib/fighters';
+import { useFighters } from '@/hooks/useFighters';
 
 interface FighterProfileProps {
   params: Promise<{ id: string }>;
@@ -16,20 +16,43 @@ interface FighterProfileProps {
 export default function FighterProfilePage({ params }: FighterProfileProps) {
   const unwrappedParams = React.use(params);
   const id = unwrappedParams.id.toLowerCase();
-  const f = FIGHTERS[id] || FIGHTERS.degen;
-  const fid = f.id;
+  const fighterIndex = fighterIdToIndex(id);
 
-  const agentNumber = f.rank === 'S' ? '001' : '002';
+  const { fighters, isLoading } = useFighters();
 
-  const recentDuels: { round: number; vs: string; result: 'W' | 'L'; pnl: number }[] = [
-    { round: 341, vs: fid === 'whale' ? 'degen' : 'whale',    result: 'W', pnl: 24.18 },
-    { round: 340, vs: 'scalper',    result: 'L', pnl: -8.5 },
-    { round: 339, vs: 'contrarian', result: 'W', pnl: 31.0 },
-    { round: 338, vs: 'surfer',     result: 'L', pnl: -12.4 },
-    { round: 337, vs: 'reverter',   result: 'W', pnl: 9.7 },
-  ];
+  const f = fighters.find((x) => x.index === fighterIndex) ?? null;
+  const fid = f ? fighterIndexToId(f.index) : id;
 
-  const winRate = Math.round((f.record.w / (f.record.w + f.record.l)) * 100);
+  if (isLoading) {
+    return (
+      <div className="col">
+        <AppTopBar />
+        <div
+          className="row ai-c jc-c"
+          style={{ height: '60vh', color: 'var(--text-dim)' }}
+        >
+          <span className="t-mono t-sm">LOADING FIGHTER DATA…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!f) {
+    return (
+      <div className="col">
+        <AppTopBar />
+        <div
+          className="row ai-c jc-c"
+          style={{ height: '60vh', color: 'var(--text-dim)' }}
+        >
+          <span className="t-mono t-sm">FIGHTER NOT FOUND</span>
+        </div>
+      </div>
+    );
+  }
+
+  const hex = f.hex;
+  const side = f.side;
 
   return (
     <div className="col">
@@ -45,11 +68,11 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
             className="t-mono t-xs"
             style={{ letterSpacing: '0.28em', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}
           >
-            § FIGHTER FILE · INDEX 0..5 · aggression/patience/risk stats
+            § FIGHTER FILE · INDEX {f.index} · aggression/patience/risk stats
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
-          <span className="chip" style={{ color: f.hex, borderColor: f.hex }}>
-            {f.tier} · RANK {f.rank}
+          <span className="chip" style={{ color: hex, borderColor: hex }}>
+            FIGHTER · INDEX {f.index}
           </span>
         </div>
         <Link href="/duel">
@@ -65,12 +88,12 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           className="row gap-32 ai-c"
           style={{ position: 'relative', maxWidth: 1240, margin: '0 auto' }}
         >
-          <div style={{ filter: `drop-shadow(0 0 40px ${f.hex})` }}>
+          <div style={{ filter: `drop-shadow(0 0 40px ${hex})` }}>
             <FighterAvatar fighter={fid} context="card" size={220} state="winning" />
           </div>
           <div className="col gap-12 flex-1">
             <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>
-              SOMNIA · FIGHTER INDEX {fid}
+              SOMNIA · FIGHTER INDEX {f.index}
             </span>
             <h1
               className="fp-display"
@@ -79,8 +102,8 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
                 letterSpacing: '0.04em',
                 lineHeight: 1,
                 margin: 0,
-                color: f.hex,
-                textShadow: `0 0 50px ${f.hex}`,
+                color: hex,
+                textShadow: `0 0 50px ${hex}`,
               }}
             >
               {f.name}
@@ -90,22 +113,18 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
             </span>
             <div className="row gap-24 ai-c" style={{ marginTop: 8, flexWrap: 'wrap' }}>
               <div className="col gap-2">
-                <span className="eyebrow">RECORD</span>
-                <span className="t-num" style={{ fontSize: 24, whiteSpace: 'nowrap' }}>
-                  {f.record.w}W · {f.record.l}L
-                </span>
+                <span className="eyebrow">AGGRESSION</span>
+                <span className="t-num" style={{ fontSize: 24 }}>{f.aggression} / 5</span>
               </div>
               <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
               <div className="col gap-2">
-                <span className="eyebrow" style={{ whiteSpace: 'nowrap' }}>CAREER PNL</span>
-                <span className="t-num text-win" style={{ fontSize: 24, whiteSpace: 'nowrap' }}>
-                  {fmtUsd(f.pnl)}
-                </span>
+                <span className="eyebrow">PATIENCE</span>
+                <span className="t-num" style={{ fontSize: 24 }}>{f.patience} / 5</span>
               </div>
               <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
               <div className="col gap-2">
-                <span className="eyebrow" style={{ whiteSpace: 'nowrap' }}>WIN RATE</span>
-                <span className="t-num" style={{ fontSize: 24 }}>{winRate}%</span>
+                <span className="eyebrow">RISK</span>
+                <span className="t-num" style={{ fontSize: 24 }}>{f.risk} / 5</span>
               </div>
             </div>
           </div>
@@ -117,59 +136,43 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <span className="sect-head-title">PROFILE</span>
-          <span className="sect-head-meta">style · attributes · career notes</span>
+          <span className="sect-head-meta">on-chain attributes from FighterRegistry</span>
         </div>
 
         <div className="row gap-16" style={{ alignItems: 'stretch' }}>
           <div className="card flex-1 col gap-12 pad-24">
-            <span className="label-tiny">FIGHTING STYLE</span>
-            <span
-              className="t-display t-up"
-              style={{ fontSize: 18, color: f.hex, letterSpacing: '0.1em' }}
-            >
-              {f.style}
-            </span>
+            <span className="label-tiny">COMBAT ATTRIBUTES</span>
             <hr className="divider" />
             <div className="row jc-sb ai-c">
               <span className="label-tiny">AGGRESSION</span>
-              <Meter value={f.aggression} side={f.side} />
+              <Meter value={f.aggression} side={side} />
             </div>
             <div className="row jc-sb ai-c">
               <span className="label-tiny">PATIENCE</span>
-              <Meter value={f.patience} side={f.side} />
+              <Meter value={f.patience} side={side} />
             </div>
             <div className="row jc-sb ai-c">
               <span className="label-tiny">RISK TOLERANCE</span>
-              <Meter value={f.risk} side={f.side} />
+              <Meter value={f.risk} side={side} />
             </div>
           </div>
 
           <div className="card flex-1 col gap-12 pad-24">
-            <span className="label-tiny">CAREER PEAKS</span>
-            <div className="row gap-24" style={{ marginTop: 8 }}>
-              <div className="col gap-2 flex-1">
-                <span className="t-mono t-xs t-dim">BEST ROUND</span>
-                <span className="t-num text-win" style={{ fontSize: 28 }}>
-                  {fmtUsd(f.bestRound.pnl)}
-                </span>
-                <span className="t-mono t-xs t-faint">round #{f.bestRound.id}</span>
-              </div>
-              <div className="col gap-2 flex-1">
-                <span className="t-mono t-xs t-dim">WORST ROUND</span>
-                <span className="t-num text-loss" style={{ fontSize: 28 }}>
-                  {fmtUsd(f.worstRound.pnl)}
-                </span>
-                <span className="t-mono t-xs t-faint">round #{f.worstRound.id}</span>
-              </div>
-            </div>
+            <span className="label-tiny">FIGHTER INDEX</span>
+            <span
+              className="t-num"
+              style={{ fontSize: 48, color: hex, lineHeight: 1 }}
+            >
+              #{f.index}
+            </span>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Avg PnL / round</span>
-              <span className="t-num text-win">+$11.20</span>
+              <span>Registry</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>FighterRegistry.sol</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Total trades</span>
-              <span className="t-num" style={{ color: 'var(--text)' }}>1,247</span>
+              <span>Chain</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>Somnia Shannon</span>
             </div>
           </div>
         </div>
@@ -180,7 +183,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">DOSSIER</span>
-          <span className="sect-head-meta">system prompt (from FighterRegistry.fighters[i].systemPrompt)</span>
+          <span className="sect-head-meta">system prompt from FighterRegistry.getFighter({f.index}).systemPrompt</span>
         </div>
         <div className="row gap-32 ai-s">
           <p
@@ -193,73 +196,38 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
               margin: 0,
             }}
           >
-            &ldquo;<span style={{ color: f.hex }}>{f.tagline}</span>&rdquo;
+            &ldquo;<span style={{ color: hex }}>{f.tagline}</span>&rdquo;
           </p>
           <p
             className="t-mono t-sm"
             style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.8, flex: 1, paddingTop: 6 }}
           >
-            {f.bio}
+            {f.systemPrompt}
           </p>
         </div>
       </section>
 
-      {/* § 03 RECENT BOUTS */}
+      {/* § 03 DUEL HISTORY */}
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 80 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
-          <span className="sect-head-title">RECENT DUELS</span>
-          <span className="sect-head-meta">last {recentDuels.length} settled duels for this fighter (from Arena events)</span>
+          <span className="sect-head-title">DUEL HISTORY</span>
+          <span className="sect-head-meta">settled duels from Arena events</span>
         </div>
 
-        <div className="card" style={{ padding: '0 24px' }}>
-          {recentDuels.map((d, i) => {
-            const opp = FIGHTERS[d.vs] || ROSTER.find((r) => r.id === d.vs);
-            const oppHex = opp?.hex || (opp && 'color' in opp && opp.color === 'var(--fighter-a)' ? '#ff3366' : '#00d9ff');
-            const oppName = opp?.name || d.vs.toUpperCase();
-            return (
-              <div
-                key={d.round}
-                className="row ai-c"
-                style={{
-                  padding: '16px 0',
-                  borderBottom: i < recentDuels.length - 1 ? '1px solid var(--border)' : 'none',
-                  gap: 24,
-                }}
-              >
-                <span className="t-num t-sm t-dim" style={{ width: 80 }}>
-                  #{d.round}
-                </span>
-                <div className="row ai-c gap-12 flex-1">
-                  <FighterAvatar fighter={fid} context="mini" size={32} />
-                  <span
-                    className="t-display t-up"
-                    style={{ fontSize: 13, color: f.hex, letterSpacing: '0.1em', whiteSpace: 'nowrap' }}
-                  >
-                    {f.name}
-                  </span>
-                  <span className="t-mono t-xs t-dim">vs</span>
-                  <span
-                    className="t-display t-up"
-                    style={{ fontSize: 13, color: oppHex, letterSpacing: '0.1em', whiteSpace: 'nowrap' }}
-                  >
-                    {oppName}
-                  </span>
-                  <FighterAvatar fighter={d.vs} context="mini" size={32} />
-                </div>
-                <Chip variant={d.result === 'W' ? 'win' : 'loss'}>
-                  {d.result === 'W' ? 'WON' : 'LOST'}
-                </Chip>
-                <span
-                  className="t-num"
-                  style={{ width: 100, textAlign: 'right', color: d.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                >
-                  {fmtUsd(d.pnl)}
-                </span>
-                <a className="bk bk-ghost" style={{ cursor: 'pointer' }}>REPLAY →</a>
-              </div>
-            );
-          })}
+        <div className="card pad-24 col gap-12 ai-c jc-c" style={{ minHeight: 120 }}>
+          <span
+            className="t-mono t-xs"
+            style={{ letterSpacing: '0.2em', color: 'var(--text-faint)', textAlign: 'center' }}
+          >
+            DUEL HISTORY — wiring in progress
+          </span>
+          <span
+            className="t-mono t-xs t-faint"
+            style={{ textAlign: 'center' }}
+          >
+            On-chain event indexing coming soon. Check back after the first duels resolve.
+          </span>
         </div>
       </section>
     </div>
