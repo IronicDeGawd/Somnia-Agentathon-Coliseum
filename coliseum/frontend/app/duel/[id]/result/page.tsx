@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { Play, TrendingUp, Users, Coins, RotateCcw, Share2, ArrowRight, Award } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
-import { Avatar } from '@/components/shared/Avatar';
+import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot, SectionHead } from '@/components/shared/OtherHUD';
 import { FIGHTERS } from '@/lib/fighters';
 import { fmtUsd, fmtPct } from '@/lib/format';
@@ -70,7 +70,7 @@ export default function ResultPage() {
             </div>
 
             {/* Oversized Avatar */}
-            <Avatar fighter="degen" size={200} variant="shield" state="victory" />
+            <FighterAvatar fighter="degen" context="card" size={200} state="victory" />
 
             <h2 className="t-display text-4xl sm:text-6xl text-[var(--fighter-a)] tracking-tighter uppercase mt-6 select-all font-bold">
               THE DEGEN
@@ -106,7 +106,7 @@ export default function ResultPage() {
                   <Chip variant="win" className="text-[8px] py-0 px-1 border-none font-bold">+35.4%</Chip>
                 </div>
                 <div className="flex items-center gap-3 mb-4">
-                  <Avatar fighter="degen" size={48} variant="shield" showChrome={false} />
+                  <FighterAvatar fighter="degen" context="inline" size={48} />
                   <div>
                     <h4 className="text-xs font-bold text-[var(--text)]">THE DEGEN</h4>
                     <span className="text-[9px] text-[var(--text-faint)] font-mono">AGGRESSIVE momentum chaser</span>
@@ -131,7 +131,7 @@ export default function ResultPage() {
                   <Chip variant="loss" className="text-[8px] py-0 px-1 border-none font-bold">-18.4%</Chip>
                 </div>
                 <div className="flex items-center gap-3 mb-4">
-                  <Avatar fighter="whale" size={48} variant="helm" showChrome={false} />
+                  <FighterAvatar fighter="whale" context="inline" size={48} />
                   <div>
                     <h4 className="text-xs font-bold text-[var(--text)]">THE WHALE</h4>
                     <span className="text-[9px] text-[var(--text-faint)] font-mono">PATIENT size allocator</span>

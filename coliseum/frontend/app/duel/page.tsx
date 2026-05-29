@@ -4,7 +4,7 @@ import React, { useReducer, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Play, TrendingUp, Users, Coins, HelpCircle, Shield, Award, ChevronRight, Sparkles } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
-import { Avatar } from '@/components/shared/Avatar';
+import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
 import { BracketButton, Chip, Dot, SectionHead, PnLBlock } from '@/components/shared/OtherHUD';
@@ -38,10 +38,10 @@ export default function LobbyPage() {
       <section className="relative border-b border-[var(--border)] px-6 py-12 bg-slate-950/20 text-center flex flex-col items-center justify-center overflow-hidden">
         {/* Faded background vectors */}
         <div className="absolute top-1/2 left-10 -translate-y-1/2 opacity-[0.06] hidden md:block">
-          <Avatar fighter="degen" size={140} variant="shield" showChrome={false} />
+          <FighterAvatar fighter="degen" context="card" size={140} chrome={false} />
         </div>
         <div className="absolute top-1/2 right-10 -translate-y-1/2 opacity-[0.06] hidden md:block">
-          <Avatar fighter="whale" size={140} variant="helm" showChrome={false} />
+          <FighterAvatar fighter="whale" context="card" size={140} chrome={false} />
         </div>
 
         <div className="z-10 flex flex-col items-center">
@@ -208,7 +208,7 @@ export default function LobbyPage() {
                     {/* Rank, Name */}
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-slate-500 font-bold">{idx + 1}</span>
-                      <Avatar fighter={fighter.id} size={28} variant="shield" showChrome={false} />
+                      <FighterAvatar fighter={fighter.id} context="mini" size={28} />
                       <div className="flex flex-col">
                         <Link href={`/fighters/${fighter.id}`} className="font-bold text-[var(--text)] hover:underline uppercase">
                           {fighter.name.split(' ')[1] || fighter.name}

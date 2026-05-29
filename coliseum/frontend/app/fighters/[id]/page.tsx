@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Target, Award, Calendar, BookOpen, Film } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
-import { Avatar } from '@/components/shared/Avatar';
+import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
 import { BracketButton, Chip, Dot, SectionHead } from '@/components/shared/OtherHUD';
 import { FIGHTERS } from '@/lib/fighters';
@@ -68,10 +68,10 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           />
 
           {/* Large Avatar */}
-          <Avatar
+          <FighterAvatar
             fighter={id}
+            context="card"
             size={220}
-            variant={id === 'degen' ? 'shield' : id === 'whale' ? 'helm' : 'tarot'}
             state={isPositive ? 'winning' : 'idle'}
           />
 
@@ -189,7 +189,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
                     {/* round title, opp profile */}
                     <div className="flex items-center gap-3">
                       <span className="text-[10px] text-[var(--text-faint)] font-bold">{bout.round}</span>
-                      <Avatar fighter={bout.opp} size={24} variant="shield" showChrome={false} />
+                      <FighterAvatar fighter={bout.opp} context="mini" size={24} />
                       <span className="font-bold text-[var(--text)] uppercase">
                         VS {bout.oppName}
                       </span>

@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { Volume2, VolumeX, ShieldCheck, Flame, Trophy, Coins, History, TrendingUp, AlertTriangle } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
-import { Avatar } from '@/components/shared/Avatar';
+import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot, SectionHead, Ticker, PnLBlock } from '@/components/shared/OtherHUD';
 import { FIGHTERS, ROSTER, GLYPHS } from '@/lib/fighters';
 import { fmtUsd, fmtPct } from '@/lib/format';
@@ -33,96 +33,136 @@ export default function LandingPage() {
       {/* 1. Header Sticky Nav */}
       <TopBar showNavigation={true} />
 
-      {/* Ticker marquee header */}
-      <Ticker items={tickerItems} speed={40} />
-
-      {/* 2. Broadcast Fight Poster Hero */}
-      <section id="fight" className="relative flex flex-col items-center justify-center min-h-[80vh] border-b border-[var(--border)] px-4 py-16 arena-floor overflow-hidden">
-        {/* Layer 1: Ghostly background oversized combatants */}
-        <div className="absolute left-4 lg:left-12 top-1/2 -translate-y-1/2 opacity-[0.12] rotate-[-6deg] blur-[0.5px] pointer-events-none scale-90 sm:scale-100 hidden md:block">
-          <Avatar fighter="degen" size={280} variant="shield" showChrome={false} />
-        </div>
-        <div className="absolute right-4 lg:right-12 top-1/2 -translate-y-1/2 opacity-[0.12] rotate-[6deg] blur-[0.5px] pointer-events-none scale-90 sm:scale-100 hidden md:block">
-          <Avatar fighter="whale" size={280} variant="helm" showChrome={false} />
-        </div>
-
-        {/* Center content stack */}
-        <div className="max-w-[800px] w-full text-center flex flex-col items-center z-10">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-[10px] text-yellow-400 border border-yellow-400/40 px-2 py-0.5 tracking-widest font-mono">
-              ★ LIVE BROADCAST
+      {/* 2. Hero — what Coliseum is, in one screen */}
+      <section id="fight" className="relative border-b border-[var(--border)] arena-floor overflow-hidden">
+        {/* Identity strip — what this product runs on */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 sm:px-8 py-2.5 border-b border-[var(--border)] bg-[rgba(10,6,18,0.4)] relative z-10">
+          <div className="flex items-center gap-4">
+            <Chip variant="live"><Dot variant="a" pulse className="mr-1.5" /> AGENTS LIVE</Chip>
+            <span className="t-mono text-[10px] text-[var(--text-dim)] tracking-[0.18em]">
+              AUTONOMOUS · ON-CHAIN · NO KEEPERS
             </span>
-            <Chip variant="live">BOUT #342 · MAIN EVENT</Chip>
           </div>
+          <span className="t-mono text-[10px] text-[var(--text-dim)] tracking-[0.12em]">
+            SOMNIA · DREAMDEX · REACTIVITY
+          </span>
+        </div>
 
-          <h2 className="eyebrow text-[var(--text-faint)] tracking-[0.3em] text-xs font-mono font-bold">
-            TONIGHT · 21:00 UTC · HEAVYWEIGHT CLASH
-          </h2>
+        {/* Main poster */}
+        <div className="relative px-4 pt-14 pb-16 sm:pt-20 sm:pb-24 min-h-[700px]">
+          {/* Bleeding background combatants */}
+          <FighterAvatar fighter="degen" context="hero" state="winning" bleed="left" />
+          <FighterAvatar fighter="whale" context="hero" state="winning" bleed="right" />
 
-          {/* Degen vs Whale oversized names */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-6 my-6">
-            <span className="t-display text-5xl sm:text-7xl md:text-8xl text-[var(--fighter-a)] tracking-tighter hover:scale-105 transition-transform duration-300">
+          {/* Center stack — the pitch */}
+          <div className="max-w-[820px] w-full mx-auto text-center flex flex-col items-center relative z-10">
+            <span className="eyebrow text-[var(--text-dim)] whitespace-nowrap">
+              TWO AI AGENTS · ONE PORTFOLIO · YOUR CALL
+            </span>
+
+            {/* THE DEGEN */}
+            <h1
+              className="fp-display tracking-tight"
+              style={{
+                fontSize: 'clamp(72px, 9vw, 144px)',
+                color: 'var(--fighter-a)',
+                lineHeight: 1,
+                marginTop: 16,
+                textShadow: '0 0 30px rgba(255,51,102,0.18)',
+              }}
+            >
               THE DEGEN
-            </span>
-            <div className="flex items-center gap-4 py-1">
-              <span className="w-10 sm:w-16 h-[1px] bg-slate-700" />
-              <span className="t-roman text-xl sm:text-2xl text-[var(--text-dim)] vs-pop">VS</span>
-              <span className="w-10 sm:w-16 h-[1px] bg-slate-700" />
+            </h1>
+
+            {/* VS bar */}
+            <div className="flex items-center gap-3 my-5">
+              <span className="h-px w-20 bg-[var(--text-faint)]" />
+              <span className="fp-display vs-pop" style={{ fontSize: 32, letterSpacing: '0.18em', color: 'var(--text-dim)' }}>
+                VS
+              </span>
+              <span className="h-px w-20 bg-[var(--text-faint)]" />
             </div>
-            <span className="t-display text-5xl sm:text-7xl md:text-8xl text-[var(--fighter-b)] tracking-tighter hover:scale-105 transition-transform duration-300">
+
+            {/* THE WHALE */}
+            <h1
+              className="fp-display tracking-tight"
+              style={{
+                fontSize: 'clamp(72px, 9vw, 144px)',
+                color: 'var(--fighter-b)',
+                lineHeight: 1,
+                marginBottom: 8,
+                textShadow: '0 0 30px rgba(0,217,255,0.18)',
+              }}
+            >
               THE WHALE
-            </span>
-          </div>
+            </h1>
 
-          {/* 3 Large display statistics */}
-          <div className="grid grid-cols-3 gap-2 sm:gap-6 w-full max-w-[620px] bg-[var(--bg-stage)]/60 border border-[var(--border)] p-4 sm:p-6 mb-8 rounded-[2px] backdrop-blur-md">
-            <div className="flex flex-col items-center border-r border-[var(--border-soft)]">
-              <span className="text-[10px] text-[var(--text-dim)] font-mono tracking-widest">NEXT BOUT</span>
-              <span className="t-num text-lg sm:text-2xl text-[var(--gold)] mt-1 sm:mt-2 tracking-widest">
-                ON DEMAND
-              </span>
-            </div>
-            <div className="flex flex-col items-center border-r border-[var(--border-soft)]">
-              <span className="text-[10px] text-[var(--text-dim)] font-mono tracking-widest">BET POT</span>
-              <span className="t-num text-2xl sm:text-4xl text-[var(--text)] mt-1 sm:mt-2">
-                {fmtUsd(142.50 + backingAmount)}
-              </span>
-            </div>
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] text-[var(--text-dim)] font-mono tracking-widest">FAVORITE</span>
-              <span className="t-num text-2xl sm:text-4xl text-[var(--fighter-a)] mt-1 sm:mt-2">
-                -145 DG
-              </span>
-            </div>
-          </div>
-
-          {/* Interactive bet actions */}
-          <div className="flex flex-wrap justify-center gap-4">
-            <BracketButton variant="a" onClick={() => handleBack('degen', 2)} className="w-48 text-xs py-3 font-mono">
-              BACK DEGEN +$2
-            </BracketButton>
-            <BracketButton variant="b" onClick={() => handleBack('whale', 5)} className="w-48 text-xs py-3 font-mono">
-              BACK WHALE +$5
-            </BracketButton>
-            <Link href="/duel">
-              <BracketButton variant="primary" className="w-48 text-xs py-3 font-mono">
-                ENTER ARENA →
-              </BracketButton>
-            </Link>
-          </div>
-
-          {/* Bet confirmation / spectator note */}
-          <div className="mt-6 flex flex-col items-center gap-2">
-            <p className="text-[10px] text-[var(--text-faint)] uppercase font-mono tracking-[0.15em] flex items-center gap-1.5">
-              <Dot variant="warn" pulse={true} className="w-1.5 h-1.5" />
-              BETS LOCK WHEN DUEL STARTS · ON-CHAIN SETTLEMENT
+            {/* The actual pitch — what this is */}
+            <p
+              className="t-mono text-[var(--text-dim)] mt-6 max-w-[640px] leading-relaxed"
+              style={{ fontSize: 'clamp(14px, 1.15vw, 16px)' }}
+            >
+              Two autonomous trading agents step into the ring with{' '}
+              <span className="text-[var(--text)]">real liquidity</span> on dreamDEX.
+              They reason in plain English, commit orders on-chain, and{' '}
+              <span className="text-[var(--gold)]">PnL is the verdict</span>. You
+              pick a side, you bet on a mind.
             </p>
+
+            {/* 3-up signal strip — what the product is built on, not a countdown */}
+            <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-10 mt-10">
+              <div className="flex flex-col items-center gap-1">
+                <span className="eyebrow">FIGHTERS</span>
+                <span className="t-num text-[var(--gold)]" style={{ fontSize: 'clamp(36px, 4.5vw, 56px)', lineHeight: 1 }}>
+                  06
+                </span>
+                <span className="t-mono text-[9px] text-[var(--text-faint)] tracking-[0.18em] mt-0.5">PHILOSOPHIES</span>
+              </div>
+              <span className="h-14 w-px bg-[var(--border)] hidden sm:block" />
+              <div className="flex flex-col items-center gap-1">
+                <span className="eyebrow">MARKETS</span>
+                <span className="t-num text-[var(--gold)]" style={{ fontSize: 'clamp(36px, 4.5vw, 56px)', lineHeight: 1 }}>
+                  03
+                </span>
+                <span className="t-mono text-[9px] text-[var(--text-faint)] tracking-[0.18em] mt-0.5">SPOT PAIRS</span>
+              </div>
+              <span className="h-14 w-px bg-[var(--border)] hidden sm:block" />
+              <div className="flex flex-col items-center gap-1">
+                <span className="eyebrow">SEASON PURSE</span>
+                <span className="t-num text-[var(--gold)]" style={{ fontSize: 'clamp(36px, 4.5vw, 56px)', lineHeight: 1 }}>
+                  $48K
+                </span>
+                <span className="t-mono text-[9px] text-[var(--text-faint)] tracking-[0.18em] mt-0.5">{fmtUsd(142.5 + backingAmount).replace('.00', '')} OPEN POT</span>
+              </div>
+            </div>
+
+            {/* CTAs — primary is the action, sides are commitments */}
+            <div className="flex flex-wrap items-center justify-center gap-3 mt-9">
+              <Link href="/duel">
+                <BracketButton variant="primary" className="px-6 py-3">START A DUEL →</BracketButton>
+              </Link>
+              <BracketButton variant="a" onClick={() => handleBack('degen', 2)} className="px-5 py-3">
+                BACK DEGEN +$2
+              </BracketButton>
+              <BracketButton variant="b" onClick={() => handleBack('whale', 5)} className="px-5 py-3">
+                BACK WHALE +$5
+              </BracketButton>
+            </div>
+
+            <span className="t-mono text-[10px] text-[var(--text-faint)] mt-4 tracking-[0.18em]">
+              YOU START THE BOUT · BETS LOCK ON FIRST TURN · ON-CHAIN SETTLEMENT
+            </span>
             {backedFighter && (
-              <Chip variant="gold" className="text-[9px] animate-bounce">
-                YOU BACKED THE {backedFighter.toUpperCase()} FOR +${backingAmount.toFixed(2)} USDSO!
+              <Chip variant="gold" className="text-[9px] mt-3 animate-bounce">
+                YOU BACKED THE {backedFighter.toUpperCase()} FOR +${backingAmount.toFixed(2)} USDSO
               </Chip>
             )}
           </div>
+        </div>
+
+        {/* Bottom ticker tape — closes the hero with live signal */}
+        <div className="border-t border-[var(--border)] bg-[var(--bg-stage)]">
+          <Ticker items={tickerItems} speed={40} />
         </div>
       </section>
 
@@ -169,7 +209,7 @@ export default function LandingPage() {
                 <Chip variant="gold">RANK S</Chip>
               </div>
               <span className="text-[10px] font-bold text-[var(--fighter-a)] tracking-widest font-mono mb-4 block">RED CORNER</span>
-              <Avatar fighter="degen" size={140} variant="shield" state="winning" />
+              <FighterAvatar fighter="degen" context="card" size={140} state="winning" />
               <h4 className="t-display text-xl text-[var(--text)] mt-4">THE DEGEN</h4>
               <p className="text-[10px] text-[var(--text-faint)] italic mt-1 font-mono">AGGRESSOR TIER</p>
             </div>
@@ -216,7 +256,7 @@ export default function LandingPage() {
                 <Chip variant="b">WH</Chip>
               </div>
               <span className="text-[10px] font-bold text-[var(--fighter-b)] tracking-widest font-mono mb-4 block">BLUE CORNER</span>
-              <Avatar fighter="whale" size={140} variant="helm" state="idle" />
+              <FighterAvatar fighter="whale" context="card" size={140} state="idle" />
               <h4 className="t-display text-xl text-[var(--text)] mt-4">THE WHALE</h4>
               <p className="text-[10px] text-[var(--text-faint)] italic mt-1 font-mono">TACTICIAN TIER</p>
             </div>
@@ -262,90 +302,104 @@ export default function LandingPage() {
       </section>
 
       {/* 6. Roster § 04 / 06 */}
-      <section id="roster" className="border-b border-[var(--border)] bg-[var(--bg-stage)]/10 py-20 px-6 sm:px-12">
-        <div className="max-w-[1200px] mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start mb-12">
-            <div className="md:col-span-3">
-              <SectionHead num="§ 04 / 06" title="FIGHTER ROSTER" meta="AGENT SELECTION" />
-            </div>
-            <div className="md:col-span-9">
-              <h3 className="t-display text-xl sm:text-2xl">SELECT COMBATANT PROFILES TO INSPECT</h3>
-            </div>
+      <section id="roster" className="border-b border-[var(--border)] bg-[var(--bg-deep)]">
+        <div className="max-w-[1320px] mx-auto px-6 sm:px-8 pt-20 pb-10">
+          <div className="sect-head mb-12">
+            <span className="sect-head-num">§ 04 / 06</span>
+            <span className="sect-head-title">FIGHTER ROSTER</span>
+            <span className="sect-head-meta">6 agents · 6 philosophies</span>
           </div>
 
-          {/* Interactive Roster strips */}
-          <div className="flex flex-col lg:flex-row h-auto lg:h-[480px] border border-[var(--border)] overflow-hidden rounded-[2px] bg-[var(--bg-deep)]">
-            {ROSTER.map((fighter) => {
-              const fullFighter = FIGHTERS[fighter.id];
-              const isSelected = activeFstrip === fighter.id;
-              const fColor = fighter.hex;
+          <p
+            className="fp-display max-w-[980px] mb-16"
+            style={{ fontSize: 'clamp(40px, 5vw, 80px)', lineHeight: 1.05, letterSpacing: '0.01em', color: 'var(--text)' }}
+          >
+            Each is a prompt. Each is a wallet. Each has a way of losing money.
+            <span className="text-[var(--fighter-b)]"> Some lose less than others.</span>
+          </p>
+        </div>
 
-              return (
+        {/* Horizontal character-select strips — full bleed */}
+        <div className="flex flex-col lg:flex-row border-t border-[var(--border)]">
+          {ROSTER.map((f, idx) => {
+            const isActive = activeFstrip === f.id;
+            const fullFighter = FIGHTERS[f.id];
+            return (
+              <div
+                key={f.id}
+                className="fstrip"
+                onMouseEnter={() => setActiveFstrip(f.id)}
+                onMouseLeave={() => setActiveFstrip(null)}
+                onClick={() => { window.location.href = `/fighters/${f.id}`; }}
+                style={isActive ? { flex: 1.4 } : undefined}
+              >
+                {/* Centered portrait — absolute, grows on hover */}
                 <div
-                  key={fighter.id}
-                  onClick={() => setActiveFstrip(activeFstrip === fighter.id ? null : fighter.id)}
-                  className={`fstrip relative flex flex-col justify-between p-6 border-b lg:border-b-0 border-r border-[var(--border)] transition-all duration-300 ${
-                    isSelected ? 'flex-[1.8] bg-[var(--bg-card)]/50' : 'bg-transparent hover:bg-slate-900/10'
-                  }`}
-                  style={{ borderRightColor: isSelected ? fColor : 'var(--border)' }}
+                  className="absolute left-1/2 transition-transform duration-[400ms] ease-out"
+                  style={{
+                    top: '10%',
+                    transform: `translateX(-50%) scale(${isActive ? 1.06 : 1})`,
+                  }}
                 >
-                  {/* Backdrop glowing strip on hover */}
-                  <div
-                    className="absolute inset-0 opacity-[0.03] transition-opacity duration-300 pointer-events-none"
-                    style={{ backgroundColor: fColor, opacity: isSelected ? 0.08 : undefined }}
-                  />
+                  <FighterAvatar fighter={f.id} context="roster" size={220} state={isActive ? 'winning' : 'idle'} chrome={false} />
+                </div>
 
-                  {/* Top content */}
-                  <div className="flex justify-between items-start z-20">
-                    <span className="text-[10px] font-mono text-[var(--text-faint)] font-bold">§ 0{fighter.rank}</span>
-                    <span className="text-xl font-bold" style={{ color: fColor }}>
-                      {GLYPHS[fighter.id]}
-                    </span>
-                  </div>
+                <div className="fstrip-fade" />
 
-                  {/* Middle: Avatar wrapper */}
-                  <div className="flex flex-col items-center justify-center my-6 lg:my-0 z-20 transition-transform duration-300">
-                    <div className={isSelected ? 'scale-110' : 'scale-90'}>
-                      <Avatar
-                        fighter={fighter.id}
-                        size={isSelected ? 140 : 100}
-                        variant={fighter.id === 'degen' ? 'shield' : fighter.id === 'whale' ? 'helm' : 'tarot'}
-                        state={isSelected ? 'winning' : 'idle'}
-                      />
-                    </div>
-                  </div>
+                <span className="fstrip-num">{String(idx + 1).padStart(2, '0')} / 06</span>
 
-                  {/* Bottom details */}
-                  <div className="flex flex-col z-20 mt-4 lg:mt-0">
-                    <span className="t-display text-lg tracking-tight uppercase" style={{ color: fColor }}>
-                      {fighter.name}
-                    </span>
-                    <div className="flex justify-between items-center text-[10px] text-[var(--text-dim)] font-mono mt-1 border-t border-[var(--border-soft)] pt-2">
-                      <span>{fighter.record}</span>
-                      <span className="text-[var(--win)] font-bold">{fmtUsd(fighter.pnl)}</span>
-                    </div>
-
-                    {/* Expandable summary descriptions on active */}
-                    <div
-                      className={`overflow-hidden transition-all duration-300 font-mono text-xs text-[var(--text-dim)] mt-3 leading-relaxed ${
-                        isSelected ? 'max-h-[120px] opacity-100' : 'max-h-0 opacity-0'
-                      }`}
+                <div className="fstrip-label">
+                  <span className="t-mono text-[10px] text-[var(--text-dim)]" style={{ letterSpacing: '0.22em' }}>
+                    {f.tier}
+                  </span>
+                  <span
+                    className="t-display"
+                    style={{
+                      fontSize: isActive ? 28 : 24,
+                      color: f.hex,
+                      letterSpacing: '0.08em',
+                      transition: 'all 200ms ease',
+                      lineHeight: 1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {f.name}
+                  </span>
+                  <span className="t-mono text-xs text-[var(--text)] italic">
+                    &ldquo;{fullFighter.quote}&rdquo;
+                  </span>
+                  <span
+                    className="t-mono text-[11px] text-[var(--text-dim)] overflow-hidden"
+                    style={{
+                      maxHeight: isActive ? 80 : 0,
+                      transition: 'max-height 280ms ease',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {fullFighter.style}
+                  </span>
+                  <div className="flex gap-3 items-center mt-2">
+                    <span className="t-num text-[11px] text-[var(--text-dim)]">{f.record}</span>
+                    <span
+                      className="t-num text-[11px]"
+                      style={{ color: f.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}
                     >
-                      <p className="text-[11px] text-[var(--text-dim)] mb-2 font-bold italic">
-                        "{fullFighter.quote}"
-                      </p>
-                      <p className="text-[10px] text-[var(--text-faint)] leading-normal">
-                        {fullFighter.style}. {fullFighter.bio.slice(0, 110)}...
-                      </p>
-                      <Link href={`/fighters/${fighter.id}`} className="inline-block mt-3 text-[10px] font-bold text-cyan-400 hover:underline">
-                        VIEW FULL DOSSIER →
-                      </Link>
-                    </div>
+                      {fmtUsd(f.pnl)}
+                    </span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="max-w-[1320px] mx-auto px-6 sm:px-8 py-8 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
+          <span className="t-mono text-[10px] text-[var(--text-dim)] tracking-[0.18em]">
+            ▸ HOVER A FIGHTER FOR THEIR STORY · CLICK TO READ MORE
+          </span>
+          <Link href="/fighters/degen">
+            <BracketButton variant="ghost" className="px-4 py-2">VIEW FULL ROSTER →</BracketButton>
+          </Link>
         </div>
       </section>
 
@@ -370,7 +424,7 @@ export default function LandingPage() {
               </div>
 
               <div className="flex flex-col sm:flex-row items-center gap-6 mt-4 md:mt-0">
-                <Avatar fighter="degen" size={96} variant="shield" state="winning" />
+                <FighterAvatar fighter="degen" context="card" size={96} state="winning" />
                 <div className="text-center sm:text-left">
                   <h4 className="t-display text-2xl text-[var(--fighter-a)]">THE DEGEN</h4>
                   <span className="text-[10px] font-mono text-[var(--text-faint)]">Aggressive momentum chaser (-145)</span>
@@ -387,7 +441,7 @@ export default function LandingPage() {
                   <h4 className="t-display text-2xl text-[var(--fighter-b)]">THE WHALE</h4>
                   <span className="text-[10px] font-mono text-[var(--text-faint)]">Conviction trader (+125)</span>
                 </div>
-                <Avatar fighter="whale" size={96} variant="helm" state="idle" />
+                <FighterAvatar fighter="whale" context="card" size={96} state="idle" />
               </div>
 
               <div className="flex flex-col gap-2 w-full md:w-auto">
@@ -406,7 +460,7 @@ export default function LandingPage() {
               </div>
 
               <div className="flex flex-col sm:flex-row items-center gap-6 mt-4 md:mt-0">
-                <Avatar fighter="scalper" size={72} variant="tarot" />
+                <FighterAvatar fighter="scalper" context="card" size={72} />
                 <div className="text-center sm:text-left">
                   <h4 className="t-display text-xl text-[var(--gold)]">THE SCALPER</h4>
                   <span className="text-[10px] font-mono text-[var(--text-faint)]">Spread arbitrageur (-110)</span>
@@ -423,7 +477,7 @@ export default function LandingPage() {
                   <h4 className="t-display text-xl text-[var(--win)]">THE REVERTER</h4>
                   <span className="text-[10px] font-mono text-[var(--text-faint)]">Mean-reverter (+100)</span>
                 </div>
-                <Avatar fighter="reverter" size={72} variant="tarot" />
+                <FighterAvatar fighter="reverter" context="card" size={72} />
               </div>
 
               <BracketButton variant="ghost" disabled={true} className="md:w-44 text-[10px] py-2">
@@ -438,7 +492,7 @@ export default function LandingPage() {
               </div>
 
               <div className="flex flex-col sm:flex-row items-center gap-6 mt-4 md:mt-0">
-                <Avatar fighter="surfer" size={72} variant="tarot" />
+                <FighterAvatar fighter="surfer" context="card" size={72} />
                 <div className="text-center sm:text-left">
                   <h4 className="t-display text-xl text-cyan-400">THE SURFER</h4>
                   <span className="text-[10px] font-mono text-[var(--text-faint)]">Trend follower (-120)</span>
@@ -455,7 +509,7 @@ export default function LandingPage() {
                   <h4 className="t-display text-xl text-purple-400">THE CONTRARIAN</h4>
                   <span className="text-[10px] font-mono text-[var(--text-faint)]">Sentiment fade (+110)</span>
                 </div>
-                <Avatar fighter="contrarian" size={72} variant="tarot" />
+                <FighterAvatar fighter="contrarian" context="card" size={72} />
               </div>
 
               <BracketButton variant="ghost" disabled={true} className="md:w-44 text-[10px] py-2">
@@ -511,8 +565,8 @@ export default function LandingPage() {
                     {/* Combatant profiles win chip */}
                     <div className="col-span-4 flex items-center gap-3">
                       <div className="flex -space-x-2">
-                        <Avatar fighter={row.dg} size={24} variant="shield" showChrome={false} />
-                        <Avatar fighter={row.wh} size={24} variant="shield" showChrome={false} />
+                        <FighterAvatar fighter={row.dg} context="mini" size={24} />
+                        <FighterAvatar fighter={row.wh} context="mini" size={24} />
                       </div>
                       <span className="font-bold text-[var(--text)] uppercase">
                         {row.dg.toUpperCase()} vs {row.wh.toUpperCase()}
