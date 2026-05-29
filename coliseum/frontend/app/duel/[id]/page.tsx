@@ -72,7 +72,7 @@ export default function ArenaPage() {
       <TopBar showNavigation={false} />
 
       {/* Arena status sub-bar */}
-      <section className="border-b border-[var(--border)] bg-[var(--bg-stage)]/20 px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 font-mono uppercase text-xs">
+      <section className="border-b border-[var(--border)] px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 font-mono uppercase text-xs" style={{ background: 'linear-gradient(90deg, var(--fighter-a-soft) 0%, transparent 35%, transparent 65%, var(--fighter-b-soft) 100%)' }}>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-[var(--text-faint)] font-bold">§ ARENA</span>
           <Chip variant="live">MAIN EVENT</Chip>
@@ -120,10 +120,10 @@ export default function ArenaPage() {
               
               {/* Fighter A: THE DEGEN Card */}
               <div
-                className={`card border-[var(--fighter-a)] p-6 bg-[var(--bg-stage)]/30 rounded-[2px] transition-all duration-300 flex flex-col justify-between ${
-                  degenIsLeading && degenVal > 0 ? 'shadow-[0_0_24px_rgba(255,51,102,0.12)] border-2' : 'opacity-90'
+                className={`card p-6 bg-[var(--bg-stage)]/30 rounded-[2px] transition-all duration-300 flex flex-col justify-between ${
+                  degenIsLeading && degenVal >= 0 ? 'shadow-[0_0_24px_rgba(255,51,102,0.12)]' : ''
                 } ${layout === 'oneUp' && !degenIsLeading ? 'scale-95 opacity-75' : ''}`}
-                style={{ minHeight: layout === 'stacked' ? '280px' : '380px' }}
+                style={{ minHeight: layout === 'stacked' ? '280px' : '380px', borderColor: '#ff3366' }}
               >
                 {/* Header ribbon bar */}
                 <div className="flex justify-between items-center border-b border-[var(--border-soft)] pb-3 mb-4 text-[10px] text-[var(--text-dim)] font-mono uppercase">
@@ -180,10 +180,10 @@ export default function ArenaPage() {
 
               {/* Fighter B: THE WHALE Card */}
               <div
-                className={`card border-[var(--fighter-b)] p-6 bg-[var(--bg-stage)]/30 rounded-[2px] transition-all duration-300 flex flex-col justify-between ${
-                  !degenIsLeading && whaleVal > 0 ? 'shadow-[0_0_24px_rgba(0,217,255,0.12)] border-2' : 'opacity-90'
+                className={`card p-6 bg-[var(--bg-stage)]/30 rounded-[2px] transition-all duration-300 flex flex-col justify-between ${
+                  !degenIsLeading && whaleVal >= 0 ? 'shadow-[0_0_24px_rgba(0,217,255,0.12)]' : ''
                 } ${layout === 'oneUp' && degenIsLeading ? 'scale-95 opacity-75' : ''}`}
-                style={{ minHeight: layout === 'stacked' ? '280px' : '380px' }}
+                style={{ minHeight: layout === 'stacked' ? '280px' : '380px', borderColor: '#00d9ff' }}
               >
                 {/* Header ribbon bar */}
                 <div className="flex justify-between items-center border-b border-[var(--border-soft)] pb-3 mb-4 text-[10px] text-[var(--text-dim)] font-mono uppercase">

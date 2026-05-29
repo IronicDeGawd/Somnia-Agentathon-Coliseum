@@ -7,12 +7,14 @@ interface WatchEventHandlers {
   onTurnAdvanced?: (duelId: bigint, turn: number) => void;
   onDuelResolved?: (duelId: bigint, winnerSlot: number, payoutA: bigint, payoutB: bigint) => void;
   onOddsUpdated?: (duelId: bigint, degenOddsBps: number, whaleOddsBps: number) => void;
+  onFighterMoveRequested?: (duelId: bigint, slot: number, prompt: string) => void;
 }
 
 export const useDuelEvents = ({
   onTurnAdvanced,
   onDuelResolved,
   onOddsUpdated,
+  onFighterMoveRequested,
 }: WatchEventHandlers) => {
   // Watch Arena TurnAdvanced events
   useWatchContractEvent({
@@ -54,6 +56,21 @@ export const useDuelEvents = ({
         const { duelId, degenOddsBps, whaleOddsBps } = log.args;
         if (duelId !== undefined && degenOddsBps !== undefined && whaleOddsBps !== undefined && onOddsUpdated) {
           onOddsUpdated(duelId, degenOddsBps, whaleOddsBps);
+        }
+      }
+    },
+  });
+
+  // Watch Arena FighterMoveRequested events
+  useWatchContractEvent({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    eventName: 'FighterMoveRequested',
+    onLogs(logs) {
+      for (const log of logs) {
+        const { duelId, slot, prompt } = log.args;
+        if (duelId !== undefined && slot !== undefined && prompt !== undefined && onFighterMoveRequested) {
+          onFighterMoveRequested(duelId, slot, prompt);
         }
       }
     },

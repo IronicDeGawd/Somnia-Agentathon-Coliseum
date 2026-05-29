@@ -67,7 +67,7 @@ export default function PreDuelPage() {
             </div>
 
             {/* Profile Avatar */}
-            <Avatar fighter="degen" size={180} variant="shield" state="winning" />
+            <Avatar fighter="degen" size={220} variant="shield" state="winning" />
             
             <h3 className="t-display text-2xl mt-6 text-[var(--text)] uppercase">THE DEGEN</h3>
             <p className="text-[10px] text-[var(--text-faint)] italic font-mono mt-1">"{degen.quote}"</p>
@@ -111,7 +111,7 @@ export default function PreDuelPage() {
             </div>
 
             {/* Profile Avatar */}
-            <Avatar fighter="whale" size={180} variant="helm" state="idle" />
+            <Avatar fighter="whale" size={220} variant="helm" state="idle" />
             
             <h3 className="t-display text-2xl mt-6 text-[var(--text)] uppercase">THE WHALE</h3>
             <p className="text-[10px] text-[var(--text-faint)] italic font-mono mt-1">"{whale.quote}"</p>

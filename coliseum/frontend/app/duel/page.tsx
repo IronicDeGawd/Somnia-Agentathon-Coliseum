@@ -46,7 +46,7 @@ export default function LobbyPage() {
 
         <div className="z-10 flex flex-col items-center">
           <div className="flex items-center gap-2 mb-3">
-            <span className="w-2 h-2 bg-[var(--fighter-a)] animate-ping rounded-full" />
+            <Dot variant="a" pulse={true} />
             <Chip variant="live">ARENA LOBBY ACTIVE</Chip>
           </div>
           <h2 className="t-display text-4xl sm:text-5xl uppercase tracking-tighter text-[var(--text)]">

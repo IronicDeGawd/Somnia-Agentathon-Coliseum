@@ -12,20 +12,19 @@ import { fmtUsd, fmtPct } from '@/lib/format';
 export default function ResultPage() {
   const [claimed, setClaimed] = useState(false);
 
-  // For simulation purposes: The Degen won this round!
   const winner = FIGHTERS.degen;
   const loser = FIGHTERS.whale;
 
-  // Let's assume the user bet on the winner in this demo
-  const userBet = {
+  // null = no bet placed. Set to an object to simulate a placed bet.
+  const userBet: { fighter: string; amount: number; odds: number } | null = {
     fighter: 'degen',
     amount: 10,
-    odds: 60, // 60%
+    odds: 60,
   };
 
-  const payoutRatio = 100 / userBet.odds; // 1.67x multiplier
-  const grossPayout = userBet.amount * payoutRatio;
-  const netEarnings = grossPayout - userBet.amount;
+  const payoutRatio = userBet ? 100 / userBet.odds : 0;
+  const grossPayout = userBet ? userBet.amount * payoutRatio : 0;
+  const netEarnings = userBet ? grossPayout - userBet.amount : 0;
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
@@ -162,7 +161,14 @@ export default function ResultPage() {
             <SectionHead num="§ 02" title="YOUR PAYOUT" meta="SETTLED BALANCE" />
 
             <div className="card p-6 bg-[var(--bg-stage)]/30 rounded-[2px] mt-4 space-y-6">
-              {userBet.fighter === winner.id ? (
+              {!userBet ? (
+                <div className="text-center py-6">
+                  <p className="t-display text-[var(--text-faint)] text-xl mb-2 font-bold font-sans">NO BET PLACED.</p>
+                  <p className="text-xs font-mono text-[var(--text-dim)]">
+                    You watched this round as a spectator. Back a fighter next time.
+                  </p>
+                </div>
+              ) : userBet.fighter === winner.id ? (
                 <>
                   <div className="text-center">
                     <span className="text-[10px] text-[var(--text-faint)] uppercase font-mono tracking-widest font-bold block mb-1">
@@ -198,6 +204,9 @@ export default function ResultPage() {
                   <p className="text-xs font-mono text-[var(--text-dim)]">
                     Backed the loser this round. lessons are expensive, degens must learn.
                   </p>
+                  <BracketButton variant="ghost" className="mt-4 text-[10px] py-2 border-[var(--border)]" onClick={() => {}}>
+                    SETTLED
+                  </BracketButton>
                 </div>
               )}
             </div>

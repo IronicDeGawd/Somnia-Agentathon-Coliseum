@@ -11,6 +11,8 @@ interface AvatarProps {
   showChrome?: boolean | null;
 }
 
+export type { AvatarProps };
+
 export const Avatar: React.FC<AvatarProps> = ({
   fighter,
   size = 120,
@@ -68,10 +70,8 @@ export const Avatar: React.FC<AvatarProps> = ({
       filter: 'brightness(1.06) saturate(1.15)',
     };
   } else if (state === 'losing') {
-    // Reverted dimming as per design chat notes to preserve readability,
-    // but applying a subtle styling variant
     filterStyle = {
-      opacity: 0.9,
+      filter: 'grayscale(0.55) brightness(0.72) opacity(0.7)',
     };
   }
 
@@ -150,12 +150,12 @@ export const Avatar: React.FC<AvatarProps> = ({
         </div>
       )}
 
-      {/* 9. Thinking dots (3 pulsing dots) */}
+      {/* 9. Thinking dots (3 pulsing squares) */}
       {state === 'thinking' && (
         <div className="absolute inset-0 bg-black/60 flex items-center justify-center gap-1.5 z-20" style={{ clipPath: currentPolygon }}>
-          <span className="w-2.5 h-2.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-          <span className="w-2.5 h-2.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-          <span className="w-2.5 h-2.5 bg-cyan-400 rounded-full animate-bounce" />
+          <span className="w-2.5 h-2.5 bg-cyan-400 animate-bounce [animation-delay:-0.3s]" style={{ borderRadius: 0 }} />
+          <span className="w-2.5 h-2.5 bg-cyan-400 animate-bounce [animation-delay:-0.15s]" style={{ borderRadius: 0 }} />
+          <span className="w-2.5 h-2.5 bg-cyan-400 animate-bounce" style={{ borderRadius: 0 }} />
         </div>
       )}
 
@@ -188,3 +188,12 @@ export const Avatar: React.FC<AvatarProps> = ({
     </div>
   );
 };
+
+// Back-compat aliases
+export const ShieldPortrait: React.FC<{ fighter: string | Partial<Fighter>; state?: AvatarProps['state']; size?: number; styleName?: AvatarProps['variant'] }> = ({ fighter, state, size, styleName }) => (
+  <Avatar fighter={fighter} state={state} size={size} variant={styleName} />
+);
+
+export const MiniPortrait: React.FC<{ id: string; size?: number }> = ({ id, size }) => (
+  <Avatar fighter={id} variant="shield" size={size} showChrome={false} />
+);

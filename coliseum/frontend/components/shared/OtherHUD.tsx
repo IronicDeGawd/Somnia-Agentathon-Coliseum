@@ -116,8 +116,7 @@ export const Ticker: React.FC<TickerProps> = ({
   speed = 50,
   className = '',
 }) => {
-  // Duplicate items to ensure seamless endless loop
-  const tickerItems = [...items, ...items, ...items];
+  const tickerItems = [...items, ...items];
 
   return (
     <div className={`relative overflow-hidden w-full border-y border-[var(--border)] bg-[var(--bg-stage)] py-2 select-none z-10 ${className}`}>

@@ -70,7 +70,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           {/* Large Avatar */}
           <Avatar
             fighter={id}
-            size={180}
+            size={220}
             variant={id === 'degen' ? 'shield' : id === 'whale' ? 'helm' : 'tarot'}
             state={isPositive ? 'winning' : 'idle'}
           />
