@@ -532,16 +532,16 @@ export default function LandingPage() {
               degen: 'Send it. Always.',
               whale: "I'll wait for it.",
               scalper: '1% x 1000 = victory.',
-              reverter: 'Mean reversion or nothing.',
-              surfer: 'Never sell. Buy the dip.',
+              quant: 'Mean reversion or nothing.',
+              diamond: 'Never sell. Buy the dip.',
               contrarian: "Whatever they're doing, do opposite.",
             };
             const styles: Record<string, string> = {
               degen: 'Momentum slugger. Max size on volatility.',
               whale: 'Patient counter-puncher. Conviction trades only.',
               scalper: 'aggression 4 / patience 1 / risk 3 — microscopic edges.',
-              reverter: 'aggression 1 / patience 5 / risk 2 — fades extremes, mean reversion.',
-              surfer: 'aggression 1 / patience 5 / risk 3 — never sells, buys the dip.',
+              quant: 'aggression 1 / patience 5 / risk 2 — fades extremes, mean reversion.',
+              diamond: 'aggression 1 / patience 5 / risk 3 — never sells, buys the dip.',
               contrarian: 'aggression 3 / patience 3 / risk 3 — opposite of recent flow.',
             };
             return (
@@ -787,10 +787,10 @@ export default function LandingPage() {
             { round: 341, winner: 'degen',      loser: 'whale',      pnlW: 24.18, pnlL: -10.4, mult: 1.54, when: '12m ago' },
             { round: 340, winner: 'whale',      loser: 'scalper',    pnlW: 18.5,  pnlL: -8.5,  mult: 1.78, when: '1h ago' },
             { round: 339, winner: 'degen',      loser: 'contrarian', pnlW: 31.0,  pnlL: -22.7, mult: 2.12, when: '2h ago' },
-            { round: 338, winner: 'surfer',     loser: 'reverter',   pnlW: 12.4,  pnlL: -6.1,  mult: 1.45, when: '3h ago' },
+            { round: 338, winner: 'quant',      loser: 'diamond',    pnlW: 12.4,  pnlL: -6.1,  mult: 1.45, when: '3h ago' },
             { round: 337, winner: 'whale',      loser: 'degen',      pnlW: 9.7,   pnlL: -4.2,  mult: 2.05, when: '4h ago' },
-            { round: 336, winner: 'scalper',    loser: 'surfer',     pnlW: 14.2,  pnlL: -7.8,  mult: 1.62, when: '6h ago' },
-            { round: 335, winner: 'contrarian', loser: 'reverter',   pnlW: 21.5,  pnlL: -11.0, mult: 1.88, when: '8h ago' },
+            { round: 336, winner: 'scalper',    loser: 'quant',      pnlW: 14.2,  pnlL: -7.8,  mult: 1.62, when: '6h ago' },
+            { round: 335, winner: 'contrarian', loser: 'diamond',    pnlW: 21.5,  pnlL: -11.0, mult: 1.88, when: '8h ago' },
           ].map((b) => {
             const wf = FIGHTERS[b.winner];
             const lf = FIGHTERS[b.loser];
