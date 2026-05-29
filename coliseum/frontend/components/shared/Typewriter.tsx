@@ -7,65 +7,51 @@ interface TypewriterProps {
   speed?: number; // characters per second
   onDone?: () => void;
   className?: string;
+  showCursor?: boolean;
 }
 
 export const Typewriter: React.FC<TypewriterProps> = ({
   text,
-  speed = 40,
+  speed = 28,
   onDone,
   className = '',
+  showCursor = true,
 }) => {
-  const [displayText, setDisplayText] = useState<string>('');
-  const textRef = useRef<string>(text);
+  const [n, setN] = useState(0);
   const onDoneRef = useRef<(() => void) | undefined>(onDone);
 
-  // Sync refs to avoid re-triggering effects on callback shifts
   useEffect(() => {
-    textRef.current = text;
     onDoneRef.current = onDone;
-  }, [text, onDone]);
+  }, [onDone]);
 
   useEffect(() => {
-    setDisplayText('');
-    const target = textRef.current;
-    if (!target) {
+    setN(0);
+    if (!text) {
       if (onDoneRef.current) onDoneRef.current();
       return;
     }
-
-    const intervalMs = 1000 / speed;
-    let startTime = performance.now();
-    let index = 0;
-    let animationFrameId: number;
-
+    const start = performance.now();
+    let raf: number;
     const tick = (now: number) => {
-      const elapsed = now - startTime;
-      const count = Math.floor(elapsed / intervalMs);
-      
-      if (count > index) {
-        index = Math.min(count, target.length);
-        setDisplayText(target.slice(0, index));
-      }
-
-      if (index < target.length) {
-        animationFrameId = requestAnimationFrame(tick);
-      } else {
-        if (onDoneRef.current) {
-          onDoneRef.current();
-        }
+      const elapsed = now - start;
+      const next = Math.min(text.length, Math.floor(elapsed / (1000 / speed)));
+      setN(next);
+      if (next < text.length) {
+        raf = requestAnimationFrame(tick);
+      } else if (onDoneRef.current) {
+        onDoneRef.current();
       }
     };
-
-    animationFrameId = requestAnimationFrame(tick);
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [text, speed]);
 
+  const done = n >= (text?.length ?? 0);
+
   return (
-    <span className={`${className} cursor-blink inline-block`}>
-      {displayText}
+    <span className={className}>
+      {(text || '').slice(0, n)}
+      {showCursor && !done && <span className="cursor-blink" />}
     </span>
   );
 };

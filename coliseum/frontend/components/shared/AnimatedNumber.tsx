@@ -7,6 +7,8 @@ interface AnimatedNumberProps {
   duration?: number; // duration in ms
   formatter?: (val: number) => string;
   className?: string;
+  prefix?: string;
+  suffix?: string;
 }
 
 export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
@@ -14,6 +16,8 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
   duration = 600,
   formatter = (v) => v.toFixed(2),
   className = '',
+  prefix = '',
+  suffix = '',
 }) => {
   const [displayValue, setDisplayValue] = useState<number>(value);
   const startValueRef = useRef<number>(value);
@@ -27,18 +31,14 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
 
     let animationFrameId: number;
 
-    const easeOutCubic = (x: number): number => {
-      return 1 - Math.pow(1 - x, 3);
-    };
+    const easeOutCubic = (x: number): number => 1 - Math.pow(1 - x, 3);
 
     const updateNumber = (now: number) => {
       const elapsed = now - startTimeRef.current;
       const progress = Math.min(elapsed / duration, 1);
       const easedProgress = easeOutCubic(progress);
-
       const nextVal = startValueRef.current + (endValueRef.current - startValueRef.current) * easedProgress;
       setDisplayValue(nextVal);
-
       if (progress < 1) {
         animationFrameId = requestAnimationFrame(updateNumber);
       } else {
@@ -53,5 +53,9 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
     };
   }, [value, duration]);
 
-  return <span className={className}>{formatter(displayValue)}</span>;
+  return (
+    <span className={`t-num ${className}`}>
+      {prefix}{formatter(displayValue)}{suffix}
+    </span>
+  );
 };

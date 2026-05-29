@@ -39,7 +39,7 @@ function Corner({ id, side }: CornerProps) {
           borderBottom: `1px solid ${f.hex}55`,
         }}
       >
-        <div className="row gap-12 ai-c">
+        <div className="row gap-8 ai-c">
           <span
             style={{
               width: 22,
@@ -70,7 +70,7 @@ function Corner({ id, side }: CornerProps) {
       {/* Portrait + name + tagline */}
       <div className="col gap-16 ai-c" style={{ padding: 24 }}>
         <FighterAvatar fighter={id} context="card" size={220} state="winning" />
-        <div className="col ai-c gap-12">
+        <div className="col ai-c gap-4">
           <span
             className="t-display t-up"
             style={{ fontSize: 24, letterSpacing: '0.1em', color: f.hex, lineHeight: 1, whiteSpace: 'nowrap' }}
@@ -84,7 +84,7 @@ function Corner({ id, side }: CornerProps) {
       </div>
 
       {/* Meters */}
-      <div className="col gap-12" style={{ padding: '0 24px 16px' }}>
+      <div className="col gap-10" style={{ padding: '0 24px 16px' }}>
         <div className="row jc-sb ai-c">
           <span className="label-tiny">AGGRESSION</span>
           <Meter value={f.aggression} side={side} />
@@ -108,7 +108,7 @@ function Corner({ id, side }: CornerProps) {
           background: 'var(--bg-stage)',
         }}
       >
-        <div className="col gap-12">
+        <div className="col gap-2">
           <span className="label-tiny">RECORD</span>
           <span className="t-num t-sm">{f.record.w}W · {f.record.l}L</span>
         </div>
@@ -166,7 +166,7 @@ export default function PreDuelPage() {
 
       <div className="shell-pad col gap-24" style={{ paddingTop: 32, paddingBottom: 32 }}>
         {/* Marquee headline */}
-        <div className="col ai-c gap-12">
+        <div className="col ai-c gap-4">
           <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>TALE OF THE TAPE</span>
           <h1
             className="fp-display"
@@ -186,11 +186,11 @@ export default function PreDuelPage() {
         </div>
 
         {/* Corner cards w/ gradient VS */}
-        <div className="row gap-24" style={{ alignItems: 'stretch' }}>
+        <div className="row gap-24 ai-c" style={{ alignItems: 'stretch' }}>
           <Corner id="degen" side="a" />
           <div className="col ai-c gap-12" style={{ width: 80, justifyContent: 'center' }}>
             <span
-              className="t-display"
+              className="t-display vs-pop"
               style={{
                 fontSize: 80,
                 lineHeight: 1,
@@ -201,7 +201,7 @@ export default function PreDuelPage() {
             >
               VS
             </span>
-            <span className="t-mono t-xs text-faint" style={{ textAlign: 'center' }}>
+            <span className="t-mono t-xs t-faint" style={{ textAlign: 'center' }}>
               BEST OF<br />15 TURNS
             </span>
           </div>
@@ -211,17 +211,17 @@ export default function PreDuelPage() {
         {/* Bottom strip */}
         <div className="card pad-16 row jc-sb ai-c">
           <div className="row gap-24 ai-c">
-            <div className="col gap-12">
+            <div className="col gap-2">
               <span className="eyebrow">PURSE</span>
               <span className="t-num text-gold" style={{ fontSize: 22 }}>$142 USDSO</span>
             </div>
             <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-            <div className="col gap-12">
+            <div className="col gap-2">
               <span className="eyebrow">SPECTATORS</span>
               <span className="t-num" style={{ fontSize: 22 }}>47</span>
             </div>
             <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-            <div className="col gap-12">
+            <div className="col gap-2">
               <span className="eyebrow">HEAD-TO-HEAD</span>
               <span className="t-mono t-sm">
                 DEGEN <span className="t-num">1</span>—<span className="t-num">2</span> WHALE

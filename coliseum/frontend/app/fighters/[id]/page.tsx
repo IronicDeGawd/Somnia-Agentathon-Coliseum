@@ -6,7 +6,7 @@ import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
-import { FIGHTERS } from '@/lib/fighters';
+import { FIGHTERS, ROSTER } from '@/lib/fighters';
 import { fmtUsd } from '@/lib/format';
 
 interface FighterProfileProps {
@@ -37,8 +37,8 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
 
       {/* Status strip */}
       <div
-        className="row ai-c jc-sb gap-12"
-        style={{ padding: '14px 32px', borderBottom: '1px solid var(--border)', background: 'var(--bg-stage)' }}
+        className="row ai-c jc-sb"
+        style={{ padding: '14px 32px', borderBottom: '1px solid var(--border)', background: 'var(--bg-stage)', gap: 12 }}
       >
         <div className="row gap-12 ai-c">
           <span
@@ -89,21 +89,21 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
               &ldquo;{f.tagline}&rdquo;
             </span>
             <div className="row gap-24 ai-c" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-              <div className="col">
+              <div className="col gap-2">
                 <span className="eyebrow">RECORD</span>
                 <span className="t-num" style={{ fontSize: 24, whiteSpace: 'nowrap' }}>
                   {f.record.w}W · {f.record.l}L
                 </span>
               </div>
               <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-              <div className="col">
+              <div className="col gap-2">
                 <span className="eyebrow" style={{ whiteSpace: 'nowrap' }}>CAREER PNL</span>
                 <span className="t-num text-win" style={{ fontSize: 24, whiteSpace: 'nowrap' }}>
                   {fmtUsd(f.pnl)}
                 </span>
               </div>
               <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-              <div className="col">
+              <div className="col gap-2">
                 <span className="eyebrow" style={{ whiteSpace: 'nowrap' }}>WIN RATE</span>
                 <span className="t-num" style={{ fontSize: 24 }}>{winRate}%</span>
               </div>
@@ -147,19 +147,19 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           <div className="card flex-1 col gap-12 pad-24">
             <span className="label-tiny">CAREER PEAKS</span>
             <div className="row gap-24" style={{ marginTop: 8 }}>
-              <div className="col flex-1">
+              <div className="col gap-2 flex-1">
                 <span className="t-mono t-xs t-dim">BEST ROUND</span>
                 <span className="t-num text-win" style={{ fontSize: 28 }}>
                   {fmtUsd(f.bestRound.pnl)}
                 </span>
-                <span className="t-mono t-xs text-faint">round #{f.bestRound.id}</span>
+                <span className="t-mono t-xs t-faint">round #{f.bestRound.id}</span>
               </div>
-              <div className="col flex-1">
+              <div className="col gap-2 flex-1">
                 <span className="t-mono t-xs t-dim">WORST ROUND</span>
                 <span className="t-num text-loss" style={{ fontSize: 28 }}>
                   {fmtUsd(f.worstRound.pnl)}
                 </span>
-                <span className="t-mono t-xs text-faint">round #{f.worstRound.id}</span>
+                <span className="t-mono t-xs t-faint">round #{f.worstRound.id}</span>
               </div>
             </div>
             <hr className="divider" />
@@ -184,19 +184,20 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         </div>
         <div className="row gap-32 ai-s">
           <p
-            className="fp-display flex-1"
+            className="fp-display"
             style={{
               fontSize: 'clamp(28px, 3.4vw, 48px)',
               lineHeight: 1.1,
               color: 'var(--text)',
+              flex: 1,
               margin: 0,
             }}
           >
             &ldquo;<span style={{ color: f.hex }}>{f.tagline}</span>&rdquo;
           </p>
           <p
-            className="t-mono t-sm flex-1"
-            style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.8, paddingTop: 6 }}
+            className="t-mono t-sm"
+            style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.8, flex: 1, paddingTop: 6 }}
           >
             {f.bio}
           </p>
@@ -213,17 +214,17 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
 
         <div className="card" style={{ padding: '0 24px' }}>
           {recentDuels.map((d, i) => {
-            const opp = FIGHTERS[d.vs];
-            const oppHex = opp?.hex || '#8c7fb8';
+            const opp = FIGHTERS[d.vs] || ROSTER.find((r) => r.id === d.vs);
+            const oppHex = opp?.hex || (opp && 'color' in opp && opp.color === 'var(--fighter-a)' ? '#ff3366' : '#00d9ff');
             const oppName = opp?.name || d.vs.toUpperCase();
             return (
               <div
                 key={d.round}
-                className="row ai-c gap-24"
+                className="row ai-c"
                 style={{
                   padding: '16px 0',
                   borderBottom: i < recentDuels.length - 1 ? '1px solid var(--border)' : 'none',
-                  flexWrap: 'wrap',
+                  gap: 24,
                 }}
               >
                 <span className="t-num t-sm t-dim" style={{ width: 80 }}>
@@ -255,7 +256,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
                 >
                   {fmtUsd(d.pnl)}
                 </span>
-                <BracketButton variant="ghost">REPLAY →</BracketButton>
+                <a className="bk bk-ghost" style={{ cursor: 'pointer' }}>REPLAY →</a>
               </div>
             );
           })}

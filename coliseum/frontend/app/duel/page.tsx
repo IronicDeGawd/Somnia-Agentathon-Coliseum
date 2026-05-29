@@ -19,7 +19,8 @@ export default function LobbyPage() {
     return () => clearInterval(clock);
   }, []);
 
-  const tickerItems: React.ReactNode[] = [
+  // Ticker items rendered as a flat list of nodes, separated by · between each
+  const tickerItemNodes: React.ReactNode[] = [
     <>WBTC/USDSO <span className="t-num text-win">67,425.10</span> +0.34%</>,
     <>ETH/USDSO <span className="t-num text-loss">3,148.20</span> −0.92%</>,
     <>SOL/USDSO <span className="t-num text-win">142.88</span> +2.18%</>,
@@ -74,18 +75,19 @@ export default function LobbyPage() {
           </div>
 
           {/* 4-up stat strip — BELL IN / PURSE / ODDS / BETTORS */}
+          {/* gap-2 matches design source (col ai-c gap-2 on each stat block) */}
           <div className="row gap-32 ai-c jc-c" style={{ marginTop: 8 }}>
-            <div className="col ai-c gap-4">
+            <div className="col ai-c gap-2">
               <span className="eyebrow">BELL IN</span>
               <span className="t-num text-gold" style={{ fontSize: 36, lineHeight: 1 }}>{fmtTime(sim.countdown)}</span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
-            <div className="col ai-c gap-4">
+            <div className="col ai-c gap-2">
               <span className="eyebrow">PURSE</span>
               <span className="t-num text-gold" style={{ fontSize: 36, lineHeight: 1 }}>${sim.potNext}</span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
-            <div className="col ai-c gap-4">
+            <div className="col ai-c gap-2">
               <span className="eyebrow">ODDS</span>
               <span className="t-num" style={{ fontSize: 36, lineHeight: 1, whiteSpace: 'nowrap' }}>
                 <span className="text-a">{sim.oddsDegen}</span>
@@ -94,7 +96,7 @@ export default function LobbyPage() {
               </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
-            <div className="col ai-c gap-4">
+            <div className="col ai-c gap-2">
               <span className="eyebrow">BETTORS</span>
               <span className="t-num" style={{ fontSize: 36, lineHeight: 1, color: 'var(--text)' }}>14</span>
             </div>
@@ -113,10 +115,12 @@ export default function LobbyPage() {
           <div className="ticker" style={{ height: '100%', alignItems: 'center', paddingLeft: 16 }}>
             {[0, 1].map((k) => (
               <div className="row gap-32 ai-c" key={k} style={{ height: '100%' }}>
-                {tickerItems.map((item, i) => (
+                {tickerItemNodes.map((item, i) => (
                   <React.Fragment key={i}>
                     <span className="t-mono t-xs t-dim">{item}</span>
-                    <span className="t-mono t-xs t-dim">·</span>
+                    {i < tickerItemNodes.length - 1 && (
+                      <span className="t-mono t-xs t-dim">·</span>
+                    )}
                   </React.Fragment>
                 ))}
               </div>
@@ -136,11 +140,12 @@ export default function LobbyPage() {
         <div className="card corner-card acc-a glow-a" style={{ overflow: 'hidden' }}>
           {/* Header strip */}
           <div
-            className="row ai-c gap-12"
+            className="row ai-c"
             style={{
               padding: '10px 16px',
               background: 'linear-gradient(90deg, var(--fighter-a-soft), transparent 70%)',
               borderBottom: '1px solid var(--border)',
+              gap: 12,
             }}
           >
             <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
@@ -157,7 +162,8 @@ export default function LobbyPage() {
           <div className="row gap-24" style={{ padding: 24, alignItems: 'stretch' }}>
             <div className="col gap-12 flex-1">
               <div className="row jc-sb ai-c">
-                <div className="row gap-12 ai-c">
+                {/* gap-10 matches design source (row gap-10 ai-c) */}
+                <div className="row ai-c" style={{ gap: 10 }}>
                   <FighterAvatar fighter="degen" context="mini" size={32} />
                   <span className="t-display t-up" style={{ color: 'var(--fighter-a)', letterSpacing: '0.12em', fontSize: 14 }}>THE DEGEN</span>
                 </div>
@@ -177,7 +183,8 @@ export default function LobbyPage() {
                 <span className="t-num" style={{ fontSize: 24, color: sim.whale.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}>
                   {fmtUsd(sim.whale.pnl)}
                 </span>
-                <div className="row gap-12 ai-c">
+                {/* gap-10 matches design source (row gap-10 ai-c) */}
+                <div className="row ai-c" style={{ gap: 10 }}>
                   <span className="t-display t-up" style={{ color: 'var(--fighter-b)', letterSpacing: '0.12em', fontSize: 14 }}>THE WHALE</span>
                   <FighterAvatar fighter="whale" context="mini" size={32} />
                 </div>
@@ -187,8 +194,9 @@ export default function LobbyPage() {
           </div>
 
           {/* Footer: odds + JOIN SPECTATORS */}
+          {/* jc-sb handles spacing; no gap class — button gets marginLeft per design source */}
           <div
-            className="row ai-c jc-sb gap-24"
+            className="row ai-c jc-sb"
             style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-stage)' }}
           >
             <div className="col gap-4" style={{ flex: 2 }}>
@@ -196,9 +204,12 @@ export default function LobbyPage() {
                 <span className="text-a">DEGEN {sim.oddsDegen}%</span>
                 <span className="text-b">WHALE {100 - sim.oddsDegen}%</span>
               </div>
-              <OddsBar oddsA={sim.oddsDegen} oddsB={100 - sim.oddsDegen} />
+              {/* height={8} matches design source OddsBar call: <OddsBar degen={sim.oddsDegen} height={8} /> */}
+              <OddsBar oddsA={sim.oddsDegen} oddsB={100 - sim.oddsDegen} className="!h-[8px]" />
             </div>
-            <Link href="/duel/1"><BracketButton variant="a">JOIN SPECTATORS →</BracketButton></Link>
+            <Link href="/duel/1" style={{ marginLeft: 24 }}>
+              <BracketButton variant="a">JOIN SPECTATORS →</BracketButton>
+            </Link>
           </div>
         </div>
       </section>
@@ -238,7 +249,8 @@ export default function LobbyPage() {
                 onClick={() => { window.location.href = `/fighters/${r.id}`; }}
               >
                 <span className="t-num t-sm t-dim" style={{ width: 32 }}>{String(i + 1).padStart(2, '0')}</span>
-                <div className="row gap-12 ai-c flex-1" style={{ minWidth: 0 }}>
+                {/* gap-10 matches design source (row gap-10 ai-c flex-1) */}
+                <div className="row ai-c flex-1" style={{ gap: 10, minWidth: 0 }}>
                   <FighterAvatar fighter={r.id} context="mini" size={28} />
                   <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap' }}>{r.name}</span>
                   <span className="t-mono t-xs t-faint" style={{ whiteSpace: 'nowrap' }}>· {r.tier}</span>

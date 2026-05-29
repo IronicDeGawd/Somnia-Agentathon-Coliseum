@@ -63,9 +63,9 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
   });
   const max = Math.max(...totals, 1);
   return (
-    <div className="col gap-8">
+    <div className="col gap-6">
       <span className="label-tiny">HOLDINGS</span>
-      <div className="col gap-8">
+      <div className="col gap-6">
         {holdings.map((h, i) => (
           <div key={h.token} className="col gap-2">
             <div className="row jc-sb ai-c" style={{ gap: 12 }}>
@@ -188,6 +188,7 @@ function FighterCardSplit({
 export default function ArenaPage() {
   const params = useParams();
   const layout = useUIStore((state) => state.layout) as Layout;
+  const autoAdvance = true;
 
   const [simState, dispatch] = useReducer(simReducer, makeInitialSim());
   const [betPlaced, setBetPlaced] = useState<'degen' | 'whale' | null>(null);
@@ -244,7 +245,7 @@ export default function ArenaPage() {
   const duelOver = simState.round > 15 || simState.timeLeft <= 0;
 
   return (
-    <div className="col" style={{ minHeight: '100vh', background: 'var(--bg-deep)' }}>
+    <div className="col" style={{ minHeight: 'calc(100vh - 56px)' }}>
       <AppTopBar />
 
       {/* ArenaStatusBar — broadcast slate */}
@@ -415,9 +416,9 @@ export default function ArenaPage() {
                 })}
               </div>
             </div>
-            <div className="col gap-2" style={{ flexShrink: 0, alignItems: 'flex-end' }}>
+            <div className="col gap-2 ai-e" style={{ flexShrink: 0 }}>
               <span className="label-tiny">VOL 24H</span>
-              <span className="t-num text-gold" style={{ fontSize: 18 }}>${(simState.market.vol / 1_000).toFixed(1)}K</span>
+              <span className="t-num text-gold" style={{ fontSize: 18 }}>${simState.market.vol.toFixed(1)}M</span>
             </div>
           </div>
         </div>
@@ -490,7 +491,7 @@ export default function ArenaPage() {
         ) : (
           <div className="card pad-16 row jc-sb ai-c" style={{ borderColor: 'var(--border)' }}>
             <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
-              ▸ NEXT TURN IN <span className="t-num" style={{ color: 'var(--text)' }}>{simState.turnIn}s</span> · AUTO ON
+              ▸ NEXT TURN IN <span className="t-num" style={{ color: 'var(--text)' }}>{simState.turnIn}s</span> · AUTO {autoAdvance ? 'ON' : 'OFF'}
             </span>
             <div className="row gap-8">
               <BracketButton onClick={handleAdvance}>ADVANCE TURN ▸</BracketButton>

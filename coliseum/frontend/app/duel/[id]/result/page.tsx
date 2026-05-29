@@ -207,7 +207,7 @@ export default function ResultPage() {
                 >
                   {FIGHTERS[bet.fighter].name}
                 </span>
-                <span className="t-mono t-xs text-faint">${bet.amount} @ {odds}%</span>
+                <span className="t-mono t-xs t-faint">${bet.amount} @ {odds}%</span>
               </div>
 
               {betWon ? (
