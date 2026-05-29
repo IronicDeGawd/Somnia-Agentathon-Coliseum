@@ -3,6 +3,7 @@
 import React, { useReducer, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
@@ -43,6 +44,7 @@ export default function ResultPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
+      <AppTopBar />
       {/* Status strip */}
       <div
         className="flex items-center justify-between flex-wrap gap-3"

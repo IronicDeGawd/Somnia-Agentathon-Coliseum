@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
@@ -123,6 +124,7 @@ export default function PreDuelPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
+      <AppTopBar />
       {/* Status strip */}
       <div
         className="flex items-center justify-between flex-wrap gap-3"

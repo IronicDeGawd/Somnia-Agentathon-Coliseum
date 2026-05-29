@@ -3,7 +3,7 @@
 import React, { useReducer, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { TopBar } from '@/components/shared/TopBar';
+import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
@@ -253,7 +253,7 @@ export default function ArenaPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
-      <TopBar showNavigation={false} />
+      <AppTopBar />
 
       {/* ArenaStatusBar — broadcast slate */}
       <div style={{ background: 'var(--bg-stage)', borderBottom: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>

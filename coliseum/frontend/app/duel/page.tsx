@@ -2,7 +2,7 @@
 
 import React, { useReducer, useEffect } from 'react';
 import Link from 'next/link';
-import { TopBar } from '@/components/shared/TopBar';
+import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
@@ -40,7 +40,7 @@ export default function LobbyPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
-      <TopBar showNavigation={false} />
+      <AppTopBar />
 
       {/* ── LOBBY MARQUEE ──────────────────────────────────────────── */}
       <section className="relative border-b border-[var(--border)] overflow-hidden">
