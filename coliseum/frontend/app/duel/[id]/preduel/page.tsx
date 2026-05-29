@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ShieldAlert, Play, Swords, Volume2, HelpCircle } from 'lucide-react';
+import { Shield, Play, Swords, Volume2, HelpCircle } from 'lucide-react';
 import { Avatar } from '@/components/shared/Avatar';
 import { Meter } from '@/components/shared/Meter';
 import { BracketButton, Chip, Dot, SectionHead } from '@/components/shared/OtherHUD';

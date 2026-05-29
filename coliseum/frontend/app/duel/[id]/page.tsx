@@ -2,7 +2,7 @@
 
 import React, { useReducer, useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Play, TrendingUp, Users, Coins, HelpCircle, Shield, Award, Terminal, Activity, ArrowUpRight, ArrowDownRight, Square } from 'lucide-react';
 import { TopBar } from '@/components/shared/TopBar';
 import { Avatar } from '@/components/shared/Avatar';
@@ -10,7 +10,7 @@ import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
 import { AnimatedNumber } from '@/components/shared/AnimatedNumber';
 import { Typewriter } from '@/components/shared/Typewriter';
-import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
+import { BracketButton, Chip, Dot, SectionHead } from '@/components/shared/OtherHUD';
 import { useUIStore } from '@/store/ui';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { FIGHTERS } from '@/lib/fighters';
@@ -18,6 +18,7 @@ import { fmtUsd, fmtPct } from '@/lib/format';
 
 export default function ArenaPage() {
   const router = useRouter();
+  const params = useParams();
   const layout = useUIStore((state) => state.layout);
   const audioOn = useUIStore((state) => state.audioOn);
 
@@ -363,7 +364,7 @@ export default function ArenaPage() {
             </span>
             
             {simState.round >= 15 ? (
-              <Link href={`/duel/${router.query?.id || 1}/result`} className="block w-full">
+              <Link href={`/duel/${params?.id || 1}/result`} className="block w-full">
                 <BracketButton variant="gold" className="w-full text-xs py-3.5 leading-none">
                   ★ BOUT CONCLUDED. SEE WINNER →
                 </BracketButton>
