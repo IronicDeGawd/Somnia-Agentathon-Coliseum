@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { formatUnits } from 'viem';
-import { useWatchContractEvent } from 'wagmi';
+import { useWatchContractEvent, useAccount } from 'wagmi';
+import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
 import { useQueueState } from '@/hooks/useQueueState';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
@@ -48,6 +49,9 @@ function QueueInner({
   } = useQueue(fighter, turns);
 
   const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
+
+  const { isConnected } = useAccount();
+  const { openConnectModal } = useConnectModal();
 
   const [matchedDuelId, setMatchedDuelId] = useState<bigint | null>(null);
   const [queued, setQueued] = useState(false);
@@ -381,22 +385,36 @@ function QueueInner({
         </div>
       )}
 
-      {/* Submit */}
-      <button
-        className="bk bk-primary"
-        style={{
-          width: '100%',
-          padding: '14px',
-          opacity: hasEnough && !isPending ? 1 : 0.45,
-          cursor: hasEnough && !isPending ? 'pointer' : 'not-allowed',
-          letterSpacing: '0.08em',
-          fontSize: '13px',
-        }}
-        disabled={!hasEnough || isPending}
-        onClick={handleEnterQueue}
-      >
-        {isPending ? 'APPROVING + QUEUEING…' : 'ENTER QUEUE'}
-      </button>
+      {/* Submit — connect first if no wallet, else queue */}
+      {!isConnected ? (
+        <button
+          className="bk bk-primary"
+          style={{ width: '100%', padding: '14px', letterSpacing: '0.08em', fontSize: '13px' }}
+          onClick={() => openConnectModal?.()}
+        >
+          CONNECT WALLET TO QUEUE
+        </button>
+      ) : (
+        <button
+          className="bk bk-primary"
+          style={{
+            width: '100%',
+            padding: '14px',
+            opacity: hasEnough && !isPending ? 1 : 0.45,
+            cursor: hasEnough && !isPending ? 'pointer' : 'not-allowed',
+            letterSpacing: '0.08em',
+            fontSize: '13px',
+          }}
+          disabled={!hasEnough || isPending}
+          onClick={handleEnterQueue}
+        >
+          {isPending
+            ? 'APPROVING + QUEUEING…'
+            : hasEnough
+              ? 'ENTER QUEUE'
+              : 'INSUFFICIENT USDso'}
+        </button>
+      )}
     </div>
   );
 }

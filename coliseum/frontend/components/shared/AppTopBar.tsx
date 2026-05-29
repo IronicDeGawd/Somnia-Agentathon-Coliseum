@@ -1,9 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAccount } from 'wagmi';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useUIStore } from '@/store/ui';
+import { useUSDsoBalance } from '@/hooks/useUSDsoBalance';
 
 /**
  * In-app top bar (Lobby / Arena / Profile).
@@ -20,8 +23,9 @@ export const AppTopBar: React.FC = () => {
   const toggleAudio = useUIStore((s) => s.toggleAudio);
 
   const pathname = usePathname() || '';
-  const [walletConnected, setWalletConnected] = useState(false);
-  const [balance] = useState(25);
+
+  const { address } = useAccount();
+  const { formatted: usdsoBalance } = useUSDsoBalance(address);
 
   const onLobby = pathname === '/duel';
   const onArena =
@@ -73,18 +77,41 @@ export const AppTopBar: React.FC = () => {
         <span className="chip">
           <span className="dot dot-warn pulse" /> TESTNET
         </span>
-        {walletConnected ? (
-          <span className="chip">
-            <span className="dot dot-win" /> 0x4F…A1c2 ·{' '}
-            <span className="t-num text-gold" style={{ marginLeft: 6 }}>
-              ${balance.toFixed(2)}
-            </span>
-          </span>
-        ) : (
-          <button className="bk" onClick={() => setWalletConnected(true)}>
-            CONNECT WALLET
-          </button>
-        )}
+        <ConnectButton.Custom>
+          {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
+            const ready = mounted;
+            const connected = ready && account && chain;
+            return (
+              <div
+                aria-hidden={!ready}
+                style={!ready ? { opacity: 0, pointerEvents: 'none', userSelect: 'none' } : undefined}
+              >
+                {!connected ? (
+                  <button className="bk" onClick={openConnectModal} type="button">
+                    CONNECT WALLET
+                  </button>
+                ) : chain.unsupported ? (
+                  <button className="bk" onClick={openChainModal} type="button" style={{ color: 'var(--loss)', borderColor: 'var(--loss)' }}>
+                    WRONG NETWORK
+                  </button>
+                ) : (
+                  <button
+                    className="chip"
+                    onClick={openAccountModal}
+                    type="button"
+                    title="Account"
+                    style={{ cursor: 'pointer', background: 'none', border: 'none' }}
+                  >
+                    <span className="dot dot-win" /> {account.displayName} ·{' '}
+                    <span className="t-num text-gold" style={{ marginLeft: 6 }}>
+                      {usdsoBalance} USDso
+                    </span>
+                  </button>
+                )}
+              </div>
+            );
+          }}
+        </ConnectButton.Custom>
         <button
           className="bk bk-ghost"
           onClick={toggleAudio}

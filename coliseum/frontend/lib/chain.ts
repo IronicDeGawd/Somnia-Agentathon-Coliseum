@@ -1,10 +1,10 @@
 'use client';
 
 import { defineChain } from 'viem';
-import { http, createConfig } from 'wagmi';
-import { injected } from 'wagmi/connectors';
+import { http } from 'wagmi';
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 
-// Define the custom Somnia Shannon testnet chain
+// Custom Somnia Shannon testnet chain
 export const somniaTestnet = defineChain({
   id: 50312,
   name: 'Somnia Shannon Testnet',
@@ -27,11 +27,15 @@ export const somniaTestnet = defineChain({
   testnet: true,
 });
 
-// Configure Wagmi
-export const config = createConfig({
+// RainbowKit config. A WalletConnect projectId is required for the
+// WalletConnect/mobile options; injected wallets (MetaMask, Rabby, etc.)
+// work without it. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID for full support.
+export const config = getDefaultConfig({
+  appName: 'Coliseum',
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? 'coliseum_testnet_demo',
   chains: [somniaTestnet],
-  connectors: [injected()],
   transports: {
     [somniaTestnet.id]: http(),
   },
+  ssr: true,
 });
