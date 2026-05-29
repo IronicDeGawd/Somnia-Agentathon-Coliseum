@@ -132,7 +132,7 @@ describe("Matchmaker", () => {
       const [player] = await mm.read.getSlot([3]);
       expect(player).to.equal(zeroAddress);
 
-      const p = await mm.read.pending();
+      const p = await mm.read.pendingByTier([3]);
       expect(p[6]).to.equal(true);
       expect(p[0].toLowerCase()).to.equal(
         alice.account.address.toLowerCase()
@@ -193,12 +193,12 @@ describe("Matchmaker", () => {
 
       // Arena frees up
       await mockArena.write.setBusy([false]);
-      await mm.write.triggerPendingMatch();
+      await mm.write.triggerPendingMatch([3]);
 
       const lastDuelId = await mockArena.read.lastDuelId();
       expect(lastDuelId).to.equal(1n);
 
-      const p = await mm.read.pending();
+      const p = await mm.read.pendingByTier([3]);
       expect(p[6]).to.equal(false);
     });
 
@@ -218,7 +218,7 @@ describe("Matchmaker", () => {
       });
       await mm.write.queue([1, 3], { account: bob.account });
 
-      await expect(mm.write.triggerPendingMatch()).to.be.rejectedWith(
+      await expect(mm.write.triggerPendingMatch([3])).to.be.rejectedWith(
         "ArenaStillBusy"
       );
     });

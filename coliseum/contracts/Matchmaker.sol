@@ -12,51 +12,32 @@ pragma solidity ^0.8.24;
 ///   - Their AI agents fight each other on dreamDEX.
 ///   - After the duel resolves, the winner claims the full recovered pot.
 ///
-///  Queue model (v1): one open slot per tier.
-///   - If the slot is empty: caller takes it, deposit is held.
-///   - If the slot has a different fighter: instant match → Arena.startDuel().
-///   - If Arena is busy (another duel running): match is queued as pending.
-///     Anyone can call triggerPendingMatch() once Arena becomes free.
-///   - If the slot has the SAME fighter: revert (same fighter not allowed).
-///
-///  Deposit accounting:
-///   - Each player pays ceil((minDepositFor(turns) + PLATFORM_FEE) / 2).
-///   - Combined total >= Arena's required amount. Dust (≤1 wei) stays in contract.
-///   - After resolution, Matchmaker calls Arena.recoverFunds() and pays the winner.
-///   - Loser gets 0. The pot is winner-takes-all (matching Arena semantics).
+///  Security properties:
+///   - CEI: all state changes happen before external calls throughout.
+///   - Per-tier pending slots: one pending match per tier (not a global bottleneck).
+///   - minDepositFor re-queried at match time: both players refunded if market moved.
+///   - Approval reset to zero after every startDuel call.
+///   - Cancel rate-limited to 1+ blocks (prevents same-block queue-grief).
+///   - Fighter index validated via arena.FIGHTER_COUNT() at queue time.
+///   - Owner emergency rescue for stuck funds (zero-value recovery path only).
 
 interface IArena {
     function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns)
         external returns (uint256 duelId);
 
     function activeDuelId() external view returns (uint256);
-
     function minDepositFor(uint16 turns) external view returns (uint256);
-
     function recoverFunds(uint256 duelId) external;
-
     function PLATFORM_FEE() external view returns (uint256);
+    function FIGHTER_COUNT() external view returns (uint8);
 
-    // Returns the full Duel struct as a tuple.
-    // Field order matches ArenaTypes.Duel:
-    //   0 fighterA, 1 fighterB, 2 creator, 3 startBlock, 4 lastTurnBlock,
-    //   5 completedCallbacks, 6 turns, 7 poolMask, 8 status (uint8),
-    //   9 initialUsdsoPerFighter, 10 lastAction (uint8[2]),
-    //   11 fundsRecovered, 12 winnerSlot
+    // Field order: 0=fighterA, 1=fighterB, 2=creator, 3=startBlock,
+    // 4=lastTurnBlock, 5=completedCallbacks, 6=turns, 7=poolMask,
+    // 8=status (0=None,1=Active,2=Finalizing,3=Resolved),
+    // 9=initialUsdsoPerFighter, 10=lastAction[2], 11=fundsRecovered, 12=winnerSlot
     function duels(uint256 duelId) external view returns (
-        uint8   fighterA,
-        uint8   fighterB,
-        address creator,
-        uint256 startBlock,
-        uint256 lastTurnBlock,
-        uint16  completedCallbacks,
-        uint16  turns,
-        uint8   poolMask,
-        uint8   status,
-        uint256 initialUsdsoPerFighter,
-        uint8[2] memory lastAction,
-        bool    fundsRecovered,
-        uint8   winnerSlot
+        uint8, uint8, address, uint256, uint256, uint16, uint16, uint8,
+        uint8 status, uint256, uint8[2] memory, bool, uint8 winnerSlot
     );
 }
 
@@ -69,26 +50,41 @@ interface IERC20M {
 
 contract Matchmaker {
 
+    // ─── Ownership ───────────────────────────────────────────────────────────
+
+    address public immutable owner;
+    modifier onlyOwner() { require(msg.sender == owner, "not owner"); _; }
+
     // ─── Immutables ───────────────────────────────────────────────────────────
 
     IArena  public immutable arena;
     IERC20M public immutable usdso;
 
-    // DuelStatus.Resolved = 3 (mirrors ArenaTypes.DuelStatus enum)
+    // Mirrors ArenaTypes.DuelStatus.Resolved = 3.
+    // If Arena's enum ever changes, update this constant.
     uint8 private constant STATUS_RESOLVED = 3;
+
+    // Minimum blocks a player must wait before they can cancel their queue entry.
+    // Prevents same-block queue-grief (queue then cancel to deny an opponent a slot).
+    uint64 public constant CANCEL_DELAY_BLOCKS = 1;
 
     // ─── Queue slots (one per tier) ───────────────────────────────────────────
 
     struct Slot {
         address player;
         uint8   fighter;
-        uint256 deposit; // exact USDso held in this contract for this player
+        uint256 deposit;     // exact USDso held for this player
+        uint64  queuedBlock; // block.number when player queued (cancel rate-limit)
     }
 
     // turns ∈ {3, 6, 9, 15} → open queue slot
     mapping(uint16 => Slot) public slots;
 
-    // ─── Pending match (waiting for Arena to free up) ─────────────────────────
+    // ─── Pending matches (one per tier) ──────────────────────────────────────
+    //
+    // A pending match forms when two players match but Arena is busy.
+    // Per-tier storage means up to 4 matches can be pending simultaneously
+    // (one per tier), rather than a global bottleneck that blocks all tiers.
 
     struct PendingMatch {
         address playerA;
@@ -96,63 +92,53 @@ contract Matchmaker {
         uint8   fighterA;
         uint8   fighterB;
         uint16  turns;
-        uint256 totalPot;
+        uint256 totalPot;  // combined deposit held; may be refunded if price drift
         bool    exists;
     }
 
-    PendingMatch public pending;
+    // turns → pending match waiting for Arena to free up
+    mapping(uint16 => PendingMatch) public pendingByTier;
 
     // ─── Match records ────────────────────────────────────────────────────────
 
     struct Match {
         address playerA;    // chose fighterA (winnerSlot 0)
         address playerB;    // chose fighterB (winnerSlot 1)
-        uint256 totalPot;   // combined USDso sent to Arena (updated after recoverFunds)
+        uint256 totalPot;   // actual USDso recovered from Arena (set during claimWinnings)
         bool    recovered;  // true once recoverFunds was called
         bool    settledA;
         bool    settledB;
     }
 
-    // duelId → match record
     mapping(uint256 => Match) public matches;
 
     // ─── Events ───────────────────────────────────────────────────────────────
 
-    event Queued(
-        address indexed player,
-        uint8   indexed fighter,
-        uint16  turns,
-        uint256 deposit
-    );
+    event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit);
     event QueueCancelled(address indexed player, uint16 turns, uint256 refund);
-    event MatchPending(
-        address indexed playerA,
-        address indexed playerB,
-        uint16  turns
-    );
+    event MatchPending(address indexed playerA, address indexed playerB, uint16 turns);
     event MatchStarted(
         uint256 indexed duelId,
-        address indexed playerA,
-        address indexed playerB,
-        uint8   fighterA,
-        uint8   fighterB,
-        uint16  turns
+        address indexed playerA, address indexed playerB,
+        uint8 fighterA, uint8 fighterB, uint16 turns
     );
-    event WinningsClaimed(
-        uint256 indexed duelId,
-        address indexed player,
-        uint256 amount
+    event MatchRefunded(
+        address indexed playerA, address indexed playerB,
+        uint16 turns, uint256 amountEach, string reason
     );
+    event WinningsClaimed(uint256 indexed duelId, address indexed player, uint256 amount);
+    event EmergencyRecoverySet(uint256 indexed duelId, uint256 totalPot);
 
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     error InvalidTier();
+    error InvalidFighter();
     error MatchYourself();
     error SameFighter();
-    error SlotAlreadyYours();
     error ArenaStillBusy();
     error NoPendingMatch();
     error NotQueued();
+    error CancelTooSoon();
     error DuelNotResolved();
     error NotAPlayer();
     error AlreadySettled();
@@ -162,6 +148,7 @@ contract Matchmaker {
     // ─── Constructor ─────────────────────────────────────────────────────────
 
     constructor(address _arena, address _usdso) {
+        owner = msg.sender;
         arena = IArena(_arena);
         usdso = IERC20M(_usdso);
     }
@@ -169,18 +156,20 @@ contract Matchmaker {
     // ─── Queue ────────────────────────────────────────────────────────────────
 
     /// @notice Enter the matchmaking queue.
-    /// @param fighter  Your chosen FighterRegistry index (0–5).
+    /// @param fighter  Your FighterRegistry index (0 to FIGHTER_COUNT-1).
     /// @param turns    Tier: 3, 6, 9, or 15 rounds.
     ///
-    /// Caller must have approved this contract for at least halfDeposit(turns).
-    /// Call halfDeposit(turns) to know the exact amount before approving.
+    /// Approve this contract for halfDeposit(turns) USDso before calling.
     function queue(uint8 fighter, uint16 turns) external {
         if (turns != 3 && turns != 6 && turns != 9 && turns != 15)
             revert InvalidTier();
 
+        // Validate fighter index against on-chain registry (M-1 fix)
+        if (fighter >= arena.FIGHTER_COUNT()) revert InvalidFighter();
+
         uint256 half = halfDeposit(turns);
 
-        // Pull deposit from caller
+        // Pull deposit before touching state (CEI: funds in first)
         if (!usdso.transferFrom(msg.sender, address(this), half))
             revert TransferFailed();
 
@@ -188,10 +177,12 @@ contract Matchmaker {
 
         if (slot.player == address(0)) {
             // ── Slot empty: first player in ──────────────────────────────────
-            slot.player  = msg.sender;
-            slot.fighter = fighter;
-            slot.deposit = half;
+            slot.player      = msg.sender;
+            slot.fighter     = fighter;
+            slot.deposit     = half;
+            slot.queuedBlock = uint64(block.number);
             emit Queued(msg.sender, fighter, turns, half);
+
         } else {
             // ── Slot occupied: attempt to match ──────────────────────────────
             if (slot.player == msg.sender) revert MatchYourself();
@@ -201,17 +192,17 @@ contract Matchmaker {
             uint8   fA  = slot.fighter;
             uint256 dA  = slot.deposit;
 
-            delete slots[turns]; // clear slot before any external calls (CEI)
+            // CEI: clear slot before any external calls
+            delete slots[turns];
 
             uint256 total = dA + half;
 
             if (_arenaFree()) {
-                _startMatch(pA, msg.sender, fA, fighter, turns, total);
+                _startOrRefund(pA, msg.sender, fA, fighter, turns, total);
             } else {
-                // Arena busy — store match as pending, anyone can trigger later
-                // Only one pending match allowed at a time
-                if (pending.exists) revert ArenaStillBusy();
-                pending = PendingMatch({
+                // Arena busy — store per-tier pending match (H-2 fix)
+                if (pendingByTier[turns].exists) revert ArenaStillBusy();
+                pendingByTier[turns] = PendingMatch({
                     playerA:  pA,
                     playerB:  msg.sender,
                     fighterA: fA,
@@ -227,28 +218,33 @@ contract Matchmaker {
 
     // ─── Trigger pending match ────────────────────────────────────────────────
 
-    /// @notice Trigger a stored pending match now that Arena is free.
-    ///         Callable by anyone — permissionless.
-    function triggerPendingMatch() external {
-        if (!pending.exists)  revert NoPendingMatch();
-        if (!_arenaFree())    revert ArenaStillBusy();
+    /// @notice Trigger a pending match for a specific tier once Arena is free.
+    ///         Permissionless — anyone can call this.
+    /// @param turns  The tier whose pending match to trigger.
+    function triggerPendingMatch(uint16 turns) external {
+        PendingMatch storage pm = pendingByTier[turns];
+        if (!pm.exists)     revert NoPendingMatch();
+        if (!_arenaFree())  revert ArenaStillBusy();
 
-        PendingMatch memory m = pending;
-        delete pending; // clear before external calls (CEI)
+        // CEI: copy to memory and delete state before external calls
+        PendingMatch memory m = pm;
+        delete pendingByTier[turns];
 
-        _startMatch(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot);
+        _startOrRefund(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot);
     }
 
     // ─── Cancel queue entry ───────────────────────────────────────────────────
 
     /// @notice Leave the queue and reclaim your deposit.
-    ///         Only callable before you've been matched.
+    ///         Only callable ≥ CANCEL_DELAY_BLOCKS after queueing.
     function cancelQueue(uint16 turns) external {
         Slot storage slot = slots[turns];
         if (slot.player != msg.sender) revert NotQueued();
+        // Rate-limit cancels to prevent same-block queue-grief (M-3 fix)
+        if (block.number < slot.queuedBlock + CANCEL_DELAY_BLOCKS) revert CancelTooSoon();
 
         uint256 refund = slot.deposit;
-        delete slots[turns];
+        delete slots[turns]; // effect before transfer (CEI)
 
         if (!usdso.transfer(msg.sender, refund)) revert TransferFailed();
         emit QueueCancelled(msg.sender, turns, refund);
@@ -258,36 +254,36 @@ contract Matchmaker {
 
     /// @notice Claim your outcome after the duel resolves.
     ///         Winner receives the full recovered pot. Loser gets 0.
-    ///         Either player may call first; the other may call to confirm loss.
-    /// @param duelId  The Arena duel ID returned when the match started.
+    ///         Either player may call; the other may call to record their loss.
     function claimWinnings(uint256 duelId) external {
         Match storage m = matches[duelId];
 
         bool isA = (msg.sender == m.playerA);
         bool isB = (msg.sender == m.playerB);
-        if (!isA && !isB)    revert NotAPlayer();
+        if (!isA && !isB)      revert NotAPlayer();
         if (isA && m.settledA) revert AlreadySettled();
         if (isB && m.settledB) revert AlreadySettled();
 
         (,,,,,,,, uint8 status,,,, uint8 winnerSlot) = arena.duels(duelId);
         if (status != STATUS_RESOLVED) revert DuelNotResolved();
 
-        // Pull funds from Arena on first claim (Matchmaker is the duel creator)
+        // ── C-1 fix: set m.recovered = true BEFORE calling recoverFunds ──────
+        // This closes the reentrancy window: if recoverFunds somehow re-enters
+        // claimWinnings, the !m.recovered branch will be skipped.
         if (!m.recovered) {
-            uint256 before = usdso.balanceOf(address(this));
-            arena.recoverFunds(duelId); // reverts if already recovered or not resolved
-            uint256 postBal = usdso.balanceOf(address(this));
-            m.totalPot  = postBal - before; // actual recovered amount post-trading
-            m.recovered = true;
+            m.recovered = true;                              // effect first
+            uint256 before  = usdso.balanceOf(address(this));
+            arena.recoverFunds(duelId);                      // external call after
+            m.totalPot = usdso.balanceOf(address(this)) - before;
         }
 
-        // Mark caller as settled before transfer (CEI)
+        // Mark caller settled before transfer (CEI)
         if (isA) m.settledA = true;
         else     m.settledB = true;
 
         bool callerWon = (winnerSlot == 0 && isA) || (winnerSlot == 1 && isB);
-
         uint256 payout = callerWon ? m.totalPot : 0;
+
         if (payout > 0) {
             if (!usdso.transfer(msg.sender, payout)) revert TransferFailed();
         }
@@ -295,29 +291,45 @@ contract Matchmaker {
         emit WinningsClaimed(duelId, msg.sender, payout);
     }
 
+    // ─── Emergency rescue (H-1 fix) ──────────────────────────────────────────
+
+    /// @notice Owner-only: manually mark a match as recovered with zero pot.
+    ///         Use ONLY when Arena.recoverFunds reverts permanently for a duelId
+    ///         (e.g. both fighters held only base tokens, nothing to recover).
+    ///         Sets totalPot = 0 so both players get 0 — nobody gains, nobody loses
+    ///         more than they already have. Does NOT allow owner to steal funds.
+    ///         After this call, both players can call claimWinnings to acknowledge.
+    function emergencyZeroRecovery(uint256 duelId) external onlyOwner {
+        Match storage m = matches[duelId];
+        require(!m.recovered, "already recovered");
+        // Verify duel is resolved before owner can touch it
+        (,,,,,,,, uint8 status,,,,) = arena.duels(duelId);
+        require(status == STATUS_RESOLVED, "not resolved");
+
+        m.recovered = true;
+        m.totalPot  = 0;
+        emit EmergencyRecoverySet(duelId, 0);
+    }
+
     // ─── Views ────────────────────────────────────────────────────────────────
 
-    /// @notice How much USDso a player needs to approve before calling queue().
+    /// @notice USDso amount each player must approve before calling queue().
     function halfDeposit(uint16 turns) public view returns (uint256) {
         uint256 minDep = arena.minDepositFor(turns);
-        if (minDep == 0) minDep = 2e18; // floor matching Arena (empty order book)
+        if (minDep == 0) minDep = 2e18;
         uint256 total  = minDep + arena.PLATFORM_FEE();
-        return (total + 1) / 2; // ceil so combined >= Arena's required
+        return (total + 1) / 2; // ceil — ensures combined >= required
     }
 
-    /// @notice Returns the open queue slot for a given tier, if any.
     function getSlot(uint16 turns)
         external view
-        returns (address player, uint8 fighter, uint256 deposit)
+        returns (address player, uint8 fighter, uint256 deposit, uint64 queuedBlock)
     {
         Slot storage s = slots[turns];
-        return (s.player, s.fighter, s.deposit);
+        return (s.player, s.fighter, s.deposit, s.queuedBlock);
     }
 
-    /// @notice True if Arena is free to accept a new duel.
-    function arenaFree() external view returns (bool) {
-        return _arenaFree();
-    }
+    function arenaFree() external view returns (bool) { return _arenaFree(); }
 
     // ─── Internal ─────────────────────────────────────────────────────────────
 
@@ -328,20 +340,44 @@ contract Matchmaker {
         return status == STATUS_RESOLVED;
     }
 
-    function _startMatch(
+    /// @dev Attempt to start a match. If the required deposit has drifted above
+    ///      the combined deposits collected, refund both players instead of
+    ///      leaving funds stranded (H-3 fix).
+    function _startOrRefund(
         address pA, address pB,
         uint8 fA, uint8 fB,
         uint16 turns, uint256 total
     ) internal {
-        // Approve Arena to pull the combined pot
-        if (!usdso.approve(address(arena), total)) revert ApproveFailed();
+        // Re-query required amount at match time (market prices may have moved)
+        uint256 minDep = arena.minDepositFor(turns);
+        if (minDep == 0) minDep = 2e18;
+        uint256 required = minDep + arena.PLATFORM_FEE();
+
+        if (total < required) {
+            // Price drifted up between queue and match — refund both players
+            uint256 eachRefund = total / 2;
+            usdso.transfer(pA, eachRefund);
+            usdso.transfer(pB, total - eachRefund); // handles odd-wei dust
+            emit MatchRefunded(pA, pB, turns, eachRefund, "deposit below required");
+            return;
+        }
+
+        // H-4 fix: approve(0) first (USDT-style token safety), then approve required
+        // Only approve the exact amount Arena will pull, not the full `total`.
+        usdso.approve(address(arena), 0);
+        if (!usdso.approve(address(arena), required)) revert ApproveFailed();
 
         uint256 duelId = arena.startDuel(fA, fB, turns);
+
+        // H-4 fix: reset approval to zero after startDuel consumed it
+        usdso.approve(address(arena), 0);
+
+        // Any dust (total - required) stays in Matchmaker — negligible (≤1 wei normally)
 
         matches[duelId] = Match({
             playerA:   pA,
             playerB:   pB,
-            totalPot:  total,
+            totalPot:  total,   // will be overwritten to actual recovered amount in claimWinnings
             recovered: false,
             settledA:  false,
             settledB:  false

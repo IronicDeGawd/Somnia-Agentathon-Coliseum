@@ -47,6 +47,7 @@ contract MockArenaMatchmaker {
         if (activeDuelId == duelId) activeDuelId = 0;
     }
 
+    function FIGHTER_COUNT() external pure returns (uint8) { return 6; }
     function minDepositFor(uint16) external pure returns (uint256) { return 2e18; }
 
     function startDuel(uint8 fA, uint8 fB, uint16) external returns (uint256 duelId) {
