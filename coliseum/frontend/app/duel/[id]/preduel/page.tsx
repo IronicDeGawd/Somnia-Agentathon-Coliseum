@@ -20,88 +20,97 @@ function Corner({ id, side }: CornerProps) {
   const cornerLabel = side === 'a' ? 'RED CORNER' : 'BLUE CORNER';
   return (
     <div
-      className={`card flex-1 overflow-hidden ${side === 'a' ? 'glow-a' : 'glow-b'}`}
+      className={`card ${side === 'a' ? 'glow-a' : 'glow-b'}`}
       style={{
+        flex: 1,
         borderColor: f.hex,
+        overflow: 'hidden',
         transform: side === 'a' ? 'translateX(-12px)' : 'translateX(12px)',
         opacity: 0,
         animation: `${side === 'a' ? 'slideInLeft' : 'slideInRight'} 600ms cubic-bezier(.34,1.56,.64,1) both`,
       }}
     >
-      {/* Ribbon header — gradient + rank square + corner label + tier + odds chip */}
+      {/* Ribbon header */}
       <div
-        className="flex items-center justify-between"
+        className="row ai-c jc-sb"
         style={{
           padding: '10px 16px',
           background: `linear-gradient(${side === 'a' ? 90 : 270}deg, ${f.hex}22, transparent 70%)`,
           borderBottom: `1px solid ${f.hex}55`,
         }}
       >
-        <div className="flex items-center gap-2">
+        <div className="row gap-12 ai-c">
           <span
-            className="inline-flex items-center justify-center"
             style={{
-              width: 22, height: 22, background: f.hex, color: '#0a0612',
-              fontFamily: 'var(--fnt-display)', fontWeight: 700, fontSize: 14,
+              width: 22,
+              height: 22,
+              background: f.hex,
+              color: '#0a0612',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'var(--fnt-display)',
+              fontWeight: 700,
+              fontSize: 14,
             }}
           >
             {f.rank}
           </span>
           <span
-            className="t-display whitespace-nowrap"
-            style={{ fontSize: 13, color: f.hex, letterSpacing: '0.18em', textTransform: 'uppercase' }}
+            className="t-display t-up"
+            style={{ fontSize: 13, color: f.hex, letterSpacing: '0.18em', whiteSpace: 'nowrap' }}
           >
             {cornerLabel}
           </span>
-          <span className="t-mono text-[11px] text-[var(--text-dim)] whitespace-nowrap">· {f.tier}</span>
+          <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>· {f.tier}</span>
         </div>
         <span className="chip" style={{ color: f.hex, borderColor: f.hex }}>{odds}</span>
       </div>
 
       {/* Portrait + name + tagline */}
-      <div className="flex flex-col items-center gap-4" style={{ padding: 24 }}>
+      <div className="col gap-16 ai-c" style={{ padding: 24 }}>
         <FighterAvatar fighter={id} context="card" size={220} state="winning" />
-        <div className="flex flex-col items-center gap-1">
+        <div className="col ai-c gap-12">
           <span
-            className="t-display whitespace-nowrap"
-            style={{ fontSize: 24, letterSpacing: '0.1em', color: f.hex, lineHeight: 1, textTransform: 'uppercase' }}
+            className="t-display t-up"
+            style={{ fontSize: 24, letterSpacing: '0.1em', color: f.hex, lineHeight: 1, whiteSpace: 'nowrap' }}
           >
             {f.name}
           </span>
-          <span className="t-mono text-[12px] text-[var(--text-dim)] italic whitespace-nowrap">
+          <span className="t-mono t-sm t-dim" style={{ fontStyle: 'italic', whiteSpace: 'nowrap' }}>
             &ldquo;{f.tagline}&rdquo;
           </span>
         </div>
       </div>
 
       {/* Meters */}
-      <div className="flex flex-col gap-2" style={{ padding: '0 24px 16px' }}>
-        <div className="flex justify-between items-center">
+      <div className="col gap-12" style={{ padding: '0 24px 16px' }}>
+        <div className="row jc-sb ai-c">
           <span className="label-tiny">AGGRESSION</span>
           <Meter value={f.aggression} side={side} />
         </div>
-        <div className="flex justify-between items-center">
+        <div className="row jc-sb ai-c">
           <span className="label-tiny">PATIENCE</span>
           <Meter value={f.patience} side={side} />
         </div>
-        <div className="flex justify-between items-center">
+        <div className="row jc-sb ai-c">
           <span className="label-tiny">RISK</span>
           <Meter value={f.risk} side={side} />
         </div>
       </div>
 
-      {/* Footer: RECORD + BACK +$2 */}
+      {/* Footer: RECORD + BACK */}
       <div
-        className="flex justify-between items-center"
+        className="row jc-sb ai-c"
         style={{
           padding: '12px 24px',
           borderTop: '1px solid var(--border)',
           background: 'var(--bg-stage)',
         }}
       >
-        <div className="flex flex-col gap-0.5">
+        <div className="col gap-12">
           <span className="label-tiny">RECORD</span>
-          <span className="t-num text-[12px]">{f.record.w}W · {f.record.l}L</span>
+          <span className="t-num t-sm">{f.record.w}W · {f.record.l}L</span>
         </div>
         <BracketButton variant={side}>BACK +$2</BracketButton>
       </div>
@@ -123,20 +132,20 @@ export default function PreDuelPage() {
   }, [t, router]);
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
+    <div className="col" style={{ minHeight: '100vh', background: 'var(--bg-deep)' }}>
       <AppTopBar />
       {/* Status strip */}
       <div
-        className="flex items-center justify-between flex-wrap gap-3"
+        className="row ai-c jc-sb"
         style={{
           padding: '14px 32px',
           borderBottom: '1px solid var(--border)',
           background: 'var(--bg-stage)',
         }}
       >
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="row gap-12 ai-c">
           <span
-            className="t-mono text-[11px]"
+            className="t-mono t-xs"
             style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}
           >
             § PRE-DUEL · ROUND #342
@@ -144,7 +153,7 @@ export default function PreDuelPage() {
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
           <Chip variant="gold">▸ MAIN EVENT</Chip>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="row gap-12 ai-c">
           <span className="label-tiny">BETS LOCK IN</span>
           <span
             className="t-num"
@@ -155,16 +164,17 @@ export default function PreDuelPage() {
         </div>
       </div>
 
-      <div className="shell-pad flex flex-col gap-6" style={{ paddingTop: 32, paddingBottom: 32 }}>
+      <div className="shell-pad col gap-24" style={{ paddingTop: 32, paddingBottom: 32 }}>
         {/* Marquee headline */}
-        <div className="flex flex-col items-center gap-1">
+        <div className="col ai-c gap-12">
           <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>TALE OF THE TAPE</span>
           <h1
-            className="fp-display text-center"
+            className="fp-display"
             style={{
               fontSize: 'clamp(48px, 7vw, 84px)',
               letterSpacing: '0.04em',
               lineHeight: 1,
+              textAlign: 'center',
               margin: '8px 0',
               color: 'var(--text)',
             }}
@@ -176,11 +186,11 @@ export default function PreDuelPage() {
         </div>
 
         {/* Corner cards w/ gradient VS */}
-        <div className="flex items-stretch gap-6">
+        <div className="row gap-24" style={{ alignItems: 'stretch' }}>
           <Corner id="degen" side="a" />
-          <div className="flex flex-col items-center justify-center gap-3" style={{ width: 80 }}>
+          <div className="col ai-c gap-12" style={{ width: 80, justifyContent: 'center' }}>
             <span
-              className="t-display vs-pop"
+              className="t-display"
               style={{
                 fontSize: 80,
                 lineHeight: 1,
@@ -191,29 +201,29 @@ export default function PreDuelPage() {
             >
               VS
             </span>
-            <span className="t-mono text-[11px] text-[var(--text-faint)] text-center">
+            <span className="t-mono t-xs text-faint" style={{ textAlign: 'center' }}>
               BEST OF<br />15 TURNS
             </span>
           </div>
           <Corner id="whale" side="b" />
         </div>
 
-        {/* Bottom strip — purse + spectators + H2H + SKIP TO ARENA */}
-        <div className="card flex items-center justify-between gap-4 flex-wrap" style={{ padding: 16 }}>
-          <div className="flex items-center gap-6 flex-wrap">
-            <div className="flex flex-col gap-1">
+        {/* Bottom strip */}
+        <div className="card pad-16 row jc-sb ai-c">
+          <div className="row gap-24 ai-c">
+            <div className="col gap-12">
               <span className="eyebrow">PURSE</span>
               <span className="t-num text-gold" style={{ fontSize: 22 }}>$142 USDSO</span>
             </div>
             <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-            <div className="flex flex-col gap-1">
+            <div className="col gap-12">
               <span className="eyebrow">SPECTATORS</span>
               <span className="t-num" style={{ fontSize: 22 }}>47</span>
             </div>
             <span style={{ height: 32, width: 1, background: 'var(--border)' }} />
-            <div className="flex flex-col gap-1">
+            <div className="col gap-12">
               <span className="eyebrow">HEAD-TO-HEAD</span>
-              <span className="t-mono text-[12px]">
+              <span className="t-mono t-sm">
                 DEGEN <span className="t-num">1</span>—<span className="t-num">2</span> WHALE
               </span>
             </div>
