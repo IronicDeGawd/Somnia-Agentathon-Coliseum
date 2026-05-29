@@ -43,105 +43,71 @@ export default function ResultPage() {
   const payoutMeta = bet ? (betWon ? 'winning ticket · claimable' : 'losing ticket · settled') : 'no bet placed';
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--bg-deep)]">
+    <div className="col">
       <AppTopBar />
+
       {/* Status strip */}
       <div
-        className="flex items-center justify-between flex-wrap gap-3"
-        style={{
-          padding: '14px 32px',
-          borderBottom: '1px solid var(--border)',
-          background: 'var(--bg-stage)',
-        }}
+        className="row ai-c jc-sb"
+        style={{ padding: '14px 32px', borderBottom: '1px solid var(--border)', background: 'var(--bg-stage)' }}
       >
-        <div className="flex items-center gap-3 flex-wrap">
-          <span
-            className="t-mono text-[11px]"
-            style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}
-          >
+        <div className="row gap-12 ai-c">
+          <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>
             § POST-DUEL · ROUND #341
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
           <Chip variant="gold">★ SETTLED · ON-CHAIN</Chip>
         </div>
-        <span
-          className="t-mono text-[11px] text-[var(--text-dim)]"
-          style={{ letterSpacing: '0.18em' }}
-        >
-          NEXT BOUT IN{' '}
-          <span className="t-num" style={{ color: 'var(--gold)' }}>{fmtTime(sim.countdown)}</span>
+        <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
+          NEXT BOUT IN <span className="t-num" style={{ color: 'var(--gold)' }}>{fmtTime(sim.countdown)}</span>
         </span>
       </div>
 
       {/* Winner reveal — bare section, no card chrome */}
-      <section
-        style={{ position: 'relative', padding: '64px 32px 48px', overflow: 'hidden' }}
-      >
-        <div
-          className="flex flex-col items-center gap-4 relative"
-          style={{ maxWidth: 1200, margin: '0 auto' }}
-        >
-          {/* ★ WINNER ★ eyebrow w/ flanking gold rules */}
-          <div className="flex items-center gap-4">
+      <section style={{ position: 'relative', padding: '64px 32px 48px', overflow: 'hidden' }}>
+        <div className="col ai-c gap-16" style={{ position: 'relative', maxWidth: 1200, margin: '0 auto' }}>
+          <div className="row gap-16 ai-c">
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
-            <span
-              className="eyebrow"
-              style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}
-            >
-              ★ WINNER ★
-            </span>
+            <span className="eyebrow" style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}>★ WINNER ★</span>
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
           </div>
 
-          {/* Portrait w/ drop-shadow glow + vs-pop animation */}
-          <div
-            className="vs-pop"
-            style={{ filter: `drop-shadow(0 0 60px ${w.hex})` }}
-          >
+          <div className="vs-pop" style={{ filter: `drop-shadow(0 0 60px ${w.hex})` }}>
             <FighterAvatar fighter={winnerId} context="card" size={220} state="victory" />
           </div>
 
-          {/* Giant fp-display name */}
           <h1
-            className="fp-display whitespace-nowrap text-center"
+            className="fp-display"
             style={{
               fontSize: 'clamp(56px, 8vw, 96px)',
               letterSpacing: '0.06em',
               lineHeight: 1,
+              textAlign: 'center',
               margin: 0,
               color: w.hex,
               textShadow: `0 0 60px ${w.hex}`,
+              whiteSpace: 'nowrap',
             }}
           >
             {w.name}
           </h1>
 
-          {/* 3-up stat strip: FINAL PNL / RETURN / METHOD */}
-          <div className="flex items-center gap-8 flex-wrap" style={{ marginTop: 24 }}>
-            <div className="flex flex-col items-center gap-1">
+          <div className="row gap-32 ai-c" style={{ marginTop: 24 }}>
+            <div className="col ai-c gap-2">
               <span className="eyebrow">FINAL PNL</span>
-              <span className="t-num text-win whitespace-nowrap" style={{ fontSize: 32 }}>
-                {fmtUsd(wPnl)}
-              </span>
+              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>{fmtUsd(wPnl)}</span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
-            <div className="flex flex-col items-center gap-1">
+            <div className="col ai-c gap-2">
               <span className="eyebrow">RETURN</span>
-              <span className="t-num text-win whitespace-nowrap" style={{ fontSize: 32 }}>
-                {fmtPct(wPct)}
-              </span>
+              <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>{fmtPct(wPct)}</span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
-            <div className="flex flex-col items-center gap-1">
+            <div className="col ai-c gap-2">
               <span className="eyebrow">METHOD</span>
               <span
-                className="t-display whitespace-nowrap"
-                style={{
-                  fontSize: 18,
-                  color: 'var(--text)',
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                }}
+                className="t-display t-up"
+                style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}
               >
                 PNL DECISION
               </span>
@@ -151,27 +117,24 @@ export default function ResultPage() {
       </section>
 
       {/* § 01 FINAL TAPE */}
-      <section
-        className="shell-pad flex flex-col gap-4"
-        style={{ paddingTop: 16, paddingBottom: 40 }}
-      >
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <span className="sect-head-title">FINAL TAPE</span>
           <span className="sect-head-meta">15 rounds settled · {sim.spectators} spectators</span>
         </div>
 
-        <div className="flex items-stretch gap-4">
+        <div className="row gap-16" style={{ alignItems: 'stretch' }}>
           {/* Winner card */}
-          <div className="card flex-1 flex flex-col gap-3" style={{ padding: 24 }}>
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-3">
+          <div className="card flex-1 col gap-12 pad-24">
+            <div className="row jc-sb ai-c">
+              <div className="row gap-12 ai-c">
                 <FighterAvatar fighter={winnerId} context="mini" size={40} />
-                <div className="flex flex-col gap-1">
+                <div className="col gap-2">
                   <Chip variant="win">★ WON</Chip>
                   <span
-                    className="t-display"
-                    style={{ color: w.hex, fontSize: 18, letterSpacing: '0.12em', textTransform: 'uppercase' }}
+                    className="t-display t-up"
+                    style={{ color: w.hex, fontSize: 18, letterSpacing: '0.12em' }}
                   >
                     {w.name}
                   </span>
@@ -180,30 +143,27 @@ export default function ResultPage() {
               <span className="t-num text-win" style={{ fontSize: 28 }}>{fmtUsd(wPnl)}</span>
             </div>
             <hr className="divider" />
-            <div className="flex justify-between t-mono text-[11px] text-[var(--text-dim)]">
-              <span>Best round</span>
-              <span className="t-num text-win">+$8.92</span>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Best round</span><span className="t-num text-win">+$8.92</span>
             </div>
-            <div className="flex justify-between t-mono text-[11px] text-[var(--text-dim)]">
-              <span>Worst round</span>
-              <span className="t-num text-loss">−$2.10</span>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Worst round</span><span className="t-num text-loss">−$2.10</span>
             </div>
-            <div className="flex justify-between t-mono text-[11px] text-[var(--text-dim)]">
-              <span>Trades executed</span>
-              <span className="t-num" style={{ color: 'var(--text)' }}>23</span>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Trades executed</span><span className="t-num" style={{ color: 'var(--text)' }}>23</span>
             </div>
           </div>
 
           {/* Loser card — opacity 0.7 */}
-          <div className="card flex-1 flex flex-col gap-3" style={{ padding: 24, opacity: 0.7 }}>
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-3">
+          <div className="card flex-1 col gap-12 pad-24" style={{ opacity: 0.7 }}>
+            <div className="row jc-sb ai-c">
+              <div className="row gap-12 ai-c">
                 <FighterAvatar fighter={loserId} context="mini" size={40} />
-                <div className="flex flex-col gap-1">
+                <div className="col gap-2">
                   <Chip variant="loss">LOST</Chip>
                   <span
-                    className="t-display"
-                    style={{ color: l.hex, fontSize: 18, letterSpacing: '0.12em', textTransform: 'uppercase' }}
+                    className="t-display t-up"
+                    style={{ color: l.hex, fontSize: 18, letterSpacing: '0.12em' }}
                   >
                     {l.name}
                   </span>
@@ -212,27 +172,21 @@ export default function ResultPage() {
               <span className="t-num text-loss" style={{ fontSize: 28 }}>{fmtUsd(lPnl)}</span>
             </div>
             <hr className="divider" />
-            <div className="flex justify-between t-mono text-[11px] text-[var(--text-dim)]">
-              <span>Best round</span>
-              <span className="t-num text-win">+$4.20</span>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Best round</span><span className="t-num text-win">+$4.20</span>
             </div>
-            <div className="flex justify-between t-mono text-[11px] text-[var(--text-dim)]">
-              <span>Worst round</span>
-              <span className="t-num text-loss">−$6.80</span>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Worst round</span><span className="t-num text-loss">−$6.80</span>
             </div>
-            <div className="flex justify-between t-mono text-[11px] text-[var(--text-dim)]">
-              <span>Trades executed</span>
-              <span className="t-num" style={{ color: 'var(--text)' }}>11</span>
+            <div className="row jc-sb t-mono t-xs t-dim">
+              <span>Trades executed</span><span className="t-num" style={{ color: 'var(--text)' }}>11</span>
             </div>
           </div>
         </div>
       </section>
 
       {/* § 02 YOUR PAYOUT */}
-      <section
-        className="shell-pad flex flex-col gap-4"
-        style={{ paddingTop: 16, paddingBottom: 40 }}
-      >
+      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">YOUR PAYOUT</span>
@@ -240,74 +194,51 @@ export default function ResultPage() {
         </div>
 
         <div
-          className="card"
-          style={{
-            padding: 24,
-            borderColor: betWon ? 'var(--win)' : bet ? 'var(--loss)' : 'var(--border)',
-          }}
+          className="card pad-24"
+          style={{ borderColor: betWon ? 'var(--win)' : bet ? 'var(--loss)' : 'var(--border)' }}
         >
           {bet ? (
-            <div className="flex justify-between items-center gap-6 flex-wrap">
-              <div className="flex flex-col gap-1">
-                <span className="t-mono text-[12px] text-[var(--text-dim)]">YOU BACKED</span>
+            <div className="row jc-sb ai-c">
+              <div className="col gap-4">
+                <span className="t-mono t-sm t-dim">YOU BACKED</span>
                 <span
-                  className="t-display"
-                  style={{
-                    fontSize: 22,
-                    color: FIGHTERS[bet.fighter].hex,
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                  }}
+                  className="t-display t-up"
+                  style={{ fontSize: 22, color: FIGHTERS[bet.fighter].hex, letterSpacing: '0.12em' }}
                 >
                   {FIGHTERS[bet.fighter].name}
                 </span>
-                <span className="t-mono text-[11px] text-[var(--text-faint)]">
-                  ${bet.amount} @ {odds}%
-                </span>
+                <span className="t-mono t-xs text-faint">${bet.amount} @ {odds}%</span>
               </div>
 
               {betWon ? (
                 <>
-                  <div className="flex flex-col items-center gap-1">
+                  <div className="col ai-c gap-2">
                     <span className="eyebrow">PAYOUT</span>
-                    <span className="t-num text-win" style={{ fontSize: 36 }}>
-                      +${payout.toFixed(2)}
-                    </span>
-                    <span className="t-mono text-[11px] text-[var(--text-dim)]">
-                      profit ${profit.toFixed(2)}
-                    </span>
+                    <span className="t-num text-win" style={{ fontSize: 36 }}>+${payout.toFixed(2)}</span>
+                    <span className="t-mono t-xs t-dim">profit ${profit.toFixed(2)}</span>
                   </div>
                   <BracketButton variant="gold">CLAIM PAYOUT →</BracketButton>
                 </>
               ) : (
                 <>
-                  <div className="flex flex-col items-center gap-1">
+                  <div className="col ai-c gap-2">
                     <span className="eyebrow">RESULT</span>
-                    <span className="t-num text-loss" style={{ fontSize: 36 }}>
-                      −${bet.amount.toFixed(2)}
-                    </span>
-                    <span className="t-mono text-[11px] text-[var(--text-dim)]">
-                      cope. lessons are expensive.
-                    </span>
+                    <span className="t-num text-loss" style={{ fontSize: 36 }}>−${bet.amount.toFixed(2)}</span>
+                    <span className="t-mono t-xs t-dim">cope. lessons are expensive.</span>
                   </div>
                   <BracketButton variant="ghost" disabled>SETTLED</BracketButton>
                 </>
               )}
             </div>
           ) : (
-            <span className="t-mono text-[12px] text-[var(--text-dim)]">
-              No bet placed this round.
-            </span>
+            <span className="t-mono t-sm t-dim">No bet placed this round.</span>
           )}
         </div>
       </section>
 
       {/* Action row — centered horizontal */}
-      <section
-        className="shell-pad"
-        style={{ paddingTop: 16, paddingBottom: 80 }}
-      >
-        <div className="flex items-center justify-center gap-3 flex-wrap">
+      <section className="shell-pad" style={{ paddingTop: 16, paddingBottom: 80 }}>
+        <div className="row gap-12 ai-c jc-c">
           <Link href="/duel/1">
             <BracketButton>WATCH REPLAY</BracketButton>
           </Link>
