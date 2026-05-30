@@ -1,12 +1,13 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useUIStore } from '@/store/ui';
 import { useUSDsoBalance } from '@/hooks/useUSDsoBalance';
+import { SwapModal } from '@/components/shared/SwapModal';
 
 /**
  * In-app top bar (Lobby / Arena / Profile).
@@ -21,6 +22,7 @@ import { useUSDsoBalance } from '@/hooks/useUSDsoBalance';
 export const AppTopBar: React.FC = () => {
   const audioOn = useUIStore((s) => s.audioOn);
   const toggleAudio = useUIStore((s) => s.toggleAudio);
+  const [swapOpen, setSwapOpen] = useState(false);
 
   const pathname = usePathname() || '';
 
@@ -38,9 +40,16 @@ export const AppTopBar: React.FC = () => {
     <div className="topbar">
       <Link
         href="/"
-        className="brand"
-        style={{ cursor: 'pointer', textDecoration: 'none' }}
+        className="brand row ai-c"
+        style={{ cursor: 'pointer', textDecoration: 'none', gap: 10 }}
       >
+        <img
+          src="/logo.png"
+          alt=""
+          width={24}
+          height={24}
+          style={{ display: 'block', imageRendering: 'pixelated' }}
+        />
         COLISEUM
       </Link>
 
@@ -95,18 +104,29 @@ export const AppTopBar: React.FC = () => {
                     ⚠ SWITCH NETWORK
                   </button>
                 ) : (
-                  <button
-                    className="chip"
-                    onClick={openAccountModal}
-                    type="button"
-                    title="Account"
-                    style={{ cursor: 'pointer', background: 'none', border: 'none' }}
-                  >
-                    <span className="dot dot-win" /> {account.displayName} ·{' '}
-                    <span className="t-num text-gold" style={{ marginLeft: 6 }}>
-                      {usdsoBalance} USDso
-                    </span>
-                  </button>
+                  <div className="row gap-8 ai-c">
+                    <button
+                      className="chip"
+                      onClick={openAccountModal}
+                      type="button"
+                      title="Account"
+                      style={{ cursor: 'pointer', background: 'none', border: 'none' }}
+                    >
+                      <span className="dot dot-win" /> {account.displayName} ·{' '}
+                      <span className="t-num text-gold" style={{ marginLeft: 6 }}>
+                        {usdsoBalance} USDso
+                      </span>
+                    </button>
+                    <button
+                      className="bk bk-ghost"
+                      onClick={() => setSwapOpen(true)}
+                      type="button"
+                      title="Swap STT → USDso"
+                      style={{ padding: '4px 10px' }}
+                    >
+                      + USDso
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -120,6 +140,7 @@ export const AppTopBar: React.FC = () => {
           {audioOn ? '♪ ON' : '♪ OFF'}
         </button>
       </div>
+      <SwapModal open={swapOpen} onClose={() => setSwapOpen(false)} />
     </div>
   );
 };
