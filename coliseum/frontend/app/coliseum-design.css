@@ -166,7 +166,7 @@ body {
 .glow-b { box-shadow: 0 0 28px var(--fighter-b-glow), inset 0 0 0 1px var(--fighter-b-soft); }
 
 /* SCREEN LAYOUT */
-.shell-pad { padding: 24px 32px; max-width: 1440px; margin: 0 auto; }
+.shell-pad { padding: 24px 32px; max-width: 1640px; margin: 0 auto; }
 
 /* TOPBAR */
 .topbar {
@@ -423,6 +423,18 @@ body {
     radial-gradient(ellipse at center, transparent 0%, var(--bg-deep) 70%),
     repeating-linear-gradient(90deg, transparent 0px, transparent 80px, rgba(200,168,107,0.08) 80px, rgba(200,168,107,0.08) 81px),
     repeating-linear-gradient(0deg, transparent 0px, transparent 80px, rgba(200,168,107,0.04) 80px, rgba(200,168,107,0.04) 81px);
+}
+
+/* App pages: faint backdrop grid so empty margins around the narrow content
+   columns don't read as dead black. Subtle, fixed to the viewport, sits
+   behind all content. */
+.app-floor {
+  position: relative;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 47px, rgba(255,255,255,0.05) 47px 48px),
+    repeating-linear-gradient(0deg, transparent 0 47px, rgba(255,255,255,0.05) 47px 48px),
+    var(--bg-deep);
+  background-attachment: fixed, fixed, fixed;
 }
 
 /* ─── LANDING-SPECIFIC ─── */
