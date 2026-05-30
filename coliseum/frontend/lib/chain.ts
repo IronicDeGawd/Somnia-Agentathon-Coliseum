@@ -36,5 +36,11 @@ export const config = getDefaultConfig({
   transports: {
     [somniaTestnet.id]: http(),
   },
-  ssr: true,
+  // ssr:false so getDefaultConfig runs EIP-6963 multi-injected discovery on the
+  // CLIENT at config creation. With ssr:true the config is first built on the
+  // server (no window, no EIP-6963), and RainbowKit's curated MetaMask entry
+  // then falls back to generic window.ethereum — which, when Brave/Phantom are
+  // also installed, is NOT MetaMask, so MetaMask silently fails to connect.
+  // The whole app is client-rendered, so SSR of wallet state buys nothing.
+  ssr: false,
 });

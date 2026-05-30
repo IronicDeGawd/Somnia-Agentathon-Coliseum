@@ -1,12 +1,11 @@
 'use client';
 
 import '@rainbow-me/rainbowkit/styles.css';
+import { useState } from 'react';
 import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RainbowKitProvider, darkTheme, type Theme } from '@rainbow-me/rainbowkit';
 import { config } from '@/lib/chain';
-
-const queryClient = new QueryClient();
 
 // Start from darkTheme to inherit every key, then override the visible surfaces
 // with the Coliseum design tokens. Values reference CSS vars (defined on :root
@@ -54,6 +53,7 @@ const coliseumTheme: Theme = {
 };
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient());
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
