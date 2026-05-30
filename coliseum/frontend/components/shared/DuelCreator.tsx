@@ -235,52 +235,40 @@ function QueueInner({
             return (
               <button
                 key={f.id}
-                className={`bk${selected ? ' bk-primary' : ''}`}
-                style={{
-                  borderColor: selected ? f.hex : 'var(--border)',
-                  boxShadow: selected ? `0 0 8px ${f.hex}55` : 'none',
-                  cursor: 'pointer',
-                  fontSize: '11px',
-                  padding: '10px 6px',
-                  letterSpacing: '0.04em',
-                  transition: 'border-color 0.15s, box-shadow 0.15s',
-                }}
                 onClick={() => onFighterChange(idx)}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: '3px',
+                  minWidth: 0,
+                  background: selected ? `${f.hex}14` : 'transparent',
+                  border: `1px solid ${selected ? f.hex : 'var(--border)'}`,
+                  boxShadow: selected ? `0 0 8px ${f.hex}55` : 'none',
+                  borderRadius: '2px',
+                  padding: '10px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'border-color 0.15s, box-shadow 0.15s, background 0.15s',
+                }}
               >
                 <span
-                  className="t-mono t-xs"
-                  style={{
-                    display: 'block',
-                    color: f.hex,
-                    fontSize: '13px',
-                    fontWeight: 700,
-                    lineHeight: 1,
-                  }}
+                  className="t-mono"
+                  style={{ color: f.hex, fontSize: '13px', fontWeight: 700, lineHeight: 1 }}
                 >
                   {f.initials}
                 </span>
                 <span
-                  className="t-xs t-up"
+                  className="t-up"
                   style={{
-                    display: 'block',
                     color: selected ? 'var(--text)' : 'var(--text-dim)',
-                    marginTop: '4px',
-                    fontSize: '9px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    lineHeight: 1.15,
+                    letterSpacing: '0.04em',
                   }}
                 >
                   {f.name.replace('THE ', '')}
-                </span>
-                <span
-                  className="label-tiny"
-                  style={{
-                    display: 'block',
-                    color: 'var(--text-dim)',
-                    marginTop: '2px',
-                    fontSize: '8px',
-                    opacity: 0.7,
-                  }}
-                >
-                  {f.tier}
                 </span>
               </button>
             );
@@ -291,25 +279,37 @@ function QueueInner({
       {/* Tier / Turns selector */}
       <div className="col gap-12">
         <div className="eyebrow">TIER / ROUNDS</div>
-        <div className="row gap-8">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '8px',
+          }}
+        >
           {TURN_OPTIONS.map((t) => {
             const selected = turns === t;
             const pools = TIER_POOLS[t];
             return (
               <button
                 key={t}
-                className={`bk${selected ? ' bk-gold' : ''}`}
+                onClick={() => onTurnsChange(t)}
                 style={{
-                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '4px',
+                  minWidth: 0,
+                  background: selected ? 'var(--gold-soft, rgba(200,168,107,0.12))' : 'transparent',
+                  border: `1px solid ${selected ? 'var(--gold)' : 'var(--border)'}`,
+                  borderRadius: '2px',
                   padding: '10px 4px',
                   cursor: 'pointer',
+                  transition: 'border-color 0.15s, background 0.15s',
                 }}
-                onClick={() => onTurnsChange(t)}
               >
                 <span
                   className="t-mono"
                   style={{
-                    display: 'block',
                     color: selected ? 'var(--gold)' : 'var(--text)',
                     fontSize: '16px',
                     fontWeight: 700,
@@ -319,8 +319,18 @@ function QueueInner({
                   {t}
                 </span>
                 <span
-                  className="label-tiny t-dim"
-                  style={{ display: 'block', marginTop: '4px', fontSize: '8px' }}
+                  className="t-up"
+                  style={{
+                    color: 'var(--text-faint)',
+                    fontSize: '7px',
+                    lineHeight: 1.2,
+                    letterSpacing: '0.04em',
+                    textAlign: 'center',
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
                 >
                   {pools.join('+')}
                 </span>

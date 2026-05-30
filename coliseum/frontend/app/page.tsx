@@ -584,7 +584,6 @@ export default function LandingPage() {
                 <span className="fstrip-num">{String(idx + 1).padStart(2, '00')} / 06</span>
 
                 <div className="fstrip-label">
-                  <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.22em' }}>{f.tier}</span>
                   <span
                     className="t-display t-up"
                     style={{

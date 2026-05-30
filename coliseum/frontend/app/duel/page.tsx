@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useReducer, useEffect, useState } from 'react';
+import React, { useReducer, useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
@@ -28,6 +28,17 @@ const FIGHTER_INDEX_TO_ID: Record<number, string> = {
 export default function LobbyPage() {
   const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
   const [creatorExpanded, setCreatorExpanded] = useState(false);
+  const creatorRef = useRef<HTMLElement>(null);
+
+  // The "START A DUEL" buttons live at the top of the page, but the creator
+  // form renders several sections down. Expanding alone gives no visible
+  // feedback, so scroll the now-open form into view on the next paint.
+  const openCreator = useCallback(() => {
+    setCreatorExpanded(true);
+    requestAnimationFrame(() =>
+      creatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  }, []);
 
   const { activeDuelId, duel, isLoading: isDuelLoading } = useActiveDuel();
   const { slots: queueSlots, isLoading: isQueueLoading } = useQueueState();
@@ -61,7 +72,7 @@ export default function LobbyPage() {
   ];
 
   return (
-    <div className="col">
+    <div className="col app-floor">
       <AppTopBar />
 
       {/* ── LOBBY MARQUEE ──────────────────────────────────────────── */}
@@ -178,7 +189,7 @@ export default function LobbyPage() {
               <button
                 className="bk bk-primary"
                 style={{ padding: '12px 32px', letterSpacing: '0.08em' }}
-                onClick={() => setCreatorExpanded(true)}
+                onClick={openCreator}
               >
                 START THE FIRST DUEL →
               </button>
@@ -253,7 +264,7 @@ export default function LobbyPage() {
             <button
               className="bk bk-primary"
               style={{ padding: '10px 24px', letterSpacing: '0.08em' }}
-              onClick={() => setCreatorExpanded(true)}
+              onClick={openCreator}
             >
               START A DUEL →
             </button>
@@ -406,7 +417,7 @@ export default function LobbyPage() {
                 <button
                   className="bk bk-ghost"
                   style={{ padding: '8px 16px', letterSpacing: '0.08em', marginTop: 4 }}
-                  onClick={() => setCreatorExpanded(true)}
+                  onClick={openCreator}
                 >
                   JOIN →
                 </button>
@@ -417,7 +428,7 @@ export default function LobbyPage() {
       </section>
 
       {/* ── § 02.5 CREATE NEW DUEL ────────────────────────────────── */}
-      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+      <section ref={creatorRef} className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div
           className="sect-head"
           style={{ cursor: 'pointer' }}
@@ -443,15 +454,23 @@ export default function LobbyPage() {
           <span className="sect-head-meta"></span>
         </div>
 
-        <div className="card" style={{ padding: '0 24px' }}>
+        <div className="card" style={{ padding: '0 28px', overflow: 'hidden' }}>
           {/* Header row */}
-          <div className="row ai-c gap-16" style={{ padding: '12px 0', borderBottom: '1px solid var(--text-faint)' }}>
-            <span className="label-tiny" style={{ width: 32 }}>#</span>
-            <span className="label-tiny" style={{ flex: 1 }}>FIGHTER</span>
-            <span className="label-tiny" style={{ width: 90 }}>RECORD</span>
-            <span className="label-tiny" style={{ width: 100, textAlign: 'right' }}>TOTAL PNL</span>
-            <span className="label-tiny" style={{ width: 220 }}>FORM</span>
-            <span className="label-tiny" style={{ width: 60, textAlign: 'right' }}></span>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '28px minmax(0,1.6fr) 72px 84px minmax(0,1fr)',
+              columnGap: 20,
+              alignItems: 'center',
+              padding: '14px 0',
+              borderBottom: '1px solid var(--text-faint)',
+            }}
+          >
+            <span className="label-tiny">#</span>
+            <span className="label-tiny">FIGHTER</span>
+            <span className="label-tiny">RECORD</span>
+            <span className="label-tiny" style={{ textAlign: 'right' }}>TOTAL PNL</span>
+            <span className="label-tiny">FORM</span>
           </div>
 
           {ROSTER.map((r, i) => {
@@ -461,25 +480,27 @@ export default function LobbyPage() {
             return (
               <div
                 key={r.id}
-                className="row ai-c gap-16"
                 style={{
+                  display: 'grid',
+                  gridTemplateColumns: '28px minmax(0,1.6fr) 72px 84px minmax(0,1fr)',
+                  columnGap: 20,
+                  alignItems: 'center',
                   padding: '14px 0',
                   borderBottom: i < ROSTER.length - 1 ? '1px solid var(--border)' : 'none',
                   cursor: 'pointer',
                 }}
                 onClick={() => { window.location.href = `/fighters/${r.id}`; }}
               >
-                <span className="t-num t-sm t-dim" style={{ width: 32 }}>{String(i + 1).padStart(2, '0')}</span>
-                <div className="row ai-c flex-1" style={{ gap: 10, minWidth: 0 }}>
+                <span className="t-num t-sm t-dim">{String(i + 1).padStart(2, '0')}</span>
+                <div className="row ai-c" style={{ gap: 10, minWidth: 0, overflow: 'hidden' }}>
                   <FighterAvatar fighter={r.id} context="mini" size={28} />
-                  <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap' }}>{r.name}</span>
-                  <span className="t-mono t-xs t-faint" style={{ whiteSpace: 'nowrap' }}>· {r.tier}</span>
+                  <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
                 </div>
-                <span className="t-num t-sm" style={{ width: 90 }}>{r.record}</span>
-                <span className="t-num" style={{ width: 100, textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
+                <span className="t-num t-sm">{r.record}</span>
+                <span className="t-num" style={{ textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
                   {fmtUsd(r.pnl)}
                 </span>
-                <div style={{ width: 220, height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
+                <div style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
                   <div
                     style={{
                       position: 'absolute',
@@ -492,14 +513,6 @@ export default function LobbyPage() {
                   />
                   <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: 'var(--text-faint)' }} />
                 </div>
-                <Link
-                  href={`/fighters/${r.id}`}
-                  className="bk bk-ghost"
-                  style={{ width: 60, textAlign: 'center' }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  VIEW →
-                </Link>
               </div>
             );
           })}

@@ -67,8 +67,6 @@ const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | '
         <span className="t-display t-up" style={{ fontSize: 13, color: hex, letterSpacing: '0.18em', whiteSpace: 'nowrap' }}>
           FIGHTER {isRight ? 'B' : 'A'}
         </span>
-        <span className="t-mono t-xs t-dim">·</span>
-        <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>{tier}</span>
       </div>
       <Chip variant={winning ? 'win' : 'loss'}>
         <Dot variant={winning ? 'win' : 'loss'} pulse />
