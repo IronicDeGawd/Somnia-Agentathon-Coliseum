@@ -1,0 +1,57 @@
+/* COLISEUM — Next.js globals: fonts + Tailwind + ported design system */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=JetBrains+Mono:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600;700&family=VT323&display=swap');
+@import "tailwindcss";
+@import "./coliseum-design.css";
+
+/* Next.js / app-shell overrides (kept minimal — design CSS is source of truth) */
+html, body { background: var(--bg-deep); color: var(--text); }
+
+/* Tailwind v4 needs explicit theme bridging so utility classes can read CSS vars */
+@theme inline {
+  --color-bg-deep: var(--bg-deep);
+  --color-bg-stage: var(--bg-stage);
+  --color-bg-card: var(--bg-card);
+  --color-bg-card-2: var(--bg-card-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-text-dim: var(--text-dim);
+  --color-text-faint: var(--text-faint);
+  --color-fighter-a: var(--fighter-a);
+  --color-fighter-b: var(--fighter-b);
+  --color-win: var(--win);
+  --color-loss: var(--loss);
+  --color-gold: var(--gold);
+  --font-display: var(--fnt-display);
+  --font-mono: var(--fnt-mono);
+  --font-roman: var(--fnt-roman);
+}
+
+/* Animations the design CSS doesn't define but our app uses */
+@keyframes slideInLeft {
+  0% { transform: translateX(-40px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideInRight {
+  0% { transform: translateX(40px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes vsPop {
+  0% { transform: scale(0.3); opacity: 0; }
+  70% { transform: scale(1.25); opacity: 0.9; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes fadeIn {
+  0% { transform: translateY(8px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes blink {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.vs-pop { animation: vsPop 600ms cubic-bezier(.34, 1.56, .64, 1) both; }
+.cursor-blink::after {
+  content: "▮";
+  animation: blink 0.9s steps(2) infinite;
+  color: var(--text-dim);
+  margin-left: 2px;
+}
