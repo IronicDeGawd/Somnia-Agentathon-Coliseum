@@ -7,3 +7,4 @@ coverage/
 deployments/somnia.json
 deployments/testnet.json
 dist/
+logs/*.log

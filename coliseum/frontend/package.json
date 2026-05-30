@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "start:prod": "next start -p ${PORT:-3000}"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.11",
