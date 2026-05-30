@@ -18,6 +18,8 @@ const STAGE_LABEL: Record<SwapStage, string> = {
   swapping: 'SWAPPING…',
   'awaiting-withdraw': 'CONFIRM WITHDRAW',
   withdrawing: 'WITHDRAWING…',
+  'fallback-awaiting-signature': 'CONFIRM FALLBACK SIGN',
+  'fallback-swapping': 'FALLBACK CLAIMING…',
   done: 'DONE',
   error: 'ERROR',
 };
@@ -25,11 +27,10 @@ const STAGE_LABEL: Record<SwapStage, string> = {
 export function SwapModal({ open, onClose }: SwapModalProps) {
   const { address } = useAccount();
   const { data: sttBal } = useBalance({ address, query: { enabled: !!address && open } });
-  const { stage, error, result, swap, reset, fmtUsdso } = useSttSwap();
+  const { stage, attempt, error, result, swap, reset, fmtUsdso } = useSttSwap();
   const [amount, setAmount] = useState('10');
 
-  const busy =
-    stage !== 'idle' && stage !== 'done' && stage !== 'error';
+  const busy = stage !== 'idle' && stage !== 'done' && stage !== 'error';
 
   useEffect(() => {
     if (!open) reset();
@@ -130,7 +131,28 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
         <div className="col gap-4">
           <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>
             STATUS · <span style={{ color: stage === 'error' ? 'var(--loss)' : stage === 'done' ? 'var(--win)' : 'var(--text)' }}>{STAGE_LABEL[stage]}</span>
+            {attempt && (
+              <span style={{ color: 'var(--text-dim)' }}>
+                {' · TRY '}
+                <span style={{ color: 'var(--text)' }}>{attempt.n}/{attempt.max}</span>
+              </span>
+            )}
           </span>
+          {attempt && (stage === 'reading-book' || stage === 'simulating') && (
+            <span className="t-mono t-xs t-dim" style={{ lineHeight: 1.5 }}>
+              testnet book is thin — 3 tries, then we fall back to the reserve contract
+            </span>
+          )}
+          {(stage === 'fallback-awaiting-signature' || stage === 'fallback-swapping') && (
+            <span className="t-mono t-xs" style={{ color: 'var(--bronze)', lineHeight: 1.5 }}>
+              market book empty — using SwapFallback reserve (1 USDso, one per address)
+            </span>
+          )}
+          {result.path === 'fallback' && stage === 'done' && (
+            <span className="t-mono t-xs t-dim" style={{ lineHeight: 1.5 }}>
+              served via SwapFallback reserve · STT collected funds the seeder bot
+            </span>
+          )}
           {error && (
             <span className="t-mono t-xs" style={{ color: 'var(--loss)', lineHeight: 1.5 }}>
               {error}
@@ -161,6 +183,17 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
               style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}
             >
               withdraw tx: {result.withdrawHash.slice(0, 10)}…{result.withdrawHash.slice(-8)} ↗
+            </a>
+          )}
+          {result.fallbackHash && (
+            <a
+              className="t-mono t-xs t-dim"
+              href={`https://explorer-v2.testnet.somnia.network/tx/${result.fallbackHash}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}
+            >
+              fallback tx: {result.fallbackHash.slice(0, 10)}…{result.fallbackHash.slice(-8)} ↗
             </a>
           )}
         </div>

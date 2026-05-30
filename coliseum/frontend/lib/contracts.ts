@@ -6,6 +6,7 @@ export const CONTRACT_ADDRESSES = {
   FighterRegistry: '0x5390b0656797b18258f2919a799abe956d21690f' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
   Matchmaker: '0x92ddaca48f65586e9d8c117ae4252813e120a157' as const,
+  SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
 };
 
 export enum DuelStatus {
