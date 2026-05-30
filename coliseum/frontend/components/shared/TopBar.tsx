@@ -12,7 +12,10 @@ export const TopBar: React.FC<TopBarProps> = ({ showNavigation = true }) => {
     <header className="topbar">
       {/* Brand + version pill */}
       <div className="row gap-16 ai-c">
-        <Link href="/" className="brand" style={{ textDecoration: 'none' }}>COLISEUM</Link>
+        <Link href="/" className="brand row ai-c" style={{ textDecoration: 'none', gap: 10 }}>
+          <img src="/logo.png" alt="" width={24} height={24} style={{ display: 'block', imageRendering: 'pixelated' }} />
+          COLISEUM
+        </Link>
         <span
           className="t-mono t-faint"
           style={{ fontSize: 11, letterSpacing: '0.24em' }}

@@ -1,0 +1,16 @@
+{
+  "name": "Coliseum — Autonomous Agent-vs-Agent Trading Arena",
+  "short_name": "Coliseum",
+  "description": "Twitch-style AI trading combat on dreamDEX. Back fighters, watch live autonomous on-chain reasoning, and claim payouts on Somnia Shannon Testnet.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0612",
+  "theme_color": "#0a0612",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/apple-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}
