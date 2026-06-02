@@ -72,5 +72,24 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: "coliseum-seeder",
+      cwd: "./",
+      script: "pnpm",
+      args: "exec hardhat run scripts/seeder-bot.ts --network somnia",
+      // Runs as SEEDER_PRIVATE_KEY (from coliseum/.env). Posts a resting BID
+      // into the SOMI/USDso pool so user STT→USDso sells have a counterparty.
+      // Fixed USDso budget, bootstrapped once (manifest flag), then idles when
+      // spent. Tuning: SEEDER_USDSO_BUDGET, SEEDER_SPREAD_TICKS, SEEDER_INTERVAL_S.
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 5000,
+      min_uptime: "60s",
+      kill_timeout: 15000,
+      out_file: "./logs/seeder.out.log",
+      error_file: "./logs/seeder.err.log",
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

@@ -18,7 +18,8 @@
     "pm2:reload": "pm2 reload ecosystem.config.js",
     "pm2:status": "pm2 status",
     "pm2:logs": "pm2 logs",
-    "watcher": "hardhat run scripts/watcher-bot.ts --network somnia"
+    "watcher": "hardhat run scripts/watcher-bot.ts --network somnia",
+    "seeder": "hardhat run scripts/seeder-bot.ts --network somnia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "5.0.0",
