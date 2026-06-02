@@ -158,6 +158,16 @@ const POOL_ABI = [
     inputs: [{ name: "orderId", type: "uint128" }],
     outputs: [],
   },
+  {
+    name: "withdraw",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
 ] as const;
 
 const ERC20_ABI = [
@@ -284,8 +294,11 @@ async function main() {
     await new Promise<void>((r) => setTimeout(r, intervalS * 1000));
   }
 
-  // Graceful shutdown: pull resting bids so USDso isn't stranded in the book.
+  // Graceful shutdown: cancel resting bids (refunds USDso to the vault) and
+  // then withdraw the vault USDso back to the seeder wallet, so nothing is
+  // stranded in the book or locked in the pool.
   await cancelOwnBids(ctx).catch((e) => log(`shutdown cancel failed: ${errMsg(e)}`));
+  await withdrawVaultUsdso(ctx).catch((e) => log(`shutdown withdraw failed: ${errMsg(e)}`));
   log("seeder stopped");
 }
 
@@ -405,8 +418,10 @@ type TickCtx = {
 };
 
 async function ourRestingBid(ctx: TickCtx) {
+  // getOwnOpenOrders resolves "own" from msg.sender — eth_call defaults the
+  // caller to 0x0, so we MUST set account to the seeder or it reads empty.
   const ids = (await ctx.pub.readContract({
-    address: ctx.pool, abi: POOL_ABI, functionName: "getOwnOpenOrders",
+    address: ctx.pool, abi: POOL_ABI, functionName: "getOwnOpenOrders", account: ctx.seederAddr,
   })) as bigint[];
   for (const id of ids) {
     const order = (await ctx.pub.readContract({
@@ -419,7 +434,7 @@ async function ourRestingBid(ctx: TickCtx) {
 
 async function cancelOwnBids(ctx: TickCtx) {
   const ids = (await ctx.pub.readContract({
-    address: ctx.pool, abi: POOL_ABI, functionName: "getOwnOpenOrders",
+    address: ctx.pool, abi: POOL_ABI, functionName: "getOwnOpenOrders", account: ctx.seederAddr,
   })) as bigint[];
   for (const id of ids) {
     const order = (await ctx.pub.readContract({
@@ -435,6 +450,21 @@ async function cancelOwnBids(ctx: TickCtx) {
   }
 }
 
+// Pull the seeder's vault USDso back to its wallet (used on shutdown so the
+// budget isn't left locked in the pool after a clean stop).
+async function withdrawVaultUsdso(ctx: TickCtx) {
+  const bal = (await ctx.pub.readContract({
+    address: ctx.pool, abi: POOL_ABI, functionName: "getWithdrawableBalance", args: [ctx.seederAddr, ctx.usdso],
+  })) as bigint;
+  if (bal === BigInt(0)) return;
+  log(`  withdraw ${formatEther(bal)} USDso from vault → seeder wallet`);
+  const hash = await ctx.seeder.writeContract({
+    address: ctx.pool, abi: POOL_ABI, functionName: "withdraw", args: [ctx.usdso, bal],
+    account: ctx.seeder.account!, chain: ctx.pub.chain,
+  });
+  await ctx.pub.waitForTransactionReceipt({ hash });
+}
+
 async function tick(ctx: TickCtx) {
   const { pub, seeder, seederAddr, pool, usdso, tickSize, minQuantity, lotSize, spreadTicks, repriceTicks } = ctx;
 
@@ -447,6 +477,11 @@ async function tick(ctx: TickCtx) {
     return;
   }
   const bestAsk = asks[0].price;
+  // Guard before the subtraction — bigint underflow would throw, not go negative.
+  if (bestAsk <= spreadTicks * tickSize) {
+    log(`tick: best ask ${formatEther(bestAsk)} ≤ spread; cannot anchor a bid. Skipping.`);
+    return;
+  }
   let targetPrice = bestAsk - spreadTicks * tickSize;
   targetPrice = (targetPrice / tickSize) * tickSize; // align to tick grid
   if (targetPrice <= BigInt(0)) {
