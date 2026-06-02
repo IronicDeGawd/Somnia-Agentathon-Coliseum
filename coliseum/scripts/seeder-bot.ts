@@ -254,11 +254,15 @@ async function main() {
     abi: POOL_ABI,
     functionName: "getPoolParams",
   })) as readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint];
-  const [, usdso, , , tickSize, minQuantity, lotSize] = params;
+  // base is the SOMI sentinel on this native pool (testnet + mainnet both report
+  // 0x28f3…4c00, NOT address(0)). Bought SOMI lands in the vault under this
+  // address when our bid fills, so we use it to sweep that inventory out.
+  const [base, usdso, , , tickSize, minQuantity, lotSize] = params;
 
   log(`config:`);
   log(`  SOMI/USDso pool   ${pool}`);
   log(`  USDso (quote)     ${usdso}`);
+  log(`  SOMI (base)       ${base}`);
   log(`  seeder wallet     ${seederAddr}`);
   log(`  budget            ${formatEther(budget)} USDso (one-time)`);
   log(`  tick / minQty     ${formatEther(tickSize)} / ${formatEther(minQuantity)}`);
@@ -269,7 +273,7 @@ async function main() {
     pub, seeder, seederAddr, manifest, manifestPath, pool, usdso, budget, deployerUsdsoMin,
   });
 
-  const ctx = { pub, seeder, seederAddr, pool, usdso, tickSize, minQuantity, lotSize, spreadTicks, repriceTicks };
+  const ctx = { pub, seeder, seederAddr, pool, usdso, base, tickSize, minQuantity, lotSize, spreadTicks, repriceTicks };
 
   let running = true;
   const onSig = () => {
@@ -298,7 +302,8 @@ async function main() {
   // then withdraw the vault USDso back to the seeder wallet, so nothing is
   // stranded in the book or locked in the pool.
   await cancelOwnBids(ctx).catch((e) => log(`shutdown cancel failed: ${errMsg(e)}`));
-  await withdrawVaultUsdso(ctx).catch((e) => log(`shutdown withdraw failed: ${errMsg(e)}`));
+  await withdrawVaultToken(ctx, ctx.usdso, "USDso").catch((e) => log(`shutdown USDso withdraw failed: ${errMsg(e)}`));
+  await withdrawVaultToken(ctx, ctx.base, "SOMI").catch((e) => log(`shutdown SOMI withdraw failed: ${errMsg(e)}`));
   log("seeder stopped");
 }
 
@@ -410,6 +415,7 @@ type TickCtx = {
   seederAddr: `0x${string}`;
   pool: `0x${string}`;
   usdso: `0x${string}`;
+  base: `0x${string}`;
   tickSize: bigint;
   minQuantity: bigint;
   lotSize: bigint;
@@ -450,16 +456,18 @@ async function cancelOwnBids(ctx: TickCtx) {
   }
 }
 
-// Pull the seeder's vault USDso back to its wallet (used on shutdown so the
-// budget isn't left locked in the pool after a clean stop).
-async function withdrawVaultUsdso(ctx: TickCtx) {
+// Pull a token's vault balance back to the seeder wallet. Used for USDso (the
+// unspent budget) on shutdown and for SOMI (inventory bought when bids fill,
+// tracked under the base sentinel) both per-tick and on shutdown — so nothing
+// is left locked in the pool.
+async function withdrawVaultToken(ctx: TickCtx, token: `0x${string}`, label: string) {
   const bal = (await ctx.pub.readContract({
-    address: ctx.pool, abi: POOL_ABI, functionName: "getWithdrawableBalance", args: [ctx.seederAddr, ctx.usdso],
+    address: ctx.pool, abi: POOL_ABI, functionName: "getWithdrawableBalance", args: [ctx.seederAddr, token],
   })) as bigint;
   if (bal === BigInt(0)) return;
-  log(`  withdraw ${formatEther(bal)} USDso from vault → seeder wallet`);
+  log(`  withdraw ${formatEther(bal)} ${label} from vault → seeder wallet`);
   const hash = await ctx.seeder.writeContract({
-    address: ctx.pool, abi: POOL_ABI, functionName: "withdraw", args: [ctx.usdso, bal],
+    address: ctx.pool, abi: POOL_ABI, functionName: "withdraw", args: [token, bal],
     account: ctx.seeder.account!, chain: ctx.pub.chain,
   });
   await ctx.pub.waitForTransactionReceipt({ hash });
@@ -467,6 +475,10 @@ async function withdrawVaultUsdso(ctx: TickCtx) {
 
 async function tick(ctx: TickCtx) {
   const { pub, seeder, seederAddr, pool, usdso, tickSize, minQuantity, lotSize, spreadTicks, repriceTicks } = ctx;
+
+  // Sweep any SOMI bought when prior bids filled back to the wallet, so a hard
+  // kill (no graceful shutdown) can't strand inventory in the pool vault.
+  await withdrawVaultToken(ctx, ctx.base, "SOMI").catch((e) => log(`base sweep failed: ${errMsg(e)}`));
 
   // Best ask drives the target bid (rest just below so we never take).
   const asks = (await pub.readContract({
