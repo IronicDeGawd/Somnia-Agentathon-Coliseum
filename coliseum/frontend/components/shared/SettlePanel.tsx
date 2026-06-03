@@ -140,7 +140,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
 
   if (isLoading) {
     return (
-      <div className="card pad-24 col gap-16" style={{ minWidth: 320 }}>
+      <div className="card pad-24 col gap-16" style={{ width: '100%' }}>
         <div className="eyebrow t-dim">Duel Result</div>
         <div className="t-dim t-sm">Loading duel data…</div>
       </div>
@@ -149,7 +149,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
 
   if (!duel) {
     return (
-      <div className="card pad-24 col gap-16" style={{ minWidth: 320 }}>
+      <div className="card pad-24 col gap-16" style={{ width: '100%' }}>
         <div className="eyebrow t-dim">Duel Result</div>
         <div className="t-dim t-sm">Duel not found.</div>
       </div>
@@ -160,7 +160,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
 
   if (!isResolved) {
     return (
-      <div className="card pad-24 col gap-16" style={{ minWidth: 320 }}>
+      <div className="card pad-24 col gap-16" style={{ width: '100%' }}>
         <div className="eyebrow t-dim">Duel Result</div>
         <div className="chip chip-live row gap-8 ai-c" style={{ width: 'fit-content' }}>
           <span className="dot pulse" />
@@ -200,7 +200,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
   const fundsAlreadyRecovered = duel.creator === '0x0000000000000000000000000000000000000000';
 
   return (
-    <div className="card pad-24 col gap-24" style={{ minWidth: 320 }}>
+    <div className="card pad-24 col gap-24" style={{ width: '100%' }}>
 
       {/* ── Duel Outcome ──────────────────────────────────────────────────────── */}
       <div className="col gap-12">

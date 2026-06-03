@@ -250,7 +250,7 @@ export default function BetPanel({ duelId, fighterAName, fighterBName }: BetPane
                   borderRadius: 6,
                   cursor: betsOpen ? 'pointer' : 'not-allowed',
                   opacity: betsOpen ? 1 : 0.5,
-                  transition: 'all 0.2s ease',
+                  transition: 'border-color 0.2s ease, background 0.2s ease, color 0.2s ease',
                 }}
               >
                 <span className="t-sm t-up">{fighterAName}</span>
@@ -278,7 +278,7 @@ export default function BetPanel({ duelId, fighterAName, fighterBName }: BetPane
                   borderRadius: 6,
                   cursor: betsOpen ? 'pointer' : 'not-allowed',
                   opacity: betsOpen ? 1 : 0.5,
-                  transition: 'all 0.2s ease',
+                  transition: 'border-color 0.2s ease, background 0.2s ease, color 0.2s ease',
                 }}
               >
                 <span className="t-sm t-up">{fighterBName}</span>
@@ -389,7 +389,7 @@ export default function BetPanel({ duelId, fighterAName, fighterBName }: BetPane
               background: canPlaceBet ? 'var(--gold)' : 'var(--bg-card)',
               color: canPlaceBet ? '#000' : 'var(--text-dim)',
               border: 'none',
-              transition: 'all 0.2s ease',
+              transition: 'background 0.2s ease, color 0.2s ease, opacity 0.2s ease',
             }}
           >
             {isPending ? 'CONFIRMING…' : 'PLACE BET'}

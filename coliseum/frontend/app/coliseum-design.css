@@ -29,6 +29,16 @@
   --fnt-display: "Pixelify Sans", "VT323", ui-monospace, monospace;
   --fnt-roman: "Cinzel", "Trajan Pro", "Times New Roman", serif;
   --fnt-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* SPACING SCALE (4px grid) — use these instead of scattered magic px */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-6: 24px; --sp-8: 32px; --sp-12: 48px; --sp-16: 64px;
+  --sp-section: clamp(48px, 8vw, 120px); /* section vertical rhythm */
+
+  /* LAYOUT — one container width + a fluid gutter everything shares */
+  --topbar-h: 56px;
+  --shell-max: 1320px;             /* unified content cap (matches landing) */
+  --gutter: clamp(16px, 5vw, 48px); /* side padding: 16 on phone → 48 on wide */
 }
 
 /* PALETTE VARIANTS (Tweaks) */
@@ -165,17 +175,29 @@ body {
 .glow-a { box-shadow: 0 0 28px var(--fighter-a-glow), inset 0 0 0 1px var(--fighter-a-soft); }
 .glow-b { box-shadow: 0 0 28px var(--fighter-b-glow), inset 0 0 0 1px var(--fighter-b-soft); }
 
-/* SCREEN LAYOUT */
-.shell-pad { padding: 24px 32px; max-width: 1640px; margin: 0 auto; }
+/* SCREEN LAYOUT
+   .shell is the single container — max-width + fluid gutter, used everywhere.
+   .shell-pad keeps its name for the existing app pages but now shares the same
+   fluid gutter + unified cap so every page aligns to one vertical rail. */
+.shell,
+.shell-pad { width: 100%; max-width: var(--shell-max); margin-inline: auto; padding-inline: var(--gutter); }
+.shell-pad { padding-block: var(--sp-6); }
+.shell-narrow { max-width: min(720px, 100%); margin-inline: auto; }
+.shell-mid    { max-width: min(1024px, 100%); margin-inline: auto; }
+.section      { padding-block: var(--sp-section); }
 
-/* TOPBAR */
+/* TOPBAR — min-height (not fixed) + wrap so the nav/wallet never overflow on
+   narrow screens; rows inside the bar are allowed to wrap too. */
 .topbar {
-  height: 56px;
+  min-height: var(--topbar-h);
   border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 24px;
-  padding: 0 32px;
+  display: flex; align-items: center; gap: clamp(12px, 2vw, 24px);
+  padding: var(--sp-2) var(--gutter);
+  flex-wrap: wrap;
   background: linear-gradient(to bottom, rgba(255,255,255,0.02), transparent);
 }
+.topbar .row { flex-wrap: wrap; }
+.topbar .brand { flex-shrink: 0; }
 .brand {
   font-family: var(--fnt-display);
   font-size: 24px;
@@ -494,6 +516,7 @@ body {
   display: flex; align-items: baseline; gap: 12px;
   border-top: 1px solid var(--text-faint);
   padding-top: 14px;
+  flex-wrap: wrap; /* let the meta drop below the title on narrow screens */
 }
 .sect-head-num {
   font-family: var(--fnt-mono);
@@ -519,6 +542,8 @@ body {
   color: var(--text-dim);
   letter-spacing: 0.18em;
   text-transform: uppercase;
+  min-width: 0;
+  overflow-wrap: anywhere; /* break long dotted tokens (contract calls) */
 }
 
 /* Outlined display text */
@@ -542,7 +567,7 @@ body {
 .fstrip {
   position: relative;
   flex: 1;
-  min-height: 540px;
+  min-height: clamp(280px, 50svh, 540px);
   overflow: hidden;
   border-right: 1px solid var(--border);
   cursor: pointer;
@@ -577,8 +602,8 @@ body {
 /* Tape-feed line item */
 .tape-row {
   display: grid;
-  grid-template-columns: 80px 1fr 200px 100px 90px;
-  align-items: center; gap: 16px;
+  grid-template-columns: minmax(56px, 80px) minmax(0, 1fr) minmax(0, 200px) minmax(64px, 100px) minmax(56px, 90px);
+  align-items: center; gap: clamp(8px, 1.5vw, 16px);
   padding: 14px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -652,3 +677,51 @@ body {
 /* DUEL SCREEN TRANSITIONS */
 .fade-in { animation: fadeIn 300ms ease both; opacity: 1; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ─── STANDINGS TABLE (lobby § 03) ───
+   Desktop: 5-col grid. Mobile (≤520px): collapse each row to a stacked card so
+   the RECORD / TOTAL PNL columns can't be silently clipped off-screen. */
+.standings-grid {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.6fr) minmax(56px, 72px) minmax(64px, 84px) minmax(0, 1fr);
+  column-gap: clamp(10px, 2vw, 20px);
+  align-items: center;
+  padding: 14px 0;
+}
+
+/* ─── RESPONSIVE BREAKPOINTS ───
+   The design layer previously had ZERO @media rules. Three tiers: 1080 / 768 / 520. */
+@media (max-width: 1080px) {
+  body { font-size: 13.5px; }
+}
+@media (max-width: 768px) {
+  .shell, .shell-pad { padding-block: var(--sp-4); }
+  .topbar { gap: var(--sp-3); }
+}
+@media (max-width: 640px) {
+  /* Arena combatants: stack the two fighter cards; the VS divider goes
+     full-width so two cards never share a 311px-wide phone row. */
+  .arena-duo { flex-direction: column; }
+  .arena-duo > * { width: 100% !important; flex: 1 1 auto !important; opacity: 1 !important; transform: none !important; }
+  .arena-vs { width: 100% !important; padding: var(--sp-1) 0; }
+  .arena-vs .t-display { font-size: 28px !important; }
+}
+@media (max-width: 520px) {
+  body { font-size: 13px; }
+  .standings-head { display: none; }
+  .standings-grid {
+    grid-template-columns: 24px 1fr auto;
+    grid-template-areas:
+      "rank name name"
+      "rank rec  pnl"
+      "form form form";
+    row-gap: var(--sp-2);
+    column-gap: var(--sp-3);
+    padding: var(--sp-4) 0;
+  }
+  .st-rank { grid-area: rank; align-self: start; }
+  .st-name { grid-area: name; }
+  .st-rec  { grid-area: rec; }
+  .st-pnl  { grid-area: pnl; }
+  .st-form { grid-area: form; }
+}

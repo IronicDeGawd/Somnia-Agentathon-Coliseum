@@ -311,7 +311,7 @@ export default function ArenaPage() {
   );
 
   return (
-    <div className="col" style={{ minHeight: 'calc(100vh - 56px)' }}>
+    <div className="col" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
       <AppTopBar />
 
       {/* ArenaStatusBar — broadcast slate */}
@@ -323,8 +323,8 @@ export default function ArenaPage() {
             pointerEvents: 'none',
           }}
         />
-        <div className="row ai-c jc-sb" style={{ padding: '12px 24px', gap: 16, position: 'relative' }}>
-          <div className="row gap-16 ai-c">
+        <div className="row ai-c jc-sb" style={{ padding: '12px var(--gutter)', gap: 16, position: 'relative', flexWrap: 'wrap' }}>
+          <div className="row gap-16 ai-c" style={{ flexWrap: 'wrap' }}>
             <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>§ ARENA · MAIN EVENT</span>
             <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
             <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
@@ -336,7 +336,7 @@ export default function ArenaPage() {
               BELL <span className="t-num" style={{ color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text)' }}>{fmtTime(simState.timeLeft)}</span>
             </span>
           </div>
-          <div className="row gap-16 ai-c">
+          <div className="row gap-16 ai-c" style={{ flexWrap: 'wrap' }}>
             <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
               <span className="t-num" style={{ color: 'var(--text)' }}>{simState.spectators}</span> watching
             </span>
@@ -371,9 +371,9 @@ export default function ArenaPage() {
           </div>
 
           {layout === 'split' && (
-            <div className="row gap-16" style={{ alignItems: 'stretch' }}>
+            <div className="row gap-16 arena-duo" style={{ alignItems: 'stretch' }}>
               <div className="col gap-16" style={{ flex: 1 }}>{degenCard}</div>
-              <div className="col ai-c jc-c" style={{ width: 80 }}>
+              <div className="col ai-c jc-c arena-vs" style={{ width: 80 }}>
                 <span
                   className="t-display vs-pop"
                   style={{
@@ -395,7 +395,7 @@ export default function ArenaPage() {
             const Hero = dWin ? degenCard : whaleCard;
             const Other = dWin ? whaleCard : degenCard;
             return (
-              <div className="row gap-16" style={{ alignItems: 'stretch' }}>
+              <div className="row gap-16 arena-duo" style={{ alignItems: 'stretch' }}>
                 <div style={{ flex: 1.6 }}>{Hero}</div>
                 <div style={{ flex: 1, opacity: 0.85, transform: 'scale(0.97)' }}>{Other}</div>
               </div>
@@ -458,7 +458,7 @@ export default function ArenaPage() {
             <span className="sect-head-title">WBTC/USDso</span>
             <span className="sect-head-meta">dreamDEX · mid mark live</span>
           </div>
-          <div className="row ai-c" style={{ gap: 32 }}>
+          <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
             <div className="col gap-2" style={{ flexShrink: 0 }}>
               <span className="label-tiny">BID</span>
               <span className="t-num" style={{ fontSize: 18 }}>${simState.market.bid.toFixed(2)}</span>
@@ -558,11 +558,11 @@ export default function ArenaPage() {
             </Link>
           </div>
         ) : (
-          <div className="card pad-16 row jc-sb ai-c" style={{ borderColor: 'var(--border)' }}>
+          <div className="card pad-16 row jc-sb ai-c" style={{ borderColor: 'var(--border)', flexWrap: 'wrap', gap: 12 }}>
             <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
               ▸ NEXT TURN IN <span className="t-num" style={{ color: 'var(--text)' }}>{simState.turnIn}s</span> · AUTO {autoAdvance ? 'ON' : 'OFF'}
             </span>
-            <div className="row gap-8">
+            <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
               <BracketButton onClick={handleAdvance}>ADVANCE TURN ▸</BracketButton>
               <BracketButton variant="ghost" onClick={handleFastForward}>▸▸ JUMP TO END</BracketButton>
             </div>
