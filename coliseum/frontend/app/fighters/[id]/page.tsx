@@ -61,12 +61,12 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
       {/* Status strip */}
       <div
         className="row ai-c jc-sb"
-        style={{ padding: '14px 32px', borderBottom: '1px solid var(--border)', background: 'var(--bg-stage)', gap: 12 }}
+        style={{ padding: '14px var(--gutter)', borderBottom: '1px solid var(--border)', background: 'var(--bg-stage)', gap: 12, flexWrap: 'wrap' }}
       >
-        <div className="row gap-12 ai-c">
+        <div className="row gap-12 ai-c" style={{ flexWrap: 'wrap', minWidth: 0 }}>
           <span
             className="t-mono t-xs"
-            style={{ letterSpacing: '0.28em', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}
+            style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}
           >
             § FIGHTER FILE · INDEX {f.index} · aggression/patience/risk stats
           </span>
@@ -82,11 +82,11 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
 
       {/* Big bio header */}
       <section
-        style={{ position: 'relative', padding: '48px 32px 32px', overflow: 'hidden', borderBottom: '1px solid var(--border)' }}
+        style={{ position: 'relative', padding: '48px var(--gutter) 32px', overflow: 'hidden', borderBottom: '1px solid var(--border)' }}
       >
         <div
           className="row gap-32 ai-c"
-          style={{ position: 'relative', maxWidth: 1240, margin: '0 auto' }}
+          style={{ position: 'relative', maxWidth: 1320, margin: '0 auto', flexWrap: 'wrap' }}
         >
           <div style={{ filter: `drop-shadow(0 0 40px ${hex})` }}>
             <FighterAvatar fighter={fid} context="card" size={220} state="winning" />
@@ -139,7 +139,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           <span className="sect-head-meta">on-chain attributes from FighterRegistry</span>
         </div>
 
-        <div className="row gap-16" style={{ alignItems: 'stretch' }}>
+        <div className="row gap-16" style={{ alignItems: 'stretch', flexWrap: 'wrap' }}>
           <div className="card flex-1 col gap-12 pad-24">
             <span className="label-tiny">COMBAT ATTRIBUTES</span>
             <hr className="divider" />
@@ -179,13 +179,13 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
       </section>
 
       {/* § 02 DOSSIER */}
-      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 32 }}>
+      <section className="shell-pad col gap-16" style={{ paddingTop: 48, paddingBottom: 32 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">DOSSIER</span>
           <span className="sect-head-meta">system prompt from FighterRegistry.getFighter({f.index}).systemPrompt</span>
         </div>
-        <div className="row gap-32 ai-s">
+        <div className="row gap-32 ai-s" style={{ flexWrap: 'wrap' }}>
           <p
             className="fp-display"
             style={{
@@ -208,7 +208,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
       </section>
 
       {/* § 03 DUEL HISTORY */}
-      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 80 }}>
+      <section className="shell-pad col gap-16" style={{ paddingTop: 48, paddingBottom: 120 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
           <span className="sect-head-title">DUEL HISTORY</span>

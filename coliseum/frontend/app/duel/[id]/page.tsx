@@ -558,11 +558,11 @@ export default function ArenaPage() {
             </Link>
           </div>
         ) : (
-          <div className="card pad-16 row jc-sb ai-c" style={{ borderColor: 'var(--border)' }}>
+          <div className="card pad-16 row jc-sb ai-c" style={{ borderColor: 'var(--border)', flexWrap: 'wrap', gap: 12 }}>
             <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
               ▸ NEXT TURN IN <span className="t-num" style={{ color: 'var(--text)' }}>{simState.turnIn}s</span> · AUTO {autoAdvance ? 'ON' : 'OFF'}
             </span>
-            <div className="row gap-8">
+            <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
               <BracketButton onClick={handleAdvance}>ADVANCE TURN ▸</BracketButton>
               <BracketButton variant="ghost" onClick={handleFastForward}>▸▸ JUMP TO END</BracketButton>
             </div>

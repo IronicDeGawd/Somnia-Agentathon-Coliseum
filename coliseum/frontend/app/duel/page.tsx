@@ -131,24 +131,24 @@ export default function LobbyPage() {
           </div>
 
           {/* 4-up stat strip — BELL IN / PURSE / ODDS / BETTORS */}
-          <div className="row gap-32 ai-c jc-c" style={{ marginTop: 8 }}>
+          <div className="row ai-c jc-c" style={{ marginTop: 8, gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
             <div className="col ai-c gap-2">
               <span className="eyebrow">BELL IN</span>
-              <span className="t-num text-gold" style={{ fontSize: 36, lineHeight: 1 }}>
+              <span className="t-num text-gold" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1 }}>
                 {activeDuelId !== null ? fmtTime(sim.countdown) : '—'}
               </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
               <span className="eyebrow">PURSE</span>
-              <span className="t-num text-gold" style={{ fontSize: 36, lineHeight: 1 }}>
+              <span className="t-num text-gold" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1 }}>
                 {activeDuelId !== null ? `$${sim.potNext}` : '—'}
               </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
               <span className="eyebrow">ODDS</span>
-              <span className="t-num" style={{ fontSize: 36, lineHeight: 1, whiteSpace: 'nowrap' }}>
+              <span className="t-num" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1, whiteSpace: 'nowrap' }}>
                 {activeDuelId !== null ? (
                   <>
                     <span className="text-a">{sim.oddsDegen}</span>
@@ -163,7 +163,7 @@ export default function LobbyPage() {
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
               <span className="eyebrow">ROUND</span>
-              <span className="t-num" style={{ fontSize: 36, lineHeight: 1, color: 'var(--text)' }}>
+              <span className="t-num" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1, color: 'var(--text)' }}>
                 {activeDuelId !== null
                   ? isDuelLoading ? '…' : `${currentTurn}/${totalTurns}`
                   : '—'}
@@ -357,7 +357,7 @@ export default function LobbyPage() {
           </span>
         </div>
 
-        <div className="row gap-16">
+        <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
           {([3, 6, 9, 15] as QueueTier[]).map((turns) => {
             const TIER_POOL_LABELS: Record<QueueTier, string> = {
               3:  'SOMI',
@@ -377,7 +377,7 @@ export default function LobbyPage() {
               <div
                 key={turns}
                 className="card pad-16 col gap-12 flex-1"
-                style={{ minWidth: 0 }}
+                style={{ minWidth: 'min(100%, 200px)', flex: '1 1 200px' }}
               >
                 {/* Tier label */}
                 <div className="row jc-sb ai-c">
@@ -517,14 +517,14 @@ export default function LobbyPage() {
           <span className="sect-head-meta">bets placed via Bookmaker (from on-chain events for the connected wallet)</span>
         </div>
 
-        <div className="row gap-16">
+        <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
           {[
             { status: 'live', round: 341, fighters: 'DEGEN vs WHALE',      bet: '$5 on DEGEN @ 65%',   est: '+$2.69 est.', color: 'var(--win)' },
             { status: 'won',  round: 339, fighters: 'DEGEN vs CONTRARIAN', bet: '$10 on DEGEN @ 58%',  est: '+$7.24',      color: 'var(--win)' },
             { status: 'lost', round: 338, fighters: 'SCALPER vs SURFER',   bet: '$5 on SCALPER @ 47%', est: '−$5.00',      color: 'var(--loss)' },
             { status: 'won',  round: 336, fighters: 'WHALE vs DEGEN',      bet: '$8 on WHALE @ 51%',   est: '+$7.85',      color: 'var(--win)' },
           ].map((b) => (
-            <div key={b.round} className="card pad-16 col gap-8 flex-1">
+            <div key={b.round} className="card pad-16 col gap-8 flex-1" style={{ minWidth: 'min(100%, 220px)' }}>
               <div className="row jc-sb ai-c">
                 {b.status === 'live' ? (
                   <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>

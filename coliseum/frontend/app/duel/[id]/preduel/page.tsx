@@ -167,7 +167,7 @@ export default function PreDuelPage() {
         </div>
       </div>
 
-      <div className="shell-pad col gap-32 ai-c" style={{ paddingTop: 64, paddingBottom: 64 }}>
+      <div className="shell-pad col gap-32 ai-c" style={{ paddingTop: 96, paddingBottom: 96 }}>
 
         {/* Big headline */}
         <div className="col ai-c gap-8">
@@ -195,14 +195,15 @@ export default function PreDuelPage() {
         </div>
 
         {/* Fighter card + waiting slot */}
-        <div className="row gap-32 ai-c" style={{ width: '100%', maxWidth: 760, justifyContent: 'center' }}>
+        <div className="row gap-32 ai-c" style={{ width: '100%', maxWidth: 960, justifyContent: 'center', flexWrap: 'wrap' }}>
 
           {/* Your fighter */}
           <div
             className="card col ai-c gap-16"
             style={{
               flex: 1,
-              padding: 28,
+              padding: 32,
+              minWidth: 'min(100%, 280px)',
               borderColor: fighterA?.hex ?? 'var(--border)',
               boxShadow: dataReady ? `0 0 32px ${fighterA!.hex}33` : 'none',
             }}
@@ -262,7 +263,8 @@ export default function PreDuelPage() {
             className="card col ai-c gap-16"
             style={{
               flex: 1,
-              padding: 28,
+              padding: 32,
+              minWidth: 'min(100%, 280px)',
               borderColor: 'var(--border)',
               borderStyle: 'dashed',
               opacity: 0.7,
@@ -314,7 +316,7 @@ export default function PreDuelPage() {
         </div>
 
         {/* Duel details card */}
-        <div className="card pad-20 row gap-24 ai-c" style={{ width: '100%', maxWidth: 760 }}>
+        <div className="card pad-24 row gap-24 ai-c" style={{ width: '100%', maxWidth: 960, flexWrap: 'wrap' }}>
           <div className="col gap-2">
             <span className="eyebrow">TIER</span>
             <span className="t-num" style={{ fontSize: 18, color: 'var(--gold)' }}>

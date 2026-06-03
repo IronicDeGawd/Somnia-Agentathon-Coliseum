@@ -160,8 +160,8 @@ export default function ResultPage() {
       </div>
 
       {/* Winner reveal — bare section, no card chrome */}
-      <section style={{ position: 'relative', padding: '64px 32px 48px', overflow: 'hidden' }}>
-        <div className="col ai-c gap-16" style={{ position: 'relative', maxWidth: 1200, margin: '0 auto' }}>
+      <section style={{ position: 'relative', padding: '96px 32px 64px', overflow: 'hidden' }}>
+        <div className="col ai-c gap-16" style={{ position: 'relative', maxWidth: 1320, margin: '0 auto' }}>
           <div className="row gap-16 ai-c">
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
             <span className="eyebrow" style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}>
@@ -190,7 +190,7 @@ export default function ResultPage() {
             {winnerFighter?.name ?? (isLoading ? 'LOADING…' : 'UNKNOWN')}
           </h1>
 
-          <div className="row gap-32 ai-c" style={{ marginTop: 24 }}>
+          <div className="row gap-32 ai-c" style={{ marginTop: 24, flexWrap: 'wrap', justifyContent: 'center' }}>
             <div className="col ai-c gap-2">
               <span className="eyebrow">FINAL PORTFOLIO</span>
               <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>
@@ -209,7 +209,7 @@ export default function ResultPage() {
               <span className="eyebrow">METHOD</span>
               <span
                 className="t-display t-up"
-                style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}
+                style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em' }}
               >
                 {isResolved ? 'PNL on mid mark prices · finalizeDuel' : 'Duel in progress'}
               </span>
@@ -219,14 +219,14 @@ export default function ResultPage() {
       </section>
 
       {/* § 01 FINAL TAPE */}
-      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+      <section className="shell-pad col gap-16" style={{ paddingTop: 32, paddingBottom: 56 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <span className="sect-head-title">FINAL TAPE</span>
           <span className="sect-head-meta">{turns} rounds settled · {sim.spectators} bettors</span>
         </div>
 
-        <div className="row gap-16" style={{ alignItems: 'stretch' }}>
+        <div className="row gap-16" style={{ alignItems: 'stretch', flexWrap: 'wrap' }}>
           {/* Winner card */}
           <div className="card flex-1 col gap-12 pad-24">
             <div className="row jc-sb ai-c">
@@ -298,7 +298,7 @@ export default function ResultPage() {
       </section>
 
       {/* § 02 SETTLEMENT */}
-      <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
+      <section className="shell-pad col gap-16" style={{ paddingTop: 32, paddingBottom: 56 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">SETTLEMENT</span>
@@ -315,8 +315,8 @@ export default function ResultPage() {
       </section>
 
       {/* Action row — centered horizontal */}
-      <section className="shell-pad" style={{ paddingTop: 16, paddingBottom: 80 }}>
-        <div className="row gap-12 ai-c jc-c">
+      <section className="shell-pad" style={{ paddingTop: 48, paddingBottom: 120 }}>
+        <div className="row gap-12 ai-c jc-c" style={{ flexWrap: 'wrap' }}>
           <Link href={`/duel/${rawId}`}>
             <BracketButton>WATCH REPLAY</BracketButton>
           </Link>
