@@ -454,17 +454,11 @@ export default function LobbyPage() {
           <span className="sect-head-meta"></span>
         </div>
 
-        <div className="card" style={{ padding: '0 28px', overflow: 'hidden' }}>
+        <div className="card" style={{ padding: '0 clamp(12px, 3vw, 28px)', overflow: 'hidden' }}>
           {/* Header row */}
           <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '28px minmax(0,1.6fr) 72px 84px minmax(0,1fr)',
-              columnGap: 20,
-              alignItems: 'center',
-              padding: '14px 0',
-              borderBottom: '1px solid var(--text-faint)',
-            }}
+            className="standings-grid standings-head"
+            style={{ borderBottom: '1px solid var(--text-faint)' }}
           >
             <span className="label-tiny">#</span>
             <span className="label-tiny">FIGHTER</span>
@@ -480,27 +474,23 @@ export default function LobbyPage() {
             return (
               <div
                 key={r.id}
+                className="standings-grid"
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: '28px minmax(0,1.6fr) 72px 84px minmax(0,1fr)',
-                  columnGap: 20,
-                  alignItems: 'center',
-                  padding: '14px 0',
                   borderBottom: i < ROSTER.length - 1 ? '1px solid var(--border)' : 'none',
                   cursor: 'pointer',
                 }}
                 onClick={() => { window.location.href = `/fighters/${r.id}`; }}
               >
-                <span className="t-num t-sm t-dim">{String(i + 1).padStart(2, '0')}</span>
-                <div className="row ai-c" style={{ gap: 10, minWidth: 0, overflow: 'hidden' }}>
+                <span className="st-rank t-num t-sm t-dim">{String(i + 1).padStart(2, '0')}</span>
+                <div className="st-name row ai-c" style={{ gap: 10, minWidth: 0, overflow: 'hidden' }}>
                   <FighterAvatar fighter={r.id} context="mini" size={28} />
                   <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
                 </div>
-                <span className="t-num t-sm">{r.record}</span>
-                <span className="t-num" style={{ textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
+                <span className="st-rec t-num t-sm">{r.record}</span>
+                <span className="st-pnl t-num" style={{ textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
                   {fmtUsd(r.pnl)}
                 </span>
-                <div style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
+                <div className="st-form" style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
                   <div
                     style={{
                       position: 'absolute',
