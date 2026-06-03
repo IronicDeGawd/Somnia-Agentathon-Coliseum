@@ -17,8 +17,13 @@ export const Sparkline: React.FC<SparklineProps> = ({
   color = 'var(--fighter-a)',
   fill = true,
 }) => {
+  // A numeric width is treated as a MAX, not a fixed size, so the sparkline
+  // always shrinks to its container instead of overflowing on narrow screens.
+  const sizeStyle: React.CSSProperties =
+    typeof width === 'number' ? { width: '100%', maxWidth: width } : { width };
+
   if (!data || data.length < 2) {
-    return <svg width={typeof width === 'number' ? width : undefined} height={height} className="sparkline" style={typeof width === 'string' ? { width } : undefined} />;
+    return <svg height={height} className="sparkline" style={sizeStyle} />;
   }
 
   const min = Math.min(...data);
@@ -51,7 +56,7 @@ export const Sparkline: React.FC<SparklineProps> = ({
       className="sparkline"
       viewBox={`0 0 ${svgWidth} ${svgHeight}`}
       preserveAspectRatio="none"
-      style={typeof width === 'string' ? { width } : { width }}
+      style={sizeStyle}
     >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">

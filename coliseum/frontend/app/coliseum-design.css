@@ -695,6 +695,14 @@ body {
   .shell, .shell-pad { padding-block: var(--sp-4); }
   .topbar { gap: var(--sp-3); }
 }
+@media (max-width: 640px) {
+  /* Arena combatants: stack the two fighter cards; the VS divider goes
+     full-width so two cards never share a 311px-wide phone row. */
+  .arena-duo { flex-direction: column; }
+  .arena-duo > * { width: 100% !important; flex: 1 1 auto !important; opacity: 1 !important; transform: none !important; }
+  .arena-vs { width: 100% !important; padding: var(--sp-1) 0; }
+  .arena-vs .t-display { font-size: 28px !important; }
+}
 @media (max-width: 520px) {
   body { font-size: 13px; }
   .standings-head { display: none; }
