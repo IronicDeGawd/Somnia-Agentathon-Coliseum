@@ -567,7 +567,7 @@ body {
 .fstrip {
   position: relative;
   flex: 1;
-  min-height: 540px;
+  min-height: clamp(280px, 50svh, 540px);
   overflow: hidden;
   border-right: 1px solid var(--border);
   cursor: pointer;

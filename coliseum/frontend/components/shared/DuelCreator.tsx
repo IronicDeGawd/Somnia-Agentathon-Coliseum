@@ -282,7 +282,7 @@ function QueueInner({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
             gap: '8px',
           }}
         >
@@ -322,7 +322,7 @@ function QueueInner({
                   className="t-up"
                   style={{
                     color: 'var(--text-faint)',
-                    fontSize: '7px',
+                    fontSize: 'clamp(9px, 1.6vw, 10px)',
                     lineHeight: 1.2,
                     letterSpacing: '0.04em',
                     textAlign: 'center',
