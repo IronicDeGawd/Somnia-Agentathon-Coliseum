@@ -132,6 +132,7 @@ async function main() {
     block: block.toString(),
     deployer,
     contracts: {
+      ...(prior.contracts ?? {}),  // preserve prior entries (e.g. SwapFallback)
       FighterRegistry: { address: registryAddr },
       Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString() },
       DuelHistory: { address: history.address },

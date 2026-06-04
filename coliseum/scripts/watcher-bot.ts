@@ -6,8 +6,11 @@
 //      the MM seeder wallet (calls owner-only sweepStt).
 //   2. Tops the seeder wallet up from the deployer when its STT falls below
 //      a refill threshold, so the bot can keep paying gas for resting orders.
-//   3. Refuses to drain the deployer below DEPLOYER_MIN_STT.
-//   4. Logs every action with timestamp; one-shots when WATCHER_INTERVAL_S=0.
+//   3. Self-tops the Arena's STT (its LLM-inference fuel) from the deployer when
+//      it falls below a threshold — each fighter move costs ~0.24 STT, drawn from
+//      the Arena's balance, so duels stall if it runs dry.
+//   4. Refuses to drain the deployer below DEPLOYER_MIN_STT.
+//   5. Logs every action with timestamp; one-shots when WATCHER_INTERVAL_S=0.
 //
 // Run:
 //   SEEDER_ADDRESS=0x<seeder> pnpm exec hardhat run scripts/watcher-bot.ts --network somnia
@@ -18,6 +21,8 @@
 //   SWEEP_THRESHOLD_STT  — sweep fallback when its STT ≥ this (default 5)
 //   SEEDER_MIN_STT       — refill seeder when it drops below this (default 50)
 //   SEEDER_TOPUP_STT     — STT to send per top-up (default 100)
+//   ARENA_MIN_STT        — refill Arena when its STT drops below this (default 5)
+//   ARENA_TOPUP_STT      — STT to send the Arena per top-up (default 10)
 //   DEPLOYER_MIN_STT     — never drain deployer below this (default 20)
 // ============================================================================
 
@@ -50,23 +55,27 @@ async function tick(opts: {
   fallback: `0x${string}`;
   seeder: `0x${string}`;
   deployer: `0x${string}`;
+  arena: `0x${string}`;
   sweepThreshold: bigint;
   seederMin: bigint;
   seederTopup: bigint;
   deployerMin: bigint;
+  arenaMin: bigint;
+  arenaTopup: bigint;
 }) {
   const pub = await hre.viem.getPublicClient();
   const [wallet] = await hre.viem.getWalletClients();
-  const { fallback, seeder, deployer, sweepThreshold, seederMin, seederTopup, deployerMin } = opts;
+  const { fallback, seeder, deployer, arena, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup } = opts;
 
-  const [fbBal, seederBal, deployerBal] = await Promise.all([
+  const [fbBal, seederBal, deployerBal, arenaBal] = await Promise.all([
     pub.getBalance({ address: fallback }),
     pub.getBalance({ address: seeder }),
     pub.getBalance({ address: deployer }),
+    pub.getBalance({ address: arena }),
   ]);
   log(
     `balances: fallback=${formatEther(fbBal)} STT  seeder=${formatEther(seederBal)} STT  ` +
-    `deployer=${formatEther(deployerBal)} STT`,
+    `arena=${formatEther(arenaBal)} STT  deployer=${formatEther(deployerBal)} STT`,
   );
 
   // 1. Sweep fallback → seeder if above threshold.
@@ -111,6 +120,28 @@ async function tick(opts: {
   } else {
     log(`topup: skip (seeder ${formatEther(seederBal)} ≥ ${formatEther(seederMin)} STT)`);
   }
+
+  // 3. Self-top the Arena's LLM-inference fuel from the deployer when low.
+  if (arenaBal < arenaMin) {
+    if (deployerBal < deployerMin + arenaTopup) {
+      log(
+        `arena: ${formatEther(arenaBal)} < ${formatEther(arenaMin)} STT, but deployer ${formatEther(deployerBal)} ` +
+        `would drop below floor ${formatEther(deployerMin)} if we send ${formatEther(arenaTopup)} STT. Skipping.`,
+      );
+    } else {
+      log(`arena: ${formatEther(arenaBal)} < ${formatEther(arenaMin)} STT → sending ${formatEther(arenaTopup)} STT to ${arena}`);
+      try {
+        const hash = await wallet.sendTransaction({ to: arena, value: arenaTopup });
+        const r = await pub.waitForTransactionReceipt({ hash });
+        log(`  arena topup tx=${hash} status=${r.status} block=${r.blockNumber}`);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+        log(`  arena topup failed: ${msg}`);
+      }
+    }
+  } else {
+    log(`arena: skip (${formatEther(arenaBal)} ≥ ${formatEther(arenaMin)} STT)`);
+  }
 }
 
 async function main() {
@@ -132,11 +163,17 @@ async function main() {
   if (!fallback) {
     throw new Error("SwapFallback address missing from manifest. Deploy it with scripts/deploy-swap-fallback.ts.");
   }
+  const arena = manifest?.contracts?.Arena?.address as `0x${string}` | undefined;
+  if (!arena) {
+    throw new Error("Arena address missing from manifest.");
+  }
 
   const intervalS = parseInt(process.env.WATCHER_INTERVAL_S ?? "60", 10);
   const sweepThreshold = parseEther(process.env.SWEEP_THRESHOLD_STT ?? "5");
   const seederMin = parseEther(process.env.SEEDER_MIN_STT ?? "50");
   const seederTopup = parseEther(process.env.SEEDER_TOPUP_STT ?? "100");
+  const arenaMin = parseEther(process.env.ARENA_MIN_STT ?? "5");
+  const arenaTopup = parseEther(process.env.ARENA_TOPUP_STT ?? "10");
   const deployerMin = parseEther(process.env.DEPLOYER_MIN_STT ?? "20");
 
   const [wallet] = await hre.viem.getWalletClients();
@@ -158,12 +195,15 @@ async function main() {
 
   log(`config:`);
   log(`  SwapFallback     ${fallback}`);
+  log(`  Arena            ${arena}`);
   log(`  seeder           ${seeder}`);
   log(`  deployer         ${deployer}`);
   log(`  interval         ${intervalS === 0 ? "one-shot" : `${intervalS}s`}`);
   log(`  sweep threshold  ${formatEther(sweepThreshold)} STT`);
   log(`  seeder min       ${formatEther(seederMin)} STT`);
   log(`  seeder topup     ${formatEther(seederTopup)} STT`);
+  log(`  arena min        ${formatEther(arenaMin)} STT`);
+  log(`  arena topup      ${formatEther(arenaTopup)} STT`);
   log(`  deployer floor   ${formatEther(deployerMin)} STT`);
 
   let running = true;
@@ -174,7 +214,7 @@ async function main() {
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
 
-  const ctx = { fallback, seeder, deployer, sweepThreshold, seederMin, seederTopup, deployerMin };
+  const ctx = { fallback, seeder, deployer, arena, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup };
 
   if (intervalS === 0) {
     await tick(ctx);
