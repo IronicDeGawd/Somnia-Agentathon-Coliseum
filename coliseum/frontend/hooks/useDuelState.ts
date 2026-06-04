@@ -1,15 +1,25 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useReadContract, useWatchContractEvent } from 'wagmi';
+import { useReadContract, useWatchContractEvent, usePublicClient } from 'wagmi';
+import { parseAbiItem } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES } from '@/lib/contracts';
 
 // DuelStatus enum mirrors ArenaTypes.DuelStatus { None=0, Active=1, Finalizing=2, Resolved=3 }
 const DUEL_STATUS_ACTIVE   = 1;
 const DUEL_STATUS_RESOLVED = 3;
 
+// Event used for the historical BetPlaced backfill (getLogs). Field names match
+// the on-chain Bookmaker event exactly: (duelId, fighterId, bettor, stake, ...).
+const BET_PLACED_EVENT = parseAbiItem(
+  'event BetPlaced(uint256 indexed duelId, uint8 indexed fighterId, address indexed bettor, uint256 stake, uint16 oddsAtPlacementBps, uint256 betIndex)',
+);
+
 export interface DuelData {
+  fighterA: number;
+  fighterB: number;
   creator: `0x${string}`;
+  startBlock: bigint;
   turns: number;
   poolMask: number;
   currentTurn: number;
@@ -82,44 +92,78 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     },
   });
 
-  // ── BetPlaced event accumulation for totalBetsA / totalBetsB ─────────────
+  // ── BetPlaced accumulation for totalBetsA / totalBetsB ───────────────────
   // Bookmaker has no totalBetsA/totalBetsB view; we tally from BetPlaced events.
+  // Two sources feed the tally: a one-time getLogs backfill (so a fresh page
+  // load shows the real pool, not 0) and the live watcher (for new bets). Both
+  // route through ingestBetLogs, which dedupes by txHash:logIndex so the
+  // boundary block can't be counted twice. fighterId/stake are the real event
+  // field names (slot 0 = A, slot 1 = B; BetPanel places bets keyed by slot).
+  const publicClient = usePublicClient();
   const [totalBetsA, setTotalBetsA] = useState<bigint>(BigInt(0));
   const [totalBetsB, setTotalBetsB] = useState<bigint>(BigInt(0));
-  // Track whether we've seen at least one event (avoids premature 0 display).
-  const betsInitialized = useRef(false);
+  const seenBets = useRef<Set<string>>(new Set());
 
+  const ingestBetLogs = useCallback(
+    (logs: readonly { transactionHash: `0x${string}` | null; logIndex: number | null; args: unknown }[]) => {
+      let addA = BigInt(0);
+      let addB = BigInt(0);
+      for (const log of logs) {
+        const key = `${log.transactionHash}:${log.logIndex}`;
+        if (seenBets.current.has(key)) continue;
+        seenBets.current.add(key);
+        const args = log.args as { duelId?: bigint; fighterId?: number; stake?: bigint };
+        if (args.duelId !== duelId) continue;
+        const stake = args.stake ?? BigInt(0);
+        if (args.fighterId === 0) addA += stake;
+        else if (args.fighterId === 1) addB += stake;
+      }
+      if (addA > BigInt(0)) setTotalBetsA((prev) => prev + addA);
+      if (addB > BigInt(0)) setTotalBetsB((prev) => prev + addB);
+    },
+    [duelId],
+  );
+
+  // Reset tally whenever duelId changes (before the new backfill runs).
+  useEffect(() => {
+    setTotalBetsA(BigInt(0));
+    setTotalBetsB(BigInt(0));
+    seenBets.current = new Set();
+  }, [duelId]);
+
+  // One-time historical backfill, bounded to the duel's startBlock so we don't
+  // scan all chain history. Failure is non-fatal — the live watcher still tallies.
+  const startBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : undefined;
+  useEffect(() => {
+    if (!enabled || !publicClient || startBlock === undefined) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const logs = await publicClient.getLogs({
+          address: CONTRACT_ADDRESSES.Bookmaker,
+          event: BET_PLACED_EVENT,
+          args: { duelId },
+          fromBlock: startBlock,
+          toBlock: 'latest',
+        });
+        if (!cancelled) ingestBetLogs(logs);
+      } catch {
+        // Ignore — live watcher below still accumulates new bets.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, publicClient, duelId, startBlock, ingestBetLogs]);
+
+  // Live BetPlaced watcher — appends new bets as they land.
   useWatchContractEvent({
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: ABIS.Bookmaker,
     eventName: 'BetPlaced',
     onLogs(logs) {
-      for (const log of logs) {
-        const args = log.args as {
-          duelId?: bigint;
-          bettor?: `0x${string}`;
-          slot?: number;
-          amount?: bigint;
-        };
-        if (args.duelId !== duelId) continue;
-        const amount = args.amount ?? BigInt(0);
-        if (args.slot === 0) {
-          setTotalBetsA((prev) => prev + amount);
-        } else if (args.slot === 1) {
-          setTotalBetsB((prev) => prev + amount);
-        }
-        betsInitialized.current = true;
-      }
+      ingestBetLogs(logs);
     },
     enabled,
   });
-
-  // Reset bet totals whenever duelId changes.
-  useEffect(() => {
-    setTotalBetsA(BigInt(0));
-    setTotalBetsB(BigInt(0));
-    betsInitialized.current = false;
-  }, [duelId]);
 
   // ── TurnAdvanced → refetch duel state ─────────────────────────────────────
   useWatchContractEvent({
@@ -160,7 +204,10 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   //             initialUsdsoPerFighter, lastAction, fundsRecovered, winnerSlot)
   const duel: DuelData | null = duelRaw
     ? {
+        fighterA:      Number(duelRaw[0]),
+        fighterB:      Number(duelRaw[1]),
         creator:       duelRaw[2] as unknown as `0x${string}`,
+        startBlock:    duelRaw[3] as unknown as bigint,
         turns:         Number(duelRaw[6]),
         poolMask:      Number(duelRaw[7]),
         currentTurn:   Number(duelRaw[5]),   // completedCallbacks

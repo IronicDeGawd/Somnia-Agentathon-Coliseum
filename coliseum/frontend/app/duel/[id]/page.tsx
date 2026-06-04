@@ -14,6 +14,7 @@ import BetPanel from '@/components/shared/BetPanel';
 import { RoundClock } from '@/components/shared/RoundClock';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
+import { useFighters } from '@/hooks/useFighters';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { FIGHTERS } from '@/lib/fighters';
 import { fmtUsd, fmtPct, fmtTime } from '@/lib/format';
@@ -219,6 +220,8 @@ export default function ArenaPage() {
   const {
     duel,
     odds,
+    totalBetsA,
+    totalBetsB,
     currentTurn,
     isActive,
     isResolved,
@@ -257,37 +260,41 @@ export default function ArenaPage() {
     : simState.oddsDegen;
   const oddsWhalePct = 100 - oddsDegenPct;
 
-  // Fighter indexes from the on-chain duel, defaulting to 0/1 (degen/whale) during load.
-  // The ABI tuple for duels() does not expose fighterA/fighterB in the current contracts.ts
-  // definition, so we cast through unknown and fall back safely if absent.
-  const duelAny = duel as unknown as Record<string, unknown> | null;
-  const fighterAIndex = (duelAny && typeof duelAny.fighterA === 'number') ? duelAny.fighterA : 0;
-  const fighterBIndex = (duelAny && typeof duelAny.fighterB === 'number') ? duelAny.fighterB : 1;
+  // Real fighter indexes from the on-chain duel (duels() tuple slots 0/1), now
+  // exposed by useDuelState. Default to 0/1 (degen/whale) only while loading.
+  const fighterAIndex = duel ? duel.fighterA : 0;
+  const fighterBIndex = duel ? duel.fighterB : 1;
 
-  // Resolve visual identity for each fighter slot from the registry mapping.
+  // Resolve visual identity (corner color / side / tier) for each slot.
   const visualA = FIGHTER_VISUAL_MAP[fighterAIndex] ?? DEFAULT_VISUAL;
   const visualB = FIGHTER_VISUAL_MAP[fighterBIndex] ?? { ...DEFAULT_VISUAL, side: 'b' as const };
 
-  // Fall back to FIGHTERS static data for name/tagline/avatar while waiting on chain.
+  // Static FIGHTERS persona = loading fallback for name/tagline/avatar.
   const fallbackA = FIGHTERS[visualA.fallbackId] ?? FIGHTERS.degen;
   const fallbackB = FIGHTERS[visualB.fallbackId] ?? FIGHTERS.whale;
 
+  // Real on-chain name/tagline from the FighterRegistry (one batched read for all
+  // six). Falls back to the static persona until the registry read resolves.
+  const { fighters: chainFighters } = useFighters();
+  const chainA = chainFighters.find((f) => f.index === fighterAIndex);
+  const chainB = chainFighters.find((f) => f.index === fighterBIndex);
+
   const degenF = {
     id: visualA.fallbackId,
-    name: fallbackA.name,
+    name: chainA?.name ?? fallbackA.name,
     hex: visualA.hex,
     side: 'a' as const,
     tier: visualA.tier,
-    tagline: fallbackA.tagline,
+    tagline: chainA?.tagline ?? fallbackA.tagline,
     rank: visualA.rank,
   };
   const whaleF = {
     id: visualB.fallbackId,
-    name: fallbackB.name,
+    name: chainB?.name ?? fallbackB.name,
     hex: visualB.hex,
     side: 'b' as const,
     tier: visualB.tier,
-    tagline: fallbackB.tagline,
+    tagline: chainB?.tagline ?? fallbackB.tagline,
     rank: visualB.rank,
   };
 
@@ -573,6 +580,11 @@ export default function ArenaPage() {
               duelId={duelId}
               fighterAName={degenF.name}
               fighterBName={whaleF.name}
+              odds={odds}
+              totalBetsA={totalBetsA}
+              totalBetsB={totalBetsB}
+              isActive={isActive}
+              isLoading={isLoading}
             />
           ) : (
             <div className="panel pad-16" style={{ textAlign: 'center', color: 'var(--text-dim)' }}>
