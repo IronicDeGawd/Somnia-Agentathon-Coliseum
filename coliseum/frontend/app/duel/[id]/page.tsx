@@ -311,7 +311,7 @@ export default function ArenaPage() {
   );
 
   return (
-    <div className="col" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
+    <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
       <AppTopBar />
 
       {/* ArenaStatusBar — broadcast slate */}
@@ -361,23 +361,37 @@ export default function ArenaPage() {
         />
       </div>
 
-      <div className="shell-pad col gap-24" style={{ flex: 1 }}>
+      <div className="shell-pad col" style={{ flex: 1, gap: 'clamp(32px, 5vw, 64px)', paddingBlock: 'clamp(24px, 4vw, 48px)' }}>
         {/* § COMBATANTS */}
-        <div className="col gap-12">
-          <div className="sect-head">
+        <div className="col gap-12" style={{ position: 'relative' }}>
+          {/* Stage spotlights — red corner left, blue corner right, converging center */}
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute', inset: '-24px -12px', pointerEvents: 'none', zIndex: 0,
+              background:
+                'radial-gradient(55% 75% at 16% 55%, var(--fighter-a-glow), transparent 62%), radial-gradient(55% 75% at 84% 55%, var(--fighter-b-glow), transparent 62%)',
+              opacity: 0.5,
+            }}
+          />
+          <div className="sect-head" style={{ position: 'relative', zIndex: 1 }}>
             <span className="sect-head-num">§ COMBATANTS</span>
             <span className="sect-head-title">RED CORNER · BLUE CORNER</span>
             <span className="sect-head-meta">round {displayRound} of {displayTurns} · ~600 blocks per round (~1 min)</span>
           </div>
 
           {layout === 'split' && (
-            <div className="row gap-16 arena-duo" style={{ alignItems: 'stretch' }}>
+            <div className="row gap-16 arena-duo" style={{ alignItems: 'stretch', position: 'relative', zIndex: 1 }}>
               <div className="col gap-16" style={{ flex: 1 }}>{degenCard}</div>
-              <div className="col ai-c jc-c arena-vs" style={{ width: 80 }}>
+              {/* Central scoreboard HUD — the tale of the tape */}
+              <div className="col ai-c jc-c arena-vs" style={{ width: 150, gap: 10 }}>
+                <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.22em', whiteSpace: 'nowrap' }}>
+                  ROUND {displayRound}/{displayTurns}
+                </span>
                 <span
                   className="t-display vs-pop"
                   style={{
-                    fontSize: 56,
+                    fontSize: 56, lineHeight: 1,
                     background: 'linear-gradient(180deg, var(--fighter-a), var(--fighter-b))',
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
@@ -385,6 +399,20 @@ export default function ArenaPage() {
                 >
                   VS
                 </span>
+                <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text-dim)' }}>
+                  BELL <span className="t-num">{fmtTime(simState.timeLeft)}</span>
+                </span>
+                <div className="col ai-c gap-2" style={{ width: '100%', marginTop: 2 }}>
+                  <div className="row ai-c jc-sb" style={{ width: '88%' }}>
+                    <span className="t-num" style={{ fontSize: 12, color: 'var(--fighter-a)' }}>{oddsDegenPct}%</span>
+                    <span className="t-num" style={{ fontSize: 12, color: 'var(--fighter-b)' }}>{oddsWhalePct}%</span>
+                  </div>
+                  <div style={{ width: '88%', height: 4, display: 'flex', border: '1px solid var(--border)', overflow: 'hidden' }}>
+                    <div style={{ width: `${oddsDegenPct}%`, background: 'var(--fighter-a)' }} />
+                    <div style={{ flex: 1, background: 'var(--fighter-b)' }} />
+                  </div>
+                  <span className="label-tiny" style={{ fontSize: 8 }}>LIVE ODDS</span>
+                </div>
               </div>
               <div className="col gap-16" style={{ flex: 1 }}>{whaleCard}</div>
             </div>
@@ -423,27 +451,40 @@ export default function ArenaPage() {
             <span className="sect-head-title">FIGHTER REASONING</span>
             <span className="sect-head-meta">SOMNIA AGENTS · inferNumber(0..6)</span>
           </div>
-          <div className="col gap-16">
-            <div className="col gap-4">
-              <div className="row gap-8 ai-c">
-                <Dot variant="a" pulse={simState.degen.thinking} />
-                <span className="label-tiny" style={{ color: 'var(--fighter-a)', whiteSpace: 'nowrap' }}>
-                  {degenF.name} {simState.degen.thinking ? 'THINKING…' : 'DECIDED'}
+          {/* Two opposing corners — red DEGEN / blue WHALE, mirroring the fight */}
+          <div className="row gap-16 stack-sm" style={{ alignItems: 'stretch' }}>
+            <div
+              className="col gap-6 flex-1"
+              style={{ minWidth: 0, padding: '14px 16px', borderLeft: '2px solid var(--fighter-a)', background: 'linear-gradient(180deg, var(--fighter-a-soft), transparent 70%)' }}
+            >
+              <div className="row gap-8 ai-c jc-sb">
+                <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
+                  <Dot variant="a" pulse={simState.degen.thinking} />
+                  <span className="label-tiny" style={{ color: 'var(--fighter-a)', whiteSpace: 'nowrap' }}>
+                    {degenF.name} {simState.degen.thinking ? 'THINKING…' : 'DECIDED'}
+                  </span>
                 </span>
+                <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>RED CORNER</span>
               </div>
-              <div className="t-mono t-sm" style={{ color: 'var(--text)', paddingLeft: 16, lineHeight: 1.5, minHeight: 22 }}>
+              <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
                 <span className="t-dim">{'> '}</span>
                 <Typewriter text={simState.degen.reasoning} speed={42} />
               </div>
             </div>
-            <div className="col gap-4">
-              <div className="row gap-8 ai-c">
-                <Dot variant="b" pulse={simState.whale.thinking} />
-                <span className="label-tiny" style={{ color: 'var(--fighter-b)', whiteSpace: 'nowrap' }}>
-                  {whaleF.name} {simState.whale.thinking ? 'THINKING…' : 'DECIDED'}
+            <div
+              className="col gap-6 flex-1"
+              style={{ minWidth: 0, padding: '14px 16px', borderLeft: '2px solid var(--fighter-b)', background: 'linear-gradient(180deg, var(--fighter-b-soft), transparent 70%)' }}
+            >
+              <div className="row gap-8 ai-c jc-sb">
+                <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
+                  <Dot variant="b" pulse={simState.whale.thinking} />
+                  <span className="label-tiny" style={{ color: 'var(--fighter-b)', whiteSpace: 'nowrap' }}>
+                    {whaleF.name} {simState.whale.thinking ? 'THINKING…' : 'DECIDED'}
+                  </span>
                 </span>
+                <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>BLUE CORNER</span>
               </div>
-              <div className="t-mono t-sm" style={{ color: 'var(--text)', paddingLeft: 16, lineHeight: 1.5, minHeight: 22 }}>
+              <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
                 <span className="t-dim">{'> '}</span>
                 <Typewriter text={simState.whale.reasoning} speed={42} />
               </div>

@@ -511,29 +511,41 @@ body {
   background: var(--text-faint);
 }
 
-/* Section bracket header */
+/* Section bracket header — editorial "chapter" treatment shared by the landing
+   and the inner pages: a gradient accent tick on the rule, a numbered label,
+   and a gradient-inked title so every section reads like a chapter, not a row. */
 .sect-head {
   display: flex; align-items: baseline; gap: 12px;
-  border-top: 1px solid var(--text-faint);
-  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
   flex-wrap: wrap; /* let the meta drop below the title on narrow screens */
+  position: relative;
+}
+.sect-head::before {
+  content: "";
+  position: absolute; top: -1px; left: 0;
+  width: 56px; height: 2px;
+  background: linear-gradient(90deg, var(--fighter-a), var(--fighter-b));
 }
 .sect-head-num {
   font-family: var(--fnt-mono);
   font-size: 11px;
   letter-spacing: 0.28em;
-  color: var(--text-dim);
+  color: var(--bronze);
   font-weight: 600;
   flex-shrink: 0;
 }
 .sect-head-title {
   font-family: var(--fnt-display);
   font-weight: 700;
-  font-size: 14px;
-  letter-spacing: 0.28em;
-  color: var(--text);
+  font-size: clamp(15px, 1.3vw, 19px);
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   flex-shrink: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #cbb8ff 60%, #8b78c4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .sect-head-meta {
   margin-left: auto;
