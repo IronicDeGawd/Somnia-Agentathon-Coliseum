@@ -11,9 +11,13 @@ import { DuelCreator } from '@/components/shared/DuelCreator';
 import DuelCard from '@/components/shared/DuelCard';
 import { useActiveDuel } from '@/hooks/useActiveDuel';
 import { useQueueState, type QueueTier } from '@/hooks/useQueueState';
+import { useLeaderboard } from '@/hooks/useLeaderboard';
+import { useMyBets } from '@/hooks/useMyBets';
 import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { fmtUsd, fmtTime } from '@/lib/format';
+import { formatUnits } from 'viem';
+import { useAccount } from 'wagmi';
 
 // On-chain fighter index → local fighter roster id (FighterRegistry order matches ROSTER order)
 const FIGHTER_INDEX_TO_ID: Record<number, string> = {
@@ -41,6 +45,9 @@ export default function LobbyPage() {
   }, []);
 
   const { activeDuelId, duel, isLoading: isDuelLoading } = useActiveDuel();
+  const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
+  const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
+  const { address: walletAddress } = useAccount();
   const { slots: queueSlots, isLoading: isQueueLoading } = useQueueState();
 
   useEffect(() => {
@@ -467,45 +474,60 @@ export default function LobbyPage() {
             <span className="label-tiny">FORM</span>
           </div>
 
-          {ROSTER.map((r, i) => {
-            const isPos = r.pnl >= 0;
-            const maxAbs = 400;
-            const w = Math.min(100, (Math.abs(r.pnl) / maxAbs) * 100);
-            return (
-              <div
-                key={r.id}
-                className="standings-grid"
-                style={{
-                  borderBottom: i < ROSTER.length - 1 ? '1px solid var(--border)' : 'none',
-                  cursor: 'pointer',
-                }}
-                onClick={() => { window.location.href = `/fighters/${r.id}`; }}
-              >
-                <span className="st-rank t-num t-sm t-dim">{String(i + 1).padStart(2, '0')}</span>
-                <div className="st-name row ai-c" style={{ gap: 10, minWidth: 0, overflow: 'hidden' }}>
-                  <FighterAvatar fighter={r.id} context="mini" size={28} />
-                  <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
+          {leaderboardEmpty ? (
+            <div
+              className="row ai-c jc-c"
+              style={{ padding: '28px 0', color: 'var(--text-faint)' }}
+            >
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.2em', textAlign: 'center' }}>
+                No settled duels yet — standings populate as fighters duel.
+              </span>
+            </div>
+          ) : (
+            leaderboardRows.map((r, i) => {
+              const fighterId = fighterIndexToId(r.index);
+              const pnlFloat = parseFloat(formatUnits(r.pnl < BigInt(0) ? -r.pnl : r.pnl, 18)) * (r.pnl < BigInt(0) ? -1 : 1);
+              const isPos = r.pnl >= BigInt(0);
+              const maxAbs = 400;
+              const w = Math.min(100, (Math.abs(pnlFloat) / maxAbs) * 100);
+              const pnlSign = r.pnl > BigInt(0) ? '+' : r.pnl < BigInt(0) ? '-' : '';
+              const pnlAbs = parseFloat(formatUnits(r.pnl < BigInt(0) ? -r.pnl : r.pnl, 18)).toFixed(2);
+              return (
+                <div
+                  key={r.index}
+                  className="standings-grid"
+                  style={{
+                    borderBottom: i < leaderboardRows.length - 1 ? '1px solid var(--border)' : 'none',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => { window.location.href = `/fighters/${fighterId}`; }}
+                >
+                  <span className="st-rank t-num t-sm t-dim">{String(i + 1).padStart(2, '0')}</span>
+                  <div className="st-name row ai-c" style={{ gap: 10, minWidth: 0, overflow: 'hidden' }}>
+                    <FighterAvatar fighter={fighterId} context="mini" size={28} />
+                    <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
+                  </div>
+                  <span className="st-rec t-num t-sm">{r.wins}W-{r.losses}L</span>
+                  <span className="st-pnl t-num" style={{ textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
+                    {pnlSign}${pnlAbs}
+                  </span>
+                  <div className="st-form" style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        bottom: 0,
+                        left: isPos ? '50%' : `${50 - w / 2}%`,
+                        width: `${w / 2}%`,
+                        background: isPos ? 'var(--win)' : 'var(--loss)',
+                      }}
+                    />
+                    <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: 'var(--text-faint)' }} />
+                  </div>
                 </div>
-                <span className="st-rec t-num t-sm">{r.record}</span>
-                <span className="st-pnl t-num" style={{ textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
-                  {fmtUsd(r.pnl)}
-                </span>
-                <div className="st-form" style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      bottom: 0,
-                      left: isPos ? '50%' : `${50 - w / 2}%`,
-                      width: `${w / 2}%`,
-                      background: isPos ? 'var(--win)' : 'var(--loss)',
-                    }}
-                  />
-                  <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: 'var(--text-faint)' }} />
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </section>
 
@@ -518,29 +540,57 @@ export default function LobbyPage() {
         </div>
 
         <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
-          {[
-            { status: 'live', round: 341, fighters: 'DEGEN vs WHALE',      bet: '$5 on DEGEN @ 65%',   est: '+$2.69 est.', color: 'var(--win)' },
-            { status: 'won',  round: 339, fighters: 'DEGEN vs CONTRARIAN', bet: '$10 on DEGEN @ 58%',  est: '+$7.24',      color: 'var(--win)' },
-            { status: 'lost', round: 338, fighters: 'SCALPER vs SURFER',   bet: '$5 on SCALPER @ 47%', est: '−$5.00',      color: 'var(--loss)' },
-            { status: 'won',  round: 336, fighters: 'WHALE vs DEGEN',      bet: '$8 on WHALE @ 51%',   est: '+$7.85',      color: 'var(--win)' },
-          ].map((b) => (
-            <div key={b.round} className="card pad-16 col gap-8 flex-1" style={{ minWidth: 'min(100%, 220px)' }}>
-              <div className="row jc-sb ai-c">
-                {b.status === 'live' ? (
-                  <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
-                ) : b.status === 'won' ? (
-                  <Chip variant="win">WON</Chip>
-                ) : (
-                  <Chip variant="loss">LOST</Chip>
-                )}
-                <span className="t-mono t-xs t-faint">#{b.round}</span>
-              </div>
-              <span className="t-mono t-sm">{b.fighters}</span>
-              <hr className="divider" />
-              <span className="t-mono t-xs t-dim">{b.bet}</span>
-              <span className="t-num" style={{ color: b.color, fontSize: 18 }}>{b.est}</span>
+          {!walletAddress ? (
+            <div
+              className="card pad-16 col ai-c jc-c"
+              style={{ minHeight: 100, width: '100%', color: 'var(--text-faint)' }}
+            >
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.2em' }}>
+                Connect wallet to see your bets.
+              </span>
             </div>
-          ))}
+          ) : betsLoading ? (
+            <div
+              className="card pad-16 col ai-c jc-c"
+              style={{ minHeight: 100, width: '100%', color: 'var(--text-faint)' }}
+            >
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.2em' }}>
+                LOADING BETS…
+              </span>
+            </div>
+          ) : betsEmpty ? (
+            <div
+              className="card pad-16 col ai-c jc-c"
+              style={{ minHeight: 100, width: '100%', color: 'var(--text-faint)' }}
+            >
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.2em' }}>
+                No bets yet. Place a bet during an active duel.
+              </span>
+            </div>
+          ) : (
+            myBets.map((b) => {
+              const fighterId = fighterIndexToId(b.fighterId);
+              const rosterEntry = ROSTER.find((r) => r.id === fighterId);
+              const fighterName = rosterEntry?.name ?? `FIGHTER #${b.fighterId}`;
+              const stakeUsd = parseFloat(formatUnits(b.stake, 18)).toFixed(2);
+              const oddsPct = (b.oddsBps / 100).toFixed(0);
+              return (
+                <div
+                  key={b.betIndex.toString()}
+                  className="card pad-16 col gap-8 flex-1"
+                  style={{ minWidth: 'min(100%, 220px)' }}
+                >
+                  <div className="row jc-sb ai-c">
+                    <Chip variant="live"><Dot variant="a" /> PLACED</Chip>
+                    <span className="t-mono t-xs t-faint">duel #{b.duelId.toString()}</span>
+                  </div>
+                  <span className="t-mono t-sm">{fighterName}</span>
+                  <hr className="divider" />
+                  <span className="t-mono t-xs t-dim">${stakeUsd} @ {oddsPct}%</span>
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
     </div>

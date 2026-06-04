@@ -7,7 +7,22 @@ export const CONTRACT_ADDRESSES = {
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
   Matchmaker: '0x92ddaca48f65586e9d8c117ae4252813e120a157' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
+  // Set on the Arena redeploy that wires setDuelHistory (see context/plan/leaderboard-history.md).
+  // Zero until then — leaderboard/history hooks detect this and render honest empty states.
+  DuelHistory: '0x0000000000000000000000000000000000000000' as `0x${string}`,
 };
+
+/** True once DuelHistory has a real (non-zero) deployed address. */
+export const DUEL_HISTORY_DEPLOYED =
+  CONTRACT_ADDRESSES.DuelHistory.toLowerCase() !==
+  '0x0000000000000000000000000000000000000000';
+
+/**
+ * Block at which the core contracts (Arena/Bookmaker) were deployed on Somnia
+ * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
+ * never ask a public RPC to scan from genesis — that gets rejected/throttled.
+ */
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(394572942);
 
 export enum DuelStatus {
   None = 0,
@@ -96,6 +111,17 @@ export const ABIS = {
     'event RakeWithdrawn(uint256 indexed duelId, address indexed to, uint256 amount)',
     'event OddsRequestSent(uint256 indexed duelId, uint256 indexed requestId, uint256 blockNumber)',
     'event OddsRequestFailed(uint256 indexed duelId, string reason)',
+  ]),
+
+  DuelHistory: parseAbi([
+    'function getFighterRecord(uint8 index) view returns ((uint32 wins, uint32 losses, uint32 duels, int256 cumulativePnl))',
+    'function leaderboard() view returns ((uint32 wins, uint32 losses, uint32 duels, int256 cumulativePnl)[])',
+    'function totalDuels() view returns (uint256)',
+    'function getEntries(uint256 offset, uint256 limit) view returns ((uint256 duelId, uint8 fighterA, uint8 fighterB, uint8 winnerSlot, uint8 winnerFighter, uint256 valueA, uint256 valueB, int256 pnlA, int256 pnlB, uint64 blockNumber)[])',
+    'function getFighterEntries(uint8 index, uint256 offset, uint256 limit) view returns ((uint256 duelId, uint8 fighterA, uint8 fighterB, uint8 winnerSlot, uint8 winnerFighter, uint256 valueA, uint256 valueB, int256 pnlA, int256 pnlB, uint64 blockNumber)[])',
+    'function fighterEntryCount(uint8 index) view returns (uint256)',
+    'function recorded(uint256 duelId) view returns (bool)',
+    'event DuelRecorded(uint256 indexed duelId, uint8 indexed winnerFighter, uint8 fighterA, uint8 fighterB, int256 pnlA, int256 pnlB)',
   ]),
 
   FighterRegistry: parseAbi([

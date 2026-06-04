@@ -8,6 +8,8 @@ import { Meter } from '@/components/shared/Meter';
 import { BracketButton } from '@/components/shared/OtherHUD';
 import { fighterIdToIndex, fighterIndexToId } from '@/lib/fighters';
 import { useFighters } from '@/hooks/useFighters';
+import { useFighterHistory } from '@/hooks/useFighterHistory';
+import { formatUnits } from 'viem';
 
 interface FighterProfileProps {
   params: Promise<{ id: string }>;
@@ -19,6 +21,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
   const fighterIndex = fighterIdToIndex(id);
 
   const { fighters, isLoading } = useFighters();
+  const { record: fighterRecord, entries: fightHistory, isEmpty: historyEmpty, isLoading: historyLoading } = useFighterHistory(fighterIndex);
 
   const f = fighters.find((x) => x.index === fighterIndex) ?? null;
   const fid = f ? fighterIndexToId(f.index) : id;
@@ -212,23 +215,90 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
           <span className="sect-head-title">DUEL HISTORY</span>
-          <span className="sect-head-meta">settled duels from Arena events</span>
+          <span className="sect-head-meta">settled duels from DuelHistory contract</span>
         </div>
 
-        <div className="card pad-24 col gap-12 ai-c jc-c" style={{ minHeight: 120 }}>
-          <span
-            className="t-mono t-xs"
-            style={{ letterSpacing: '0.2em', color: 'var(--text-faint)', textAlign: 'center' }}
-          >
-            DUEL HISTORY — wiring in progress
-          </span>
-          <span
-            className="t-mono t-xs t-faint"
-            style={{ textAlign: 'center' }}
-          >
-            On-chain event indexing coming soon. Check back after the first duels resolve.
-          </span>
-        </div>
+        {/* Record summary */}
+        {fighterRecord && (
+          <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
+            <div className="card pad-16 col gap-4 flex-1" style={{ minWidth: 'min(100%, 140px)' }}>
+              <span className="label-tiny">RECORD</span>
+              <span className="t-num" style={{ fontSize: 24 }}>{fighterRecord.wins}W – {fighterRecord.losses}L</span>
+            </div>
+            <div className="card pad-16 col gap-4 flex-1" style={{ minWidth: 'min(100%, 140px)' }}>
+              <span className="label-tiny">DUELS</span>
+              <span className="t-num" style={{ fontSize: 24 }}>{fighterRecord.duels}</span>
+            </div>
+            <div className="card pad-16 col gap-4 flex-1" style={{ minWidth: 'min(100%, 140px)' }}>
+              <span className="label-tiny">CUMULATIVE PNL</span>
+              {(() => {
+                const isPos = fighterRecord.pnl >= BigInt(0);
+                const absVal = parseFloat(formatUnits(fighterRecord.pnl < BigInt(0) ? -fighterRecord.pnl : fighterRecord.pnl, 18)).toFixed(2);
+                const sign = fighterRecord.pnl > BigInt(0) ? '+' : fighterRecord.pnl < BigInt(0) ? '-' : '';
+                return (
+                  <span className="t-num" style={{ fontSize: 24, color: isPos ? 'var(--win)' : 'var(--loss)' }}>
+                    {sign}${absVal}
+                  </span>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Entry list */}
+        {historyLoading ? (
+          <div className="card pad-24 col ai-c jc-c" style={{ minHeight: 120 }}>
+            <span className="t-mono t-xs" style={{ letterSpacing: '0.2em', color: 'var(--text-faint)', textAlign: 'center' }}>
+              LOADING HISTORY…
+            </span>
+          </div>
+        ) : historyEmpty ? (
+          <div className="card pad-24 col gap-12 ai-c jc-c" style={{ minHeight: 120 }}>
+            <span className="t-mono t-xs" style={{ letterSpacing: '0.2em', color: 'var(--text-faint)', textAlign: 'center' }}>
+              No settled duels yet.
+            </span>
+            <span className="t-mono t-xs t-faint" style={{ textAlign: 'center' }}>
+              This fighter&apos;s record will populate here after their first resolved duel.
+            </span>
+          </div>
+        ) : (
+          <div className="col" style={{ gap: 1, background: 'var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+            {fightHistory.map((entry, i) => {
+              const isA = entry.fighterA === fighterIndex;
+              const myPnl = isA ? entry.pnlA : entry.pnlB;
+              const opponentIndex = isA ? entry.fighterB : entry.fighterA;
+              const opponentId = fighterIndexToId(opponentIndex);
+              const won = entry.winnerFighter === fighterIndex;
+              const isPos = myPnl >= BigInt(0);
+              const absVal = parseFloat(formatUnits(myPnl < BigInt(0) ? -myPnl : myPnl, 18)).toFixed(2);
+              const sign = myPnl > BigInt(0) ? '+' : myPnl < BigInt(0) ? '-' : '';
+              return (
+                <div
+                  key={i}
+                  className="row ai-c jc-sb"
+                  style={{ padding: '12px 16px', background: 'var(--bg-card)', gap: 12, flexWrap: 'wrap' }}
+                >
+                  <div className="row gap-12 ai-c" style={{ flexWrap: 'wrap', minWidth: 0 }}>
+                    <span className="t-mono t-xs t-faint">#{entry.duelId.toString()}</span>
+                    <span
+                      className="t-mono t-xs"
+                      style={{ color: won ? 'var(--win)' : 'var(--loss)', letterSpacing: '0.15em' }}
+                    >
+                      {won ? 'WIN' : 'LOSS'}
+                    </span>
+                    <span className="t-mono t-xs t-dim">vs {opponentId.toUpperCase()}</span>
+                  </div>
+                  <span
+                    className="t-num t-sm"
+                    style={{ color: isPos ? 'var(--win)' : 'var(--loss)' }}
+                  >
+                    {sign}${absVal}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </div>
   );
