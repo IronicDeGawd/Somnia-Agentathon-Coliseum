@@ -33,10 +33,12 @@ interface IArena {
     // Field order: 0=fighterA, 1=fighterB, 2=creator, 3=startBlock,
     // 4=lastTurnBlock, 5=completedCallbacks, 6=turns, 7=poolMask,
     // 8=status (0=None,1=Active,2=Finalizing,3=Resolved),
-    // 9=initialUsdsoPerFighter, 10=lastAction[2], 11=fundsRecovered, 12=winnerSlot
+    // Mirrors Arena's auto-getter: Solidity OMITS the uint8[2] lastAction array
+    // from struct getters, so it returns 12 fields (not 13). Indices:
+    // 8=status, 9=initialUsdsoPerFighter, 10=fundsRecovered, 11=winnerSlot.
     function duels(uint256 duelId) external view returns (
         uint8, uint8, address, uint256, uint256, uint16, uint16, uint8,
-        uint8 status, uint256, uint8[2] memory, bool, uint8 winnerSlot
+        uint8 status, uint256, bool, uint8 winnerSlot
     );
 }
 
@@ -271,7 +273,7 @@ contract Matchmaker {
         if (isA && m.settledA) revert AlreadySettled();
         if (isB && m.settledB) revert AlreadySettled();
 
-        (,,,,,,,, uint8 status,,,, uint8 winnerSlot) = arena.duels(duelId);
+        (,,,,,,,, uint8 status,,, uint8 winnerSlot) = arena.duels(duelId);
         if (status != STATUS_RESOLVED) revert DuelNotResolved();
 
         // ── C-1 fix: set m.recovered = true BEFORE calling recoverFunds ──────
@@ -315,7 +317,7 @@ contract Matchmaker {
         Match storage m = matches[duelId];
         require(!m.recovered, "already recovered");
         // Verify duel is resolved before owner can touch it
-        (,,,,,,,, uint8 status,,,,) = arena.duels(duelId);
+        (,,,,,,,, uint8 status,,,) = arena.duels(duelId);
         require(status == STATUS_RESOLVED, "not resolved");
 
         m.recovered = true;
@@ -348,7 +350,7 @@ contract Matchmaker {
     function _arenaFree() internal view returns (bool) {
         uint256 activeId = arena.activeDuelId();
         if (activeId == 0) return true;
-        (,,,,,,,, uint8 status,,,,) = arena.duels(activeId);
+        (,,,,,,,, uint8 status,,,) = arena.duels(activeId);
         return status == STATUS_RESOLVED;
     }
 

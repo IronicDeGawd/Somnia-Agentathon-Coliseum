@@ -205,9 +205,10 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   });
 
   // ── Derived values ─────────────────────────────────────────────────────────
-  // ABI tuple: (fighterA, fighterB, creator, startBlock, lastTurnBlock,
-  //             completedCallbacks, turns, poolMask, status,
-  //             initialUsdsoPerFighter, lastAction, fundsRecovered, winnerSlot)
+  // duels() getter tuple (12 fields — Solidity OMITS the uint8[2] lastAction):
+  //   0 fighterA, 1 fighterB, 2 creator, 3 startBlock, 4 lastTurnBlock,
+  //   5 completedCallbacks, 6 turns, 7 poolMask, 8 status,
+  //   9 initialUsdsoPerFighter, 10 fundsRecovered, 11 winnerSlot
   const duel: DuelData | null = duelRaw
     ? {
         fighterA:       Number(duelRaw[0]),
@@ -218,10 +219,10 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
         poolMask:       Number(duelRaw[7]),
         currentTurn:    Number(duelRaw[5]),   // completedCallbacks
         status:         Number(duelRaw[8]),
-        winnerSlot:     Number(duelRaw[12]),
+        winnerSlot:     Number(duelRaw[11]),
         quoteBalanceA:  duelRaw[9] as unknown as bigint,   // initialUsdsoPerFighter as proxy
         quoteBalanceB:  duelRaw[9] as unknown as bigint,   // same; no live balance in this ABI
-        fundsRecovered: duelRaw[11] as unknown as boolean, // bool at tuple index 11 (M3)
+        fundsRecovered: duelRaw[10] as unknown as boolean, // bool at tuple index 10
       }
     : null;
 
