@@ -428,7 +428,10 @@ contract Arena is ArenaVault {
             emit ArenaTypes.FighterMoveFailed(pt.duelId, pt.fighterId, "exec failed");
             return;
         }
-        duels[pt.duelId].lastAction[pt.fighterId] = uint8(action);
+        // lastAction is uint8[2], indexed by SLOT (0=fighterA, 1=fighterB) — NOT
+        // the registry fighterId (0..5), which would overflow the size-2 array.
+        uint8 slot = pt.fighterId == duels[pt.duelId].fighterA ? 0 : 1;
+        duels[pt.duelId].lastAction[slot] = uint8(action);
         emit ArenaTypes.FighterMove(pt.duelId, pt.fighterId, action, orderId);
     }
 

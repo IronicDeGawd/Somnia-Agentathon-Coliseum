@@ -107,7 +107,10 @@ library ArenaUtils {
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta
     ) internal view returns (string memory) {
         uint16 turnNum = duel.completedCallbacks / 2 + 1;
-        string memory lastAct = actionName(duel.lastAction[fighterId]);
+        // lastAction is uint8[2], indexed by SLOT (0=fighterA, 1=fighterB) — NOT
+        // the registry fighterId (0..5), which would overflow the size-2 array.
+        uint8 lastSlot = fighterId == duel.fighterA ? 0 : 1;
+        string memory lastAct = actionName(duel.lastAction[lastSlot]);
 
         string memory summary = string.concat(
             "duel ", uint256ToString(duelId),
