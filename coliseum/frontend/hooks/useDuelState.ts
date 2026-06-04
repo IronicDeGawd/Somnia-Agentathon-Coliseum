@@ -109,11 +109,13 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
       let addA = BigInt(0);
       let addB = BigInt(0);
       for (const log of logs) {
+        const args = log.args as { duelId?: bigint; fighterId?: number; stake?: bigint };
+        // Reject foreign-duel logs BEFORE touching the dedup set, so it never
+        // accumulates keys for other duels (the live watcher is broad-filtered).
+        if (args.duelId !== duelId) continue;
         const key = `${log.transactionHash}:${log.logIndex}`;
         if (seenBets.current.has(key)) continue;
         seenBets.current.add(key);
-        const args = log.args as { duelId?: bigint; fighterId?: number; stake?: bigint };
-        if (args.duelId !== duelId) continue;
         const stake = args.stake ?? BigInt(0);
         if (args.fighterId === 0) addA += stake;
         else if (args.fighterId === 1) addB += stake;
@@ -154,11 +156,13 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     return () => { cancelled = true; };
   }, [enabled, publicClient, duelId, startBlock, ingestBetLogs]);
 
-  // Live BetPlaced watcher — appends new bets as they land.
+  // Live BetPlaced watcher — appends new bets as they land. Filter by the
+  // indexed duelId at the RPC level so only this duel's logs reach the client.
   useWatchContractEvent({
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: ABIS.Bookmaker,
     eventName: 'BetPlaced',
+    args: { duelId },
     onLogs(logs) {
       ingestBetLogs(logs);
     },
