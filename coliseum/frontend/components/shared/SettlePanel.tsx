@@ -7,6 +7,7 @@ import { useDuelState } from '@/hooks/useDuelState';
 import { useSettleBets } from '@/hooks/useSettleBets';
 import { useFighters } from '@/hooks/useFighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 // DuelResolved event for final value backfill (mirrors result page pattern).
 const DUEL_RESOLVED_EVENT = parseAbiItem(
@@ -19,6 +20,12 @@ interface SettlePanelProps {
   duelId: bigint;
   isCreator: boolean;
   matchmakerDuel?: boolean;
+  // Real fighter identity from the parent (the result page resolves these from
+  // the duel's fighterA/fighterB indexes). Falls back to generic slot labels.
+  winnerName?: string;
+  loserName?: string;
+  winnerColor?: string;
+  loserColor?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -130,7 +137,7 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false }: SettlePanelProps) {
+export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false, winnerName, loserName, winnerColor: winnerColorProp, loserColor: loserColorProp }: SettlePanelProps) {
   const { duel, isLoading: duelLoading, winnerSlot, totalBetsA, totalBetsB } = useDuelState(duelId);
   const { isLoading: fightersLoading } = useFighters();
   const publicClient = usePublicClient();
@@ -145,13 +152,14 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
     void (async () => {
       try {
         const fromBlock = duel?.startBlock ?? BOOKMAKER_DEPLOY_BLOCK;
-        const logs = await publicClient.getLogs({
+        const dTurns = duel?.turns ?? 3;
+        const logs = await getLogsChunked(publicClient, {
           address: CONTRACT_ADDRESSES.Arena,
           event: DUEL_RESOLVED_EVENT,
           args: { duelId },
           fromBlock,
-          toBlock: 'latest',
-        });
+          toBlock: duelToBlock(fromBlock, dTurns),
+        }) as { args: { valueA?: bigint; valueB?: bigint } }[];
         if (cancelled || logs.length === 0) return;
         const last = logs[logs.length - 1];
         const args = last.args as { valueA?: bigint; valueB?: bigint };
@@ -227,10 +235,12 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
       ? (winnerBalance > loserBalance ? winnerBalance - loserBalance : BigInt(0))
       : null;
 
-  // Fighter display — we don't have fighterA/fighterB indexes in the ABI tuple,
-  // so we label generically and use slot colors.
-  const winnerLabel = winnerSlotNum === 0 ? 'Fighter A' : 'Fighter B';
-  const winnerColor = winnerSlotNum === 0 ? 'var(--fighter-a)' : 'var(--fighter-b)';
+  // Prefer the real fighter name/color passed by the parent (resolved from the
+  // duel's fighterA/fighterB indexes); fall back to generic slot labels.
+  const winnerLabel = winnerName ?? (winnerSlotNum === 0 ? 'Fighter A' : 'Fighter B');
+  const loserLabel  = loserName  ?? (loserSlotNum  === 0 ? 'Fighter A' : 'Fighter B');
+  const winnerColor =
+    winnerColorProp ?? (winnerSlotNum === 0 ? 'var(--fighter-a)' : 'var(--fighter-b)');
 
   // Determine user bet outcome
   const userWon = userBet !== null && userBet.fighterId === winnerSlotNum;
@@ -277,7 +287,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
           </div>
 
           <div className="row ai-c gap-8 t-faint t-xs" style={{ marginTop: 4 }}>
-            <span>Loser ({loserSlotNum === 0 ? 'Fighter A' : 'Fighter B'}):</span>
+            <span style={{ color: loserColorProp ?? undefined }}>Loser ({loserLabel}):</span>
             <span className="t-num t-mono text-loss">
               {loserBalance !== null ? `${formatUsdso(loserBalance)} USDso` : '—'}
             </span>

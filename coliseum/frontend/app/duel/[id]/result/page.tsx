@@ -13,6 +13,7 @@ import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -75,13 +76,14 @@ export default function ResultPage() {
     void (async () => {
       try {
         const fromBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : BOOKMAKER_DEPLOY_BLOCK;
-        const logs = await publicClient.getLogs({
+        const turns = duelRaw ? Number(duelRaw[6]) : 3;
+        const logs = await getLogsChunked(publicClient, {
           address: CONTRACT_ADDRESSES.Arena,
           event: DUEL_RESOLVED_EVENT,
           args: { duelId },
           fromBlock,
-          toBlock: 'latest',
-        });
+          toBlock: duelToBlock(fromBlock, turns),
+        }) as { args: { valueA?: bigint; valueB?: bigint } }[];
         if (cancelled || logs.length === 0) return;
         // Take the latest DuelResolved log for this duel
         const last = logs[logs.length - 1];
@@ -362,13 +364,21 @@ export default function ResultPage() {
           </span>
         </div>
 
-        <SettlePanel duelId={duelId} isCreator={isCreator} matchmakerDuel={isMatchmakerDuel} />
+        <SettlePanel
+          duelId={duelId}
+          isCreator={isCreator}
+          matchmakerDuel={isMatchmakerDuel}
+          winnerName={winnerFighter?.name}
+          loserName={loserFighter?.name}
+          winnerColor={winnerHex}
+          loserColor={loserFighter?.hex}
+        />
       </section>
 
       {/* Action row */}
       <section className="shell-pad" style={{ paddingTop: 48, paddingBottom: 120 }}>
         <div className="row gap-12 ai-c jc-c" style={{ flexWrap: 'wrap' }}>
-          <Link href={`/duel/${rawId}`}>
+          <Link href={`/duel/${rawId}?replay=1`}>
             <BracketButton>WATCH REPLAY</BracketButton>
           </Link>
           <BracketButton variant="gold">SHARE CARD ⤴</BracketButton>
