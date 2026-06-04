@@ -44,6 +44,8 @@ contract DuelHistory is IDuelHistory {
     error OnlyArena();
     error AlreadyRecorded(uint256 duelId);
     error BadFighterIndex(uint8 index);
+    error BadWinnerSlot(uint8 slot);
+    error ValueTooLarge();
 
     event DuelRecorded(
         uint256 indexed duelId,
@@ -76,6 +78,15 @@ contract DuelHistory is IDuelHistory {
         if (recorded[duelId]) revert AlreadyRecorded(duelId);
         if (fighterA >= FIGHTER_COUNT) revert BadFighterIndex(fighterA);
         if (fighterB >= FIGHTER_COUNT) revert BadFighterIndex(fighterB);
+        if (winnerSlot > 1) revert BadWinnerSlot(winnerSlot);
+        // Solidity does not bounds-check uint256→int256 casts; a value ≥ 2^255
+        // would silently flip sign and corrupt PnL. Reject explicitly. (Portfolio
+        // values are USDso-denominated and never approach this in practice.)
+        if (
+            valueA > uint256(type(int256).max) ||
+            valueB > uint256(type(int256).max) ||
+            initialPerFighter > uint256(type(int256).max)
+        ) revert ValueTooLarge();
         recorded[duelId] = true;
 
         int256 init = int256(initialPerFighter);
