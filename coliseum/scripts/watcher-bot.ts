@@ -21,7 +21,8 @@
 //   SWEEP_THRESHOLD_STT  — sweep fallback when its STT ≥ this (default 5)
 //   SEEDER_MIN_STT       — refill seeder when it drops below this (default 50)
 //   SEEDER_TOPUP_STT     — STT to send per top-up (default 100)
-//   ARENA_MIN_STT        — refill Arena when its STT drops below this (default 5)
+//   ARENA_MIN_STT        — refill Arena when its STT drops below this (default 0 = OFF;
+//                          daily-duel self-funds Arena fuel, subscription left to deactivate)
 //   ARENA_TOPUP_STT      — STT to send the Arena per top-up (default 10)
 //   DEPLOYER_MIN_STT     — never drain deployer below this (default 20)
 // ============================================================================
@@ -172,7 +173,12 @@ async function main() {
   const sweepThreshold = parseEther(process.env.SWEEP_THRESHOLD_STT ?? "5");
   const seederMin = parseEther(process.env.SEEDER_MIN_STT ?? "50");
   const seederTopup = parseEther(process.env.SEEDER_TOPUP_STT ?? "100");
-  const arenaMin = parseEther(process.env.ARENA_MIN_STT ?? "5");
+  // Default 0 = DISABLED. The Arena's every-block reactivity subscription burns
+  // STT continuously while funded, so we deliberately let the Arena drain to
+  // ~0 and the subscription deactivate (stops the idle burn). daily-duel.ts
+  // self-funds the Arena's LLM fuel just-in-time at the start of each run.
+  // Set ARENA_MIN_STT>0 only to re-enable continuous topup.
+  const arenaMin = parseEther(process.env.ARENA_MIN_STT ?? "0");
   const arenaTopup = parseEther(process.env.ARENA_TOPUP_STT ?? "10");
   const deployerMin = parseEther(process.env.DEPLOYER_MIN_STT ?? "20");
 

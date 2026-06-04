@@ -19,6 +19,7 @@ import {
   createWalletClient,
   http,
   formatUnits,
+  parseEther,
   maxUint256,
   defineChain,
 } from "viem";
@@ -333,6 +334,23 @@ async function main() {
     log(`Arena busy — RESUMING active duel ${duelId} (finish it instead of starting a new one; prevents a crashed run from wedging the bot).`);
   } else {
     log("Arena is free — proceeding");
+  }
+
+  // Ensure the Arena holds enough STT for this run's LLM inference deposits
+  // (~0.24 STT/move × 6 moves for a 3-turn duel). The watcher no longer keeps
+  // the Arena topped up (ARENA_MIN_STT=0 — the every-block reactivity
+  // subscription is left to drain and deactivate, killing the idle STT burn),
+  // so the keeper funds the fuel just-in-time here.
+  const ARENA_FUEL_MIN    = parseEther("4");
+  const ARENA_FUEL_TARGET = parseEther("6");
+  const arenaStt = await publicClient.getBalance({ address: arenaAddr });
+  log(`Arena STT: ${fmtU(arenaStt)}`);
+  if (arenaStt < ARENA_FUEL_MIN) {
+    const topup = ARENA_FUEL_TARGET - arenaStt;
+    log(`Arena below fuel floor — sending ${fmtU(topup)} STT from owner...`);
+    const fuelTx = await ownerWallet.sendTransaction({ to: arenaAddr, value: topup });
+    await publicClient.waitForTransactionReceipt({ hash: fuelTx });
+    log(`  arena fuel tx=${fuelTx} status=success`);
   }
 
   if (!resuming) {
