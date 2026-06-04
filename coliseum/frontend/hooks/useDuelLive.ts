@@ -326,13 +326,17 @@ export function useDuelLive(
   const pnlA = valueA > BigInt(0) ? (valueA > initialUsdso ? valueA - initialUsdso : -(initialUsdso - valueA)) : BigInt(0);
   const pnlB = valueB > BigInt(0) ? (valueB > initialUsdso ? valueB - initialUsdso : -(initialUsdso - valueB)) : BigInt(0);
 
+  // A resolved duel is over — no fighter is "thinking". (Matters for replays of
+  // finished duels, where a trailing FighterMoveRequested has no clearing move.)
+  const duelOver = duel.status === 3;
+
   const fA: FighterLive = {
     valueUsdso: valueA,
     pnl: pnlA,
     pnlNum: Number(formatUnits(pnlA, 18)),
     holdings: holdingsA,
     lastAction: lastActions.get(fighterAIndex) ?? '',
-    thinking: thinking.get(fighterAIndex) ?? false,
+    thinking: duelOver ? false : (thinking.get(fighterAIndex) ?? false),
   };
 
   const fB: FighterLive = {
@@ -341,7 +345,7 @@ export function useDuelLive(
     pnlNum: Number(formatUnits(pnlB, 18)),
     holdings: holdingsB,
     lastAction: lastActions.get(fighterBIndex) ?? '',
-    thinking: thinking.get(fighterBIndex) ?? false,
+    thinking: duelOver ? false : (thinking.get(fighterBIndex) ?? false),
   };
 
   return {

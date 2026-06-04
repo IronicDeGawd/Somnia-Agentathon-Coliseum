@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { formatUnits } from 'viem';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
@@ -187,18 +187,12 @@ function FighterCardSplit({
 export default function ArenaPage() {
   const params = useParams();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const layout = useUIStore((state) => state.layout) as Layout;
 
   // Parse duel ID from URL params
   const rawId = params?.id;
   const duelIdNum = rawId ? Number(rawId) : 0;
   const duelId = BigInt(duelIdNum > 0 ? duelIdNum : 0) as bigint;
-
-  // A finished duel has nothing live to watch, so send it to the result page —
-  // unless ?replay=1 is set (the "WATCH REPLAY" link), which shows the move-by-move
-  // playback here instead.
-  const isReplay = searchParams?.get('replay') === '1';
 
   // ── Chain state ──────────────────────────────────────────────────────────────
   const {
@@ -217,12 +211,13 @@ export default function ArenaPage() {
   // ── Live on-chain portfolio data ──────────────────────────────────────────
   const { fighterA: liveA, fighterB: liveB, markets } = useDuelLive(duelId, duel);
 
-  // Resolved duels redirect to the result page (unless explicitly replaying).
+  // A finished duel has nothing live to watch → send it to the result page,
+  // which carries the winner summary and the move-by-move transcript.
   useEffect(() => {
-    if (isResolved && !isReplay && rawId) {
+    if (isResolved && rawId) {
       router.replace(`/duel/${rawId}/result`);
     }
-  }, [isResolved, isReplay, rawId, router]);
+  }, [isResolved, rawId, router]);
 
   // ── Derived display values ───────────────────────────────────────────────────
   // currentTurn is completedCallbacks (2 per round — one move per fighter), so
