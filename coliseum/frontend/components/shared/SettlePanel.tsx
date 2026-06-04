@@ -1,11 +1,17 @@
 'use client';
 
-import { formatUnits } from 'viem';
-import { useAccount, useReadContract, useWriteContract } from 'wagmi';
+import { useState, useEffect } from 'react';
+import { formatUnits, parseAbiItem } from 'viem';
+import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useSettleBets } from '@/hooks/useSettleBets';
 import { useFighters } from '@/hooks/useFighters';
-import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+
+// DuelResolved event for final value backfill (mirrors result page pattern).
+const DUEL_RESOLVED_EVENT = parseAbiItem(
+  'event DuelResolved(uint256 indexed duelId, uint8 indexed winnerFighterId, uint256 valueA, uint256 valueB)',
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -125,16 +131,48 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false }: SettlePanelProps) {
-  const { duel, isLoading: duelLoading, winnerSlot } = useDuelState(duelId);
-  const { fighters, isLoading: fightersLoading } = useFighters();
+  const { duel, isLoading: duelLoading, winnerSlot, totalBetsA, totalBetsB } = useDuelState(duelId);
+  const { isLoading: fightersLoading } = useFighters();
+  const publicClient = usePublicClient();
+
+  // ── DuelResolved backfill for real final portfolio values (M2) ─────────────
+  const [resolvedValueA, setResolvedValueA] = useState<bigint | null>(null);
+  const [resolvedValueB, setResolvedValueB] = useState<bigint | null>(null);
+
+  useEffect(() => {
+    if (!publicClient || duelId <= BigInt(0)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const fromBlock = duel?.startBlock ?? BOOKMAKER_DEPLOY_BLOCK;
+        const logs = await publicClient.getLogs({
+          address: CONTRACT_ADDRESSES.Arena,
+          event: DUEL_RESOLVED_EVENT,
+          args: { duelId },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        if (cancelled || logs.length === 0) return;
+        const last = logs[logs.length - 1];
+        const args = last.args as { valueA?: bigint; valueB?: bigint };
+        if (args.valueA !== undefined) setResolvedValueA(args.valueA);
+        if (args.valueB !== undefined) setResolvedValueB(args.valueB);
+      } catch {
+        // Non-fatal — UI falls back to showing "—".
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [publicClient, duelId, duel?.startBlock]);
+
   const {
     settleBets,
     recoverFunds,
     userBet,
     estimatedPayout,
+    duelSettled,
     isSettlePending,
     isRecoverPending,
-  } = useSettleBets(duelId);
+  } = useSettleBets(duelId, totalBetsA, totalBetsB);
 
   const isLoading = duelLoading || fightersLoading;
 
@@ -170,21 +208,24 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
     );
   }
 
-  // Resolve winner / loser fighter objects
-  const fighterAIndex = duel.creator ? duel.poolMask : -1; // poolMask slot not the fighter index
-  // fighters are read by slot from the duel — winnerSlot 0 = fighterA, 1 = fighterB
-  // The duel tuple returns (creator, turns, poolMask, currentTurn, status, winnerSlot, qA, qB)
-  // fighterA and fighterB indexes are NOT directly in this tuple per the ABI provided.
-  // We derive winner display from winnerSlot + quoteBalance comparison.
+  // winnerSlot 0 = fighterA won, 1 = fighterB won.
   const winnerSlotNum = winnerSlot ?? duel.winnerSlot;
   const loserSlotNum = winnerSlotNum === 0 ? 1 : 0;
 
-  // quoteBalanceA / quoteBalanceB are the USDso values per fighter at resolution
-  const balA = duel.quoteBalanceA;
-  const balB = duel.quoteBalanceB;
-  const winnerBalance = winnerSlotNum === 0 ? balA : balB;
-  const loserBalance = winnerSlotNum === 0 ? balB : balA;
-  const margin = winnerBalance > loserBalance ? winnerBalance - loserBalance : BigInt(0);
+  // Real final portfolio values from DuelResolved event (M2).
+  // Falls back to null so we show "—" rather than fabricated initialUsdso stubs.
+  const winnerBalance: bigint | null =
+    resolvedValueA !== null && resolvedValueB !== null
+      ? (winnerSlotNum === 0 ? resolvedValueA : resolvedValueB)
+      : null;
+  const loserBalance: bigint | null =
+    resolvedValueA !== null && resolvedValueB !== null
+      ? (winnerSlotNum === 0 ? resolvedValueB : resolvedValueA)
+      : null;
+  const margin: bigint | null =
+    winnerBalance !== null && loserBalance !== null
+      ? (winnerBalance > loserBalance ? winnerBalance - loserBalance : BigInt(0))
+      : null;
 
   // Fighter display — we don't have fighterA/fighterB indexes in the ABI tuple,
   // so we label generically and use slot colors.
@@ -193,11 +234,9 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
 
   // Determine user bet outcome
   const userWon = userBet !== null && userBet.fighterId === winnerSlotNum;
-  const userLost = userBet !== null && userBet.fighterId !== winnerSlotNum;
 
-  // Recoverable amount = sum of both quote balances (what remains in contract)
-  const recoverableAmount = balA + balB;
-  const fundsAlreadyRecovered = duel.creator === '0x0000000000000000000000000000000000000000';
+  // fundsRecovered from duel tuple index 11 (M3).
+  const fundsAlreadyRecovered: boolean = duel.fundsRecovered === true;
 
   return (
     <div className="card pad-24 col gap-24" style={{ width: '100%' }}>
@@ -226,20 +265,22 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
             <div className="col gap-2">
               <span className="label-tiny t-dim">Winning Portfolio</span>
               <span className="t-num t-mono" style={{ color: winnerColor, fontSize: '1rem' }}>
-                {formatUsdso(winnerBalance)} USDso
+                {winnerBalance !== null ? `${formatUsdso(winnerBalance)} USDso` : '—'}
               </span>
             </div>
             <div className="col gap-2">
               <span className="label-tiny t-dim">Margin</span>
               <span className="t-num t-mono text-win" style={{ fontSize: '1rem' }}>
-                +{formatUsdso(margin)} USDso
+                {margin !== null ? `+${formatUsdso(margin)} USDso` : '—'}
               </span>
             </div>
           </div>
 
           <div className="row ai-c gap-8 t-faint t-xs" style={{ marginTop: 4 }}>
             <span>Loser ({loserSlotNum === 0 ? 'Fighter A' : 'Fighter B'}):</span>
-            <span className="t-num t-mono text-loss">{formatUsdso(loserBalance)} USDso</span>
+            <span className="t-num t-mono text-loss">
+              {loserBalance !== null ? `${formatUsdso(loserBalance)} USDso` : '—'}
+            </span>
           </div>
         </div>
       </div>
@@ -296,8 +337,8 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
             </div>
           </div>
 
-          {/* Settle Bets button */}
-          {!userBet.settled && (
+          {/* Settle Bets button — hidden once bets are settled on-chain (M4) */}
+          {!duelSettled && !userBet.settled && (
             <button
               className="bk bk-primary"
               onClick={settleBets}
@@ -308,7 +349,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
             </button>
           )}
 
-          {userBet.settled && (
+          {(duelSettled || userBet.settled) && (
             <div className="panel pad-16 row ai-c gap-8" style={{ borderColor: 'var(--win)' }}>
               <span className="dot dot-win" />
               <span className="t-sm text-win">Bets settled — payout sent to winners</span>
@@ -317,8 +358,8 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
         </div>
       )}
 
-      {/* If user didn't bet but can still trigger settlement (permissionless) */}
-      {!userBet && (
+      {/* Permissionless settlement — hidden once already settled on-chain (M4) */}
+      {!userBet && !duelSettled && (
         <div className="col gap-8">
           <div className="eyebrow t-dim">Settlement</div>
           <button
@@ -335,6 +376,14 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
         </div>
       )}
 
+      {/* Show settled state when user has no bet and settlement is done */}
+      {!userBet && duelSettled && (
+        <div className="panel pad-16 row ai-c gap-8" style={{ borderColor: 'var(--win)' }}>
+          <span className="dot dot-win" />
+          <span className="t-sm text-win">Bets settled — payout sent to winners</span>
+        </div>
+      )}
+
       {/* ── Creator Recovery Section ──────────────────────────────────────────── */}
       {isCreator && !matchmakerDuel && (
         <div className="col gap-12">
@@ -342,9 +391,9 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
 
           <div className="panel pad-16 col gap-8">
             <div className="row jc-sb ai-c">
-              <span className="t-sm t-dim">Recoverable</span>
-              <span className="t-sm t-mono t-num">
-                {formatUsdso(recoverableAmount)} USDso
+              <span className="t-sm t-dim">Status</span>
+              <span className="t-sm t-mono">
+                {fundsAlreadyRecovered ? 'Recovered' : 'Pending recovery'}
               </span>
             </div>
             <p className="t-xs t-faint" style={{ margin: 0 }}>
@@ -352,7 +401,8 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
             </p>
           </div>
 
-          {!duel.creator.startsWith('0x000') && recoverableAmount > BigInt(0) && (
+          {/* Gate on !fundsRecovered (on-chain flag, M3) — hide once already recovered */}
+          {!fundsAlreadyRecovered && (
             <button
               className="bk bk-gold"
               onClick={recoverFunds}
@@ -363,7 +413,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false 
             </button>
           )}
 
-          {recoverableAmount === BigInt(0) && (
+          {fundsAlreadyRecovered && (
             <div className="panel pad-16 row ai-c gap-8" style={{ borderColor: 'var(--win)' }}>
               <span className="dot dot-win" />
               <span className="t-sm text-win">Funds recovered</span>
