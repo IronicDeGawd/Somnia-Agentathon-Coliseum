@@ -11,7 +11,6 @@ interface IERC20M {
 contract MockArenaMatchmaker {
     IERC20M public immutable usdso;
 
-    uint256 public constant PLATFORM_FEE = 1e18;
     uint256 public lastDuelId;
     uint256 public activeDuelId;
     bool    public busy;
@@ -50,13 +49,19 @@ contract MockArenaMatchmaker {
     function FIGHTER_COUNT() external pure returns (uint8) { return 6; }
     function minDepositFor(uint16) external pure returns (uint256) { return 2e18; }
 
-    function startDuel(uint8 fA, uint8 fB, uint16) external returns (uint256 duelId) {
+    // Mirrors ArenaVault.platformFee: hybrid base + perTurn × turns.
+    function platformFee(uint16 turns) public pure returns (uint256) {
+        return 0.5e18 + 0.1e18 * uint256(turns);
+    }
+
+    function startDuel(uint8 fA, uint8 fB, uint16 turns) external returns (uint256 duelId) {
         require(!busy, "arena busy");
-        uint256 required = 2e18 + PLATFORM_FEE;
+        uint256 fee = platformFee(turns);
+        uint256 required = 2e18 + fee;
         usdso.transferFrom(msg.sender, address(this), required);
         duelId = ++lastDuelId;
         activeDuelId = duelId;
-        _duels[duelId] = DuelRecord(fA, fB, msg.sender, 1, 255, required - PLATFORM_FEE);
+        _duels[duelId] = DuelRecord(fA, fB, msg.sender, 1, 255, required - fee);
     }
 
     function recoverFunds(uint256 duelId) external {
@@ -68,17 +73,17 @@ contract MockArenaMatchmaker {
         usdso.transfer(msg.sender, amt);
     }
 
-    // Returns tuple matching ArenaTypes.Duel field order exactly.
-    // Matchmaker reads: [8]=status, [12]=winnerSlot
+    // Returns tuple matching Arena's auto-getter: Solidity OMITS the uint8[2]
+    // lastAction array, so this is 12 fields. Matchmaker reads [8]=status,
+    // [11]=winnerSlot.
     function duels(uint256 duelId) external view returns (
         uint8, uint8, address, uint256, uint256, uint16, uint16, uint8,
         uint8,    // [8] status
-        uint256, uint8[2] memory, bool,
-        uint8     // [12] winnerSlot
+        uint256, bool,
+        uint8     // [11] winnerSlot
     ) {
         DuelRecord storage d = _duels[duelId];
-        uint8[2] memory la;
         return (d.fighterA, d.fighterB, d.creator, 0, 0, 0, 0, 0,
-                d.status, 0, la, false, d.winnerSlot);
+                d.status, 0, false, d.winnerSlot);
     }
 }

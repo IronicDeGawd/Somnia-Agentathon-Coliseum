@@ -4,7 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient, useWatchContractEvent, useReadContracts } from 'wagmi';
 import { parseAbiItem, formatUnits } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES, POOLS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import type { DuelData } from '@/hooks/useDuelState';
+
+type RawLog = { transactionHash: `0x${string}` | null; logIndex: number | null; args: unknown };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -171,30 +174,34 @@ export function useDuelLive(
   );
 
   // ── Historical backfill (getLogs) ─────────────────────────────────────────
+  // Scan only the duel's own block span (start → start + turns×600 + tail), in
+  // chunks, so the public RPC's log-range limit can't blank older duels.
   const fromBlock = duel?.startBlock ?? BOOKMAKER_DEPLOY_BLOCK;
+  const turns = duel?.turns ?? 3;
   useEffect(() => {
     if (!enabled || !publicClient) return;
     let cancelled = false;
     void (async () => {
+      const toBlock = duelToBlock(fromBlock, turns);
       try {
         const [markLogs, moveLogs, reqLogs] = await Promise.all([
-          publicClient.getLogs({ address: CONTRACT_ADDRESSES.Arena, event: MARK_PRICE_EVENT, args: { duelId }, fromBlock, toBlock: 'latest' }),
-          publicClient.getLogs({ address: CONTRACT_ADDRESSES.Arena, event: FIGHTER_MOVE_EVENT, args: { duelId }, fromBlock, toBlock: 'latest' }),
-          publicClient.getLogs({ address: CONTRACT_ADDRESSES.Arena, event: FIGHTER_MOVE_REQUESTED_EVENT, args: { duelId }, fromBlock, toBlock: 'latest' }),
+          getLogsChunked(publicClient, { address: CONTRACT_ADDRESSES.Arena, event: MARK_PRICE_EVENT, args: { duelId }, fromBlock, toBlock }),
+          getLogsChunked(publicClient, { address: CONTRACT_ADDRESSES.Arena, event: FIGHTER_MOVE_EVENT, args: { duelId }, fromBlock, toBlock }),
+          getLogsChunked(publicClient, { address: CONTRACT_ADDRESSES.Arena, event: FIGHTER_MOVE_REQUESTED_EVENT, args: { duelId }, fromBlock, toBlock }),
         ]);
         if (cancelled) return;
-        ingestMarkPriceLogs(markLogs);
+        ingestMarkPriceLogs(markLogs as RawLog[]);
         // Process moves first, then requests — so thinking state is correct
         // (move clears thinking, request sets it; latest event wins)
-        ingestMoveLogs(moveLogs);
-        ingestRequestLogs(reqLogs);
+        ingestMoveLogs(moveLogs as RawLog[]);
+        ingestRequestLogs(reqLogs as RawLog[]);
       } catch {
         // Non-fatal: live watchers below pick up new events
       }
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, publicClient, duelId, fromBlock]);
+  }, [enabled, publicClient, duelId, fromBlock, turns]);
 
   // ── Live watchers ─────────────────────────────────────────────────────────
   useWatchContractEvent({
@@ -319,13 +326,17 @@ export function useDuelLive(
   const pnlA = valueA > BigInt(0) ? (valueA > initialUsdso ? valueA - initialUsdso : -(initialUsdso - valueA)) : BigInt(0);
   const pnlB = valueB > BigInt(0) ? (valueB > initialUsdso ? valueB - initialUsdso : -(initialUsdso - valueB)) : BigInt(0);
 
+  // A resolved duel is over — no fighter is "thinking". (Matters for replays of
+  // finished duels, where a trailing FighterMoveRequested has no clearing move.)
+  const duelOver = duel.status === 3;
+
   const fA: FighterLive = {
     valueUsdso: valueA,
     pnl: pnlA,
     pnlNum: Number(formatUnits(pnlA, 18)),
     holdings: holdingsA,
     lastAction: lastActions.get(fighterAIndex) ?? '',
-    thinking: thinking.get(fighterAIndex) ?? false,
+    thinking: duelOver ? false : (thinking.get(fighterAIndex) ?? false),
   };
 
   const fB: FighterLive = {
@@ -334,7 +345,7 @@ export function useDuelLive(
     pnlNum: Number(formatUnits(pnlB, 18)),
     holdings: holdingsB,
     lastAction: lastActions.get(fighterBIndex) ?? '',
-    thinking: thinking.get(fighterBIndex) ?? false,
+    thinking: duelOver ? false : (thinking.get(fighterBIndex) ?? false),
   };
 
   return {

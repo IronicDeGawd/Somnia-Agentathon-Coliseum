@@ -28,7 +28,7 @@ interface IArena {
     function activeDuelId() external view returns (uint256);
     function minDepositFor(uint16 turns) external view returns (uint256);
     function recoverFunds(uint256 duelId) external;
-    function PLATFORM_FEE() external view returns (uint256);
+    function platformFee(uint16 turns) external view returns (uint256);
 
     // Field order: 0=fighterA, 1=fighterB, 2=creator, 3=startBlock,
     // 4=lastTurnBlock, 5=completedCallbacks, 6=turns, 7=poolMask,
@@ -74,6 +74,13 @@ contract Matchmaker {
     // Minimum blocks a player must wait before they can cancel their queue entry.
     // Prevents same-block queue-grief (queue then cancel to deny an opponent a slot).
     uint64 public constant CANCEL_DELAY_BLOCKS = 1;
+
+    // Deposit headroom over the bare required amount. minDepositFor reads the live
+    // (thin, volatile) dreamDEX book, so `required` drifts between queue and match.
+    // Without headroom the collected total == required exactly and any upward tick
+    // refunds the match. We collect 25% extra and refund the unused surplus to both
+    // players after the duel starts, so drift can't silently kill a match.
+    uint256 public constant DEPOSIT_BUFFER_BPS = 2500;
 
     // ─── Queue slots (one per tier) ───────────────────────────────────────────
 
@@ -331,8 +338,9 @@ contract Matchmaker {
     function halfDeposit(uint16 turns) public view returns (uint256) {
         uint256 minDep = arena.minDepositFor(turns);
         if (minDep == 0) minDep = 2e18;
-        uint256 total  = minDep + arena.PLATFORM_FEE();
-        return (total + 1) / 2; // ceil — ensures combined >= required
+        uint256 total  = minDep + arena.platformFee(turns);
+        total += (total * DEPOSIT_BUFFER_BPS) / 10_000; // headroom for price drift
+        return (total + 1) / 2; // ceil — ensures combined >= required + buffer
     }
 
     function getSlot(uint16 turns)
@@ -365,7 +373,7 @@ contract Matchmaker {
         // Re-query required amount at match time (market prices may have moved)
         uint256 minDep = arena.minDepositFor(turns);
         if (minDep == 0) minDep = 2e18;
-        uint256 required = minDep + arena.PLATFORM_FEE();
+        uint256 required = minDep + arena.platformFee(turns);
 
         if (total < required) {
             // Price drifted up between queue and match — refund both players.
@@ -390,12 +398,20 @@ contract Matchmaker {
         // H-4 fix: reset approval to zero after startDuel consumed it
         usdso.approve(address(arena), 0);
 
-        // Any dust (total - required) stays in Matchmaker — negligible (≤1 wei normally)
+        // Refund the deposit buffer surplus (total - required) so it never strands
+        // in the Matchmaker. Split evenly; odd-wei dust goes to pB.
+        uint256 surplus = total - required;
+        if (surplus > 0) {
+            uint256 backA = surplus / 2;
+            if (backA > 0 && !usdso.transfer(pA, backA)) revert TransferFailed();
+            uint256 backB = surplus - backA;
+            if (backB > 0 && !usdso.transfer(pB, backB)) revert TransferFailed();
+        }
 
         matches[duelId] = Match({
             playerA:   pA,
             playerB:   pB,
-            totalPot:  total,   // will be overwritten to actual recovered amount in claimWinnings
+            totalPot:  required,   // amount actually deposited into the duel (buffer refunded)
             recovered: false,
             settledA:  false,
             settledB:  false

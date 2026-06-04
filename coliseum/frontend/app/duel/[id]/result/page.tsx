@@ -11,8 +11,10 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
 import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
+import { useDuelTranscript } from '@/hooks/useDuelTranscript';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -51,6 +53,17 @@ export default function ResultPage() {
   const fighterAIndex = duelRaw ? Number(duelRaw[0]) : undefined;
   const fighterBIndex = duelRaw ? Number(duelRaw[1]) : undefined;
 
+  // ── Move-by-move transcript (FighterMove / FighterMoveFailed events) ───────
+  const duelStartBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : undefined;
+  const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
+  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns);
+
+  const fighterNameOf = (fid: number): string => {
+    const v = FIGHTER_VISUAL_MAP[fid];
+    return v ? (FIGHTERS[v.id]?.name ?? `FIGHTER #${fid}`) : `FIGHTER #${fid}`;
+  };
+  const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
+
   // ── Matchmaker check (PvP duel detection) ─────────────────────────────────
   const { data: matchData } = useReadContract({
     address: CONTRACT_ADDRESSES.Matchmaker,
@@ -75,13 +88,14 @@ export default function ResultPage() {
     void (async () => {
       try {
         const fromBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : BOOKMAKER_DEPLOY_BLOCK;
-        const logs = await publicClient.getLogs({
+        const turns = duelRaw ? Number(duelRaw[6]) : 3;
+        const logs = await getLogsChunked(publicClient, {
           address: CONTRACT_ADDRESSES.Arena,
           event: DUEL_RESOLVED_EVENT,
           args: { duelId },
           fromBlock,
-          toBlock: 'latest',
-        });
+          toBlock: duelToBlock(fromBlock, turns),
+        }) as { args: { valueA?: bigint; valueB?: bigint } }[];
         if (cancelled || logs.length === 0) return;
         // Take the latest DuelResolved log for this duel
         const last = logs[logs.length - 1];
@@ -362,15 +376,55 @@ export default function ResultPage() {
           </span>
         </div>
 
-        <SettlePanel duelId={duelId} isCreator={isCreator} matchmakerDuel={isMatchmakerDuel} />
+        <SettlePanel
+          duelId={duelId}
+          isCreator={isCreator}
+          matchmakerDuel={isMatchmakerDuel}
+          winnerName={winnerFighter?.name}
+          loserName={loserFighter?.name}
+          winnerColor={winnerHex}
+          loserColor={loserFighter?.hex}
+        />
       </section>
+
+      {/* § 03 FIGHT TAPE — move-by-move transcript */}
+      {transcript.length > 0 && (
+        <section className="shell-pad col gap-16" style={{ paddingTop: 32, paddingBottom: 56 }}>
+          <div className="sect-head">
+            <span className="sect-head-num">§ 03</span>
+            <span className="sect-head-title">FIGHT TAPE</span>
+            <span className="sect-head-meta">{transcript.length} moves · FighterMove events on-chain</span>
+          </div>
+          <div className="card pad-24 col">
+            {transcript.map((e, i) => (
+              <div
+                key={i}
+                className="row ai-c t-mono t-sm"
+                style={{
+                  gap: 16,
+                  padding: '8px 0',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                }}
+              >
+                <span className="t-dim" style={{ width: 48, flexShrink: 0 }}>R{e.round}</span>
+                <span style={{ color: fighterHexOf(e.fighterId), flex: 1, letterSpacing: '0.04em' }}>
+                  {fighterNameOf(e.fighterId)}
+                </span>
+                <span
+                  className="t-num"
+                  style={{ color: e.failed ? 'var(--text-faint)' : 'var(--text)', textAlign: 'right' }}
+                >
+                  {e.failed ? `— ${e.reason || 'no move'}` : e.action}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Action row */}
       <section className="shell-pad" style={{ paddingTop: 48, paddingBottom: 120 }}>
         <div className="row gap-12 ai-c jc-c" style={{ flexWrap: 'wrap' }}>
-          <Link href={`/duel/${rawId}`}>
-            <BracketButton>WATCH REPLAY</BracketButton>
-          </Link>
           <BracketButton variant="gold">SHARE CARD ⤴</BracketButton>
           <BracketButton variant="primary" onClick={() => router.push('/duel')}>
             NEXT BOUT →

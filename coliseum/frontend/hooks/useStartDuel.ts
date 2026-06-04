@@ -2,14 +2,12 @@
 
 import { useState, useCallback } from 'react';
 import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
-import { parseUnits, parseAbiItem, decodeEventLog } from 'viem';
+import { parseAbiItem, decodeEventLog } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES } from '@/lib/contracts';
 
 const DUEL_STARTED_EVENT = parseAbiItem(
   'event DuelStarted(uint256 indexed duelId, uint8 fighterA, uint8 fighterB, address indexed creator, uint16 turns, uint8 poolMask, uint256 startBlock)'
 );
-
-const PLATFORM_FEE = parseUnits('1', 18);
 
 export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 9 | 15) {
   const { address } = useAccount();
@@ -27,8 +25,18 @@ export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 
     args: [turns as unknown as number],
   });
 
+  // Fee scales with turns on-chain (platformFee = base + perTurn × turns).
+  const { data: platformFee } = useReadContract({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    functionName: 'platformFee',
+    args: [turns as unknown as number],
+  });
+
   const totalRequired =
-    minDeposit !== undefined ? (minDeposit as bigint) + PLATFORM_FEE : null;
+    minDeposit !== undefined && platformFee !== undefined
+      ? (minDeposit as bigint) + (platformFee as bigint)
+      : null;
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: CONTRACT_ADDRESSES.USDso,

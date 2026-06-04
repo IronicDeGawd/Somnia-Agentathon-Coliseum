@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { formatUnits } from 'viem';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
@@ -186,6 +186,7 @@ function FighterCardSplit({
 
 export default function ArenaPage() {
   const params = useParams();
+  const router = useRouter();
   const layout = useUIStore((state) => state.layout) as Layout;
 
   // Parse duel ID from URL params
@@ -210,9 +211,19 @@ export default function ArenaPage() {
   // ── Live on-chain portfolio data ──────────────────────────────────────────
   const { fighterA: liveA, fighterB: liveB, markets } = useDuelLive(duelId, duel);
 
+  // A finished duel has nothing live to watch → send it to the result page,
+  // which carries the winner summary and the move-by-move transcript.
+  useEffect(() => {
+    if (isResolved && rawId) {
+      router.replace(`/duel/${rawId}/result`);
+    }
+  }, [isResolved, rawId, router]);
+
   // ── Derived display values ───────────────────────────────────────────────────
-  const displayRound = duel ? currentTurn : 0;
+  // currentTurn is completedCallbacks (2 per round — one move per fighter), so
+  // the human round number is ceil(callbacks / 2), capped at the duel's turns.
   const displayTurns = duel ? duel.turns : 0;
+  const displayRound = duel ? Math.min(Math.ceil(currentTurn / 2), displayTurns) : 0;
   const duelActive   = isActive;
   const duelResolved = isResolved;
   const duelOver     = duelResolved;
