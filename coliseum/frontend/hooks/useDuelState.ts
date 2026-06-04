@@ -27,6 +27,8 @@ export interface DuelData {
   winnerSlot: number;
   quoteBalanceA: bigint;
   quoteBalanceB: bigint;
+  /** True once recoverFunds has been called on-chain (tuple index 11). */
+  fundsRecovered: boolean;
 }
 
 export interface UseDuelStateResult {
@@ -208,17 +210,18 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   //             initialUsdsoPerFighter, lastAction, fundsRecovered, winnerSlot)
   const duel: DuelData | null = duelRaw
     ? {
-        fighterA:      Number(duelRaw[0]),
-        fighterB:      Number(duelRaw[1]),
-        creator:       duelRaw[2] as unknown as `0x${string}`,
-        startBlock:    duelRaw[3] as unknown as bigint,
-        turns:         Number(duelRaw[6]),
-        poolMask:      Number(duelRaw[7]),
-        currentTurn:   Number(duelRaw[5]),   // completedCallbacks
-        status:        Number(duelRaw[8]),
-        winnerSlot:    Number(duelRaw[12]),
-        quoteBalanceA: duelRaw[9] as unknown as bigint,   // initialUsdsoPerFighter as proxy
-        quoteBalanceB: duelRaw[9] as unknown as bigint,   // same; no live balance in this ABI
+        fighterA:       Number(duelRaw[0]),
+        fighterB:       Number(duelRaw[1]),
+        creator:        duelRaw[2] as unknown as `0x${string}`,
+        startBlock:     duelRaw[3] as unknown as bigint,
+        turns:          Number(duelRaw[6]),
+        poolMask:       Number(duelRaw[7]),
+        currentTurn:    Number(duelRaw[5]),   // completedCallbacks
+        status:         Number(duelRaw[8]),
+        winnerSlot:     Number(duelRaw[12]),
+        quoteBalanceA:  duelRaw[9] as unknown as bigint,   // initialUsdsoPerFighter as proxy
+        quoteBalanceB:  duelRaw[9] as unknown as bigint,   // same; no live balance in this ABI
+        fundsRecovered: duelRaw[11] as unknown as boolean, // bool at tuple index 11 (M3)
       }
     : null;
 

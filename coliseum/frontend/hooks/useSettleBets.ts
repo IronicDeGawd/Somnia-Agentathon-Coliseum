@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { parseAbi, type Address } from 'viem';
+import { parseAbi, parseAbiItem, type Address } from 'viem';
 import {
   useReadContract,
   useWriteContract,
   useWatchContractEvent,
   useAccount,
+  usePublicClient,
 } from 'wagmi';
-import { ABIS, CONTRACT_ADDRESSES } from '@/lib/contracts';
+import { ABIS, CONTRACT_ADDRESSES, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 
 // ─── Local ABI extensions not present in the shared ABIS object ──────────────
 // Bookmaker.bets is a public mapping: bets[duelId][index] → Bet struct.
@@ -47,16 +48,12 @@ export interface UseSettleBetsReturn {
    *   payout   = stake + winnings
    *   rake     = 5% of losing pool
    *
-   * Because the contract exposes no aggregate totals, we approximate pool
-   * sizes from the current odds BPS. The bookmaker derives odds from the
-   * relative win probabilities, which closely tracks pool ratios in a
-   * parimutuel system:
-   *   approxTotalWinning = stake * 10000 / oddsAtPlacementBps
-   *   approxTotalLosing  = approxTotalWinning * (10000 - oddsAtPlacementBps) / oddsAtPlacementBps
-   *
-   * This is an estimate. Actual payout depends on all bets placed.
+   * Uses real pool totals (totalBetsA / totalBetsB) when provided; falls back
+   * to an odds-BPS approximation when they are not available.
    */
   estimatedPayout: bigint | null;
+  /** True once Bookmaker.settleBets has been called for this duel. */
+  duelSettled: boolean;
   isSettlePending: boolean;
   isRecoverPending: boolean;
 }
@@ -66,17 +63,29 @@ export interface UseSettleBetsReturn {
 const RAKE_BPS = BigInt(500);       // 5%
 const BPS_TOTAL = BigInt(10_000);
 
+// BetPlaced event used for historical getLogs backfill.
+const BET_PLACED_EVENT = parseAbiItem(
+  'event BetPlaced(uint256 indexed duelId, uint8 indexed fighterId, address indexed bettor, uint256 stake, uint16 oddsAtPlacementBps, uint256 betIndex)',
+);
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
  * useSettleBets — settlement and recovery actions for a resolved duel.
  *
- * @param duelId  The on-chain duel identifier (bigint).
+ * @param duelId      The on-chain duel identifier (bigint).
+ * @param totalBetsA  Real total staked on fighter A (from useDuelState). Used for accurate payout estimate.
+ * @param totalBetsB  Real total staked on fighter B (from useDuelState). Used for accurate payout estimate.
  */
-export function useSettleBets(duelId: bigint): UseSettleBetsReturn {
+export function useSettleBets(
+  duelId: bigint,
+  totalBetsA: bigint = BigInt(0),
+  totalBetsB: bigint = BigInt(0),
+): UseSettleBetsReturn {
   const { address: userAddress } = useAccount();
+  const publicClient = usePublicClient();
 
-  // Index of the user's bet inside bets[duelId]. Discovered via BetPlaced event.
+  // Index of the user's bet inside bets[duelId]. Discovered via BetPlaced getLogs backfill + live watcher.
   const [userBetIndex, setUserBetIndex] = useState<bigint | null>(null);
 
   // ── Write: settleBets(duelId) ──────────────────────────────────────────────
@@ -110,11 +119,37 @@ export function useSettleBets(duelId: bigint): UseSettleBetsReturn {
     });
   };
 
-  // ── Event watch: discover user's bet index from BetPlaced ─────────────────
-  // BetPlaced(duelId indexed, fighterId indexed, bettor indexed, stake, oddsAtPlacementBps, betIndex)
-  // The event is emitted at bet placement time, so we catch historical + live.
-  // wagmi's useWatchContractEvent receives logs as they arrive; for already-
-  // mined events we rely on the initial poll window or a separate getLogs call.
+  // ── getLogs backfill: find user's historical BetPlaced event ──────────────
+  // On a fresh page load of a resolved duel the live watcher only sees new
+  // blocks, so a bet placed before page open would be invisible. This one-shot
+  // fetch covers all history from the deploy block, filtered to this duel +
+  // this bettor by indexed topic, so it's cheap and RPC-friendly.
+  useEffect(() => {
+    if (!userAddress || !publicClient) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const logs = await publicClient.getLogs({
+          address: CONTRACT_ADDRESSES.Bookmaker,
+          event: BET_PLACED_EVENT,
+          args: { duelId, bettor: userAddress as Address },
+          fromBlock: BOOKMAKER_DEPLOY_BLOCK,
+          toBlock: 'latest',
+        });
+        if (cancelled || logs.length === 0) return;
+        const last = logs[logs.length - 1];
+        const args = last.args as { betIndex?: bigint };
+        if (args.betIndex !== undefined) {
+          setUserBetIndex(args.betIndex);
+        }
+      } catch {
+        // Non-fatal — live watcher below still covers in-session bets.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [duelId, userAddress, publicClient]);
+
+  // ── Live watcher: catch bets placed in this browser session ───────────────
   useWatchContractEvent({
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: parseAbi([
@@ -172,29 +207,46 @@ export function useSettleBets(duelId: bigint): UseSettleBetsReturn {
         }
       : null;
 
-  // ── Estimated payout (parimutuel approximation) ────────────────────────────
-  // See JSDoc comment on UseSettleBetsReturn.estimatedPayout for the formula.
+  // ── Read: Bookmaker.duelSettled(duelId) ───────────────────────────────────
+  const { data: duelSettledRaw } = useReadContract({
+    address: CONTRACT_ADDRESSES.Bookmaker,
+    abi: ABIS.Bookmaker,
+    functionName: 'duelSettled',
+    args: [duelId],
+    query: { enabled: duelId > BigInt(0) },
+  });
+  const duelSettled = duelSettledRaw === true;
+
+  // ── Estimated payout — real parimutuel formula ─────────────────────────────
+  // Uses actual pool totals (totalBetsA/totalBetsB from useDuelState) when
+  // available. If the caller did not provide them, falls back to the odds-BPS
+  // approximation so the field is never null for a winner.
   const estimatedPayout: bigint | null = (() => {
     if (!userBet) return null;
-    const { stake, oddsAtPlacementBps } = userBet;
-    if (stake === BigInt(0) || oddsAtPlacementBps === 0) return null;
+    const { stake, fighterId, oddsAtPlacementBps } = userBet;
+    if (stake === BigInt(0)) return null;
 
-    const oddsBps = BigInt(oddsAtPlacementBps);
+    // Prefer real pool sizes when the caller wired them up.
+    const hasPools = totalBetsA > BigInt(0) || totalBetsB > BigInt(0);
+    let winningPool: bigint;
+    let losingPool: bigint;
 
-    // Approximate total winning pool:  stake is oddsBps/10000 of the total.
-    const approxTotalWinning = (stake * BPS_TOTAL) / oddsBps;
+    if (hasPools) {
+      winningPool = fighterId === 0 ? totalBetsA : totalBetsB;
+      losingPool  = fighterId === 0 ? totalBetsB : totalBetsA;
+    } else {
+      // Fallback: derive approximate pools from odds BPS.
+      if (oddsAtPlacementBps === 0) return null;
+      const oddsBps = BigInt(oddsAtPlacementBps);
+      winningPool = (stake * BPS_TOTAL) / oddsBps;
+      losingPool  = (winningPool * (BPS_TOTAL - oddsBps)) / oddsBps;
+    }
 
-    // Approximate total losing pool is the complement.
-    const approxTotalLosing =
-      (approxTotalWinning * (BPS_TOTAL - oddsBps)) / oddsBps;
-
-    // Apply 5% rake on the losing pool.
-    const losingAfterRake = (approxTotalLosing * (BPS_TOTAL - RAKE_BPS)) / BPS_TOTAL;
-
-    // Proportional winnings from the losing pool.
+    // 5% rake on the losing pool, then proportional share to this bettor.
+    const losingAfterRake = (losingPool * (BPS_TOTAL - RAKE_BPS)) / BPS_TOTAL;
     const winnings =
-      approxTotalWinning > BigInt(0)
-        ? (losingAfterRake * stake) / approxTotalWinning
+      winningPool > BigInt(0)
+        ? (losingAfterRake * stake) / winningPool
         : BigInt(0);
 
     return stake + winnings;
@@ -205,6 +257,7 @@ export function useSettleBets(duelId: bigint): UseSettleBetsReturn {
     recoverFunds,
     userBet,
     estimatedPayout,
+    duelSettled,
     isSettlePending,
     isRecoverPending,
   };
