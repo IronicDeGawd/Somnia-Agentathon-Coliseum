@@ -1,8 +1,13 @@
 'use client';
 
-import { defineChain } from 'viem';
-import { http } from 'wagmi';
+import { defineChain, http, fallback } from 'viem';
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+
+// Public Somnia testnet RPCs. dream-rpc is the canonical endpoint; api.infra is
+// the fallback. Both send permissive CORS headers, but each throttles a browser
+// firing many reads at once — so we batch (below) and fail over between them.
+const RPC_PRIMARY  = 'https://dream-rpc.somnia.network';
+const RPC_FALLBACK = 'https://api.infra.testnet.somnia.network';
 
 // Custom Somnia Shannon testnet chain
 export const somniaTestnet = defineChain({
@@ -10,7 +15,7 @@ export const somniaTestnet = defineChain({
   name: 'Somnia Shannon Testnet',
   nativeCurrency: { name: 'Somnia Token', symbol: 'STT', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://api.infra.testnet.somnia.network'] },
+    default: { http: [RPC_PRIMARY, RPC_FALLBACK] },
   },
   blockExplorers: {
     default: {
@@ -34,7 +39,12 @@ export const config = getDefaultConfig({
   projectId: WC_PROJECT_ID,
   chains: [somniaTestnet],
   transports: {
-    [somniaTestnet.id]: http(),
+    // Batch many eth_calls into single HTTP POSTs (collapses the read burst so
+    // the public RPC doesn't throttle us), and fail over to the backup RPC.
+    [somniaTestnet.id]: fallback([
+      http(RPC_PRIMARY,  { batch: true }),
+      http(RPC_FALLBACK, { batch: true }),
+    ]),
   },
   // ssr:false so getDefaultConfig runs EIP-6963 multi-injected discovery on the
   // CLIENT at config creation. With ssr:true the config is first built on the

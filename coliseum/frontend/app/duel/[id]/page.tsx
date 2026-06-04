@@ -211,8 +211,10 @@ export default function ArenaPage() {
   const { fighterA: liveA, fighterB: liveB, markets } = useDuelLive(duelId, duel);
 
   // ── Derived display values ───────────────────────────────────────────────────
-  const displayRound = duel ? currentTurn : 0;
+  // currentTurn is completedCallbacks (2 per round — one move per fighter), so
+  // the human round number is ceil(callbacks / 2), capped at the duel's turns.
   const displayTurns = duel ? duel.turns : 0;
+  const displayRound = duel ? Math.min(Math.ceil(currentTurn / 2), displayTurns) : 0;
   const duelActive   = isActive;
   const duelResolved = isResolved;
   const duelOver     = duelResolved;
