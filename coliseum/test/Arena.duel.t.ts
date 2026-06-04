@@ -143,6 +143,31 @@ describe("Arena — Duel lifecycle", function () {
     expect(finalState[D.status]).to.equal(DuelStatus.Resolved);
   });
 
+  it("records the resolved duel in DuelHistory when the sink is set", async function () {
+    const { arena, mockPlatform, poolSomi } = await deploy();
+    const history = await hre.viem.deployContract("DuelHistory", [arena.address]);
+    await arena.write.setDuelHistory([history.address]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+    await mineBlock();
+
+    let nextReqId = 1n;
+    for (let i = 0; i < 3; i++) {
+      await runOneTurn(arena, mockPlatform, nextReqId);
+      nextReqId += 2n;
+    }
+
+    await poolSomi.write.setMarkPrice([2000n * 10n ** 18n]);
+    await arena.write.finalizeDuel([duelId]);
+
+    expect(Number(await history.read.totalDuels()), "history should record the duel").to.equal(1);
+    expect(await history.read.recorded([duelId])).to.equal(true);
+    // Tie resolves to fighterA → fighterA gets the win on record.
+    const ra = await history.read.getFighterRecord([FIGHTER_A]) as { wins: bigint };
+    expect(Number(ra.wins)).to.equal(1);
+  });
+
   it("DuelAlreadyActive reverts when starting second duel mid-flow", async function () {
     const { arena } = await deploy();
 
