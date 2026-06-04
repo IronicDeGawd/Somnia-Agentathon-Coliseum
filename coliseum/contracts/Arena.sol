@@ -53,6 +53,12 @@ contract Arena is ArenaVault {
     uint256 public nextDuelId = 1;
     uint256 public activeDuelId;
 
+    /// @notice USDso escrow held for each duel's creator (the pot, fee excluded).
+    ///         Set on startDuel, paid out (and zeroed) on recoverFunds. recoverFunds
+    ///         pays the creator from this contract's OWN balance, capped by duelPot,
+    ///         so one duel can never drain another's deposit or the owner seed.
+    mapping(uint256 => uint256) public duelPot;
+
     // poolAddress → duelId → fighterId → balance
     mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) public fighterBalances;
 
@@ -178,7 +184,9 @@ contract Arena is ArenaVault {
         // If no book data (local hardhat), minDeposit is 0. Use a floor of 2 USDso per fighter
         // so the duel pot is non-zero even without live price feeds.
         if (minDeposit == 0) minDeposit = 2e18;
-        uint256 required = minDeposit + PLATFORM_FEE;
+        // Fee scales with turns to track LLM inference cost (see platformFee).
+        uint256 fee = platformFee(turns);
+        uint256 required = minDeposit + fee;
 
         uint256 provided = IERC20Minimal(USDSO).allowance(msg.sender, address(this));
         if (provided < required) revert ArenaTypes.DepositTooLow(required, provided);
@@ -187,8 +195,8 @@ contract Arena is ArenaVault {
         if (!ok) revert ArenaTypes.TransferFailed();
 
         // Platform fee stays in contract; remainder is the duel pot.
-        accruedFees += PLATFORM_FEE;
-        uint256 pot = required - PLATFORM_FEE;
+        accruedFees += fee;
+        uint256 pot = required - fee;
         uint256 initialUsdsoPerFighter = pot / 2;
         if (initialUsdsoPerFighter == 0) revert ArenaTypes.ZeroAmount();
 
@@ -211,6 +219,12 @@ contract Arena is ArenaVault {
             winnerSlot:              type(uint8).max  // 255 = unset until resolved
         });
         activeDuelId = duelId;
+
+        // Escrow the real pot in this contract's USDso balance. recoverFunds pays
+        // the creator from here (capped by duelPot) — never from the shared seed
+        // vault — so duels can't drain each other or the owner's liquidity.
+        duelPot[duelId] = pot;
+        escrowedPot    += pot;
 
         // Seed virtual quote balance only on active pools for this tier.
         address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
@@ -314,49 +328,45 @@ contract Arena is ArenaVault {
         if (duel.creator != msg.sender) revert ArenaTypes.NotDuelCreator();
         if (duel.fundsRecovered) revert ArenaTypes.AlreadyRecovered();
 
-        // Effects: mark recovered BEFORE external calls (CEI).
-        duel.fundsRecovered = true;
-
         address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
 
         // Per-duel entitlement = sum of both fighters' tracked quote balances across
-        // active pools at resolution time. This is what the duel started with minus
-        // any base-token holdings (which stay in the pool).
+        // active pools at resolution time. The virtual model credits each fighter on
+        // EVERY active pool, so this can exceed the real pot — it's capped below.
         uint256 entitled = 0;
         for (uint256 i = 0; i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
             entitled += fighterBalances[pools[i]][duelId][duel.fighterA].quoteTokenAmount;
             entitled += fighterBalances[pools[i]][duelId][duel.fighterB].quoteTokenAmount;
         }
-        if (entitled == 0) revert ArenaTypes.NothingToRecover();
 
-        // Cap entitled by what the contract can actually pull across active pools
-        // (in case some funds are still locked in open orders).
-        uint256 recovered = 0;
-        for (uint256 i = 0; i < 3; i++) {
-            if (duel.poolMask & bits[i] == 0) continue;
-            if (recovered >= entitled) break;
-            address pool = pools[i];
-            uint256 withdrawable = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO);
-            if (withdrawable == 0) continue;
-            uint256 toPull = entitled - recovered;
-            if (toPull > withdrawable) toPull = withdrawable;
-            ISpotPool(pool).withdraw(USDSO, toPull);
-            recovered += toPull;
-        }
+        // Pay from this contract's OWN escrowed balance, capped by the duel's pot.
+        // Base-token holdings (quote traded away) are not refunded — that surplus
+        // (pot − pay) is released from escrow and accrues to the platform.
+        uint256 pot = duelPot[duelId];
+        uint256 pay = entitled < pot ? entitled : pot;
+        if (pay == 0) revert ArenaTypes.NothingToRecover();
 
-        if (recovered == 0) revert ArenaTypes.NothingToRecover();
+        // Effects before interaction (CEI): mark recovered, release the full pot
+        // from escrow, zero the per-duel pot.
+        duel.fundsRecovered = true;
+        escrowedPot   -= pot;
+        duelPot[duelId] = 0;
 
-        bool ok = IERC20Minimal(USDSO).transfer(msg.sender, recovered);
+        bool ok = IERC20Minimal(USDSO).transfer(msg.sender, pay);
         if (!ok) revert ArenaTypes.TransferFailed();
 
-        emit ArenaTypes.DuelFundsRecovered(duelId, msg.sender, recovered);
+        emit ArenaTypes.DuelFundsRecovered(duelId, msg.sender, pay);
     }
 
     // ─── LLM request / response ───────────────────────────────────────────────
 
-    function _requestFighterMove(uint256 duelId, uint8 fighterId) internal returns (uint256 requestId) {
+    /// @dev Never reverts: a failed request (low STT, or the platform reverting)
+    ///      is counted as a completed callback and the turn proceeds, mirroring the
+    ///      handleFighterResponse failure path. This stops one fighter's request
+    ///      failure from atomically reverting the whole turn and stalling the duel.
+    function _requestFighterMove(uint256 duelId, uint8 fighterId) internal {
         IFighterRegistry.Fighter memory f = registry.getFighter(fighterId);
         string memory marketSummary = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
@@ -373,21 +383,32 @@ contract Arena is ArenaVault {
 
         IAgentRequester platform = IAgentRequester(PLATFORM_ADDR);
         uint256 deposit = platform.getRequestDeposit() + FIGHTER_DEPOSIT_TOPUP * 3;
-        if (address(this).balance < deposit) revert ArenaTypes.InsufficientStt();
-        requestId = platform.createRequest{value: deposit}(
+        if (address(this).balance < deposit) {
+            duels[duelId].completedCallbacks += 1;
+            emit ArenaTypes.FighterMoveFailed(duelId, fighterId, "insufficient stt");
+            return;
+        }
+
+        try platform.createRequest{value: deposit}(
             LLM_AGENT_ID,
             address(this),
             this.handleFighterResponse.selector,
             payload
-        );
-
-        pendingTurns[requestId] = ArenaTypes.PendingTurn({
-            duelId:   duelId,
-            fighterId: fighterId,
-            deadline: block.timestamp + FIGHTER_REQUEST_DEADLINE_SEC,
-            exists:   true
-        });
-        emit ArenaTypes.FighterMoveRequested(duelId, fighterId, requestId);
+        ) returns (uint256 requestId) {
+            pendingTurns[requestId] = ArenaTypes.PendingTurn({
+                duelId:   duelId,
+                fighterId: fighterId,
+                deadline: block.timestamp + FIGHTER_REQUEST_DEADLINE_SEC,
+                exists:   true
+            });
+            emit ArenaTypes.FighterMoveRequested(duelId, fighterId, requestId);
+        } catch {
+            // Platform reverted (e.g. queue full / topup math) — count it as a
+            // completed (failed) move so completedCallbacks still reaches turns×2
+            // and the duel can finalize instead of hanging.
+            duels[duelId].completedCallbacks += 1;
+            emit ArenaTypes.FighterMoveFailed(duelId, fighterId, "request failed");
+        }
     }
 
     function handleFighterResponse(
@@ -603,8 +624,8 @@ contract Arena is ArenaVault {
 
     // ─── Debug / test helpers (testnet only) ─────────────────────────────────
 
-    function testRequestFighterMove(uint256 duelId, uint8 fighterId) external onlyOwner returns (uint256) {
-        return _requestFighterMove(duelId, fighterId);
+    function testRequestFighterMove(uint256 duelId, uint8 fighterId) external onlyOwner {
+        _requestFighterMove(duelId, fighterId);
     }
 
     function debugPlaceOrder(

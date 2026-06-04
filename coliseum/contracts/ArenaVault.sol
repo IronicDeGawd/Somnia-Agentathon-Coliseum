@@ -20,8 +20,18 @@ abstract contract ArenaVault {
     address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
     uint256 public constant REACTIVITY_FUND_MIN = 33 ether;
 
-    /// @notice Platform fee collected per duel start (1 USDso, 18 decimals).
-    uint256 public constant PLATFORM_FEE = 1e18;
+    /// @notice Platform fee scales with duel length to track LLM inference cost,
+    ///         which grows with turns (≈0.24 STT/move × 2 fighters × turns). Flat
+    ///         fees over-charge short duels and under-charge long ones, so the fee
+    ///         is hybrid: fee = base + perTurn × turns (18-decimal USDso).
+    ///         e.g. turns=3 → 0.8, turns=6 → 1.1, turns=9 → 1.4, turns=15 → 2.0.
+    uint256 public constant PLATFORM_FEE_BASE     = 0.5e18;
+    uint256 public constant PLATFORM_FEE_PER_TURN = 0.1e18;
+
+    /// @notice Turn-scaled platform fee collected at startDuel.
+    function platformFee(uint16 turns) public pure returns (uint256) {
+        return PLATFORM_FEE_BASE + PLATFORM_FEE_PER_TURN * uint256(turns);
+    }
 
     // ─── State ────────────────────────────────────────────────────────────────
 
@@ -32,6 +42,12 @@ abstract contract ArenaVault {
     address public owner;
     uint256 public subscriptionId;
     uint256 public accruedFees;
+
+    /// @notice Sum of all un-recovered duel pots currently escrowed in this
+    ///         contract's USDso balance. withdrawFees() never dips below this, so
+    ///         platform-fee withdrawal can never touch depositor principal.
+    ///         Incremented in startDuel, decremented in recoverFunds.
+    uint256 public escrowedPot;
 
     /// @notice Running total of USDso the OWNER has seeded into pool vaults via
     ///         fundPools(). Tracked separately from user duel deposits so the
@@ -163,8 +179,11 @@ abstract contract ArenaVault {
     function withdrawFees(address to) external onlyOwner {
         uint256 amount = accruedFees;
         if (amount == 0) revert ArenaTypes.ZeroAmount();
-        uint256 bal = IERC20Minimal(USDSO).balanceOf(address(this));
-        if (bal < amount) amount = bal;
+        // Only the balance above escrowed duel pots is withdrawable as fees, so
+        // this can never pay out depositor principal still held in escrow.
+        uint256 bal  = IERC20Minimal(USDSO).balanceOf(address(this));
+        uint256 free = bal > escrowedPot ? bal - escrowedPot : 0;
+        if (free < amount) amount = free;
         if (amount == 0) revert ArenaTypes.ZeroAmount();
         accruedFees = 0;
         bool ok = IERC20Minimal(USDSO).transfer(to, amount);

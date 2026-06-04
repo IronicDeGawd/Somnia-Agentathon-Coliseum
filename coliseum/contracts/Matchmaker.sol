@@ -28,7 +28,7 @@ interface IArena {
     function activeDuelId() external view returns (uint256);
     function minDepositFor(uint16 turns) external view returns (uint256);
     function recoverFunds(uint256 duelId) external;
-    function PLATFORM_FEE() external view returns (uint256);
+    function platformFee(uint16 turns) external view returns (uint256);
 
     // Field order: 0=fighterA, 1=fighterB, 2=creator, 3=startBlock,
     // 4=lastTurnBlock, 5=completedCallbacks, 6=turns, 7=poolMask,
@@ -331,7 +331,7 @@ contract Matchmaker {
     function halfDeposit(uint16 turns) public view returns (uint256) {
         uint256 minDep = arena.minDepositFor(turns);
         if (minDep == 0) minDep = 2e18;
-        uint256 total  = minDep + arena.PLATFORM_FEE();
+        uint256 total  = minDep + arena.platformFee(turns);
         return (total + 1) / 2; // ceil — ensures combined >= required
     }
 
@@ -365,7 +365,7 @@ contract Matchmaker {
         // Re-query required amount at match time (market prices may have moved)
         uint256 minDep = arena.minDepositFor(turns);
         if (minDep == 0) minDep = 2e18;
-        uint256 required = minDep + arena.PLATFORM_FEE();
+        uint256 required = minDep + arena.platformFee(turns);
 
         if (total < required) {
             // Price drifted up between queue and match — refund both players.
