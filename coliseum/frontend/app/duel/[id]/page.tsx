@@ -497,7 +497,9 @@ export default function ArenaPage() {
           <div className="sect-head">
             <span className="sect-head-num">§ MARKET</span>
             <span className="sect-head-title">WBTC/USDso</span>
-            <span className="sect-head-meta">dreamDEX · mid mark live</span>
+            <span className="sect-head-meta">
+              <Dot variant="win" pulse /> <span style={{ color: 'var(--win)' }}>LIVE</span> · dreamDEX mid mark
+            </span>
           </div>
           <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
             <div className="col gap-2" style={{ flexShrink: 0 }}>
@@ -540,12 +542,16 @@ export default function ArenaPage() {
           </div>
         </div>
 
-        {/* § BOOK — Real BetPanel (chain) with sim odds bar as visual header */}
-        <div className="card pad-24 col gap-12">
+        {/* § BOOK — Real BetPanel (chain). Gold-framed as the live-money wager window. */}
+        <div className="card pad-24 col gap-12" style={{ boxShadow: '0 0 0 1px rgba(252,211,77,0.14), 0 0 32px rgba(252,211,77,0.05)' }}>
           <div className="sect-head">
             <span className="sect-head-num">§ BOOK</span>
-            <span className="sect-head-title">PLACE YOUR BET</span>
-            <span className="sect-head-meta">{duelActive ? 'BETS OPEN WHILE DUEL ACTIVE · approve + placeBet' : 'BETS CLOSED'}</span>
+            <span className="sect-head-title">PLACE YOUR WAGER</span>
+            <span className="sect-head-meta">
+              {duelActive
+                ? <><Dot variant="warn" pulse /> <span style={{ color: 'var(--gold)' }}>BETS OPEN</span> · approve + placeBet</>
+                : 'BETS CLOSED'}
+            </span>
           </div>
 
           {/* Odds bar — uses real chain odds when loaded, sim otherwise */}
