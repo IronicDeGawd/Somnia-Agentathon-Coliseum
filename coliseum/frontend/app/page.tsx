@@ -41,9 +41,9 @@ export default function LandingPage() {
       <section id="fight" className="relative border-b border-[var(--border)] overflow-hidden">
         {/* "Now playing" broadcast slate strip */}
         <div
-          className="flex items-center justify-between"
+          className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1"
           style={{
-            padding: '10px 32px',
+            padding: '10px var(--gutter)',
             borderBottom: '1px solid var(--border)',
             background: 'rgba(10,6,18,0.4)',
             position: 'relative',
@@ -70,10 +70,11 @@ export default function LandingPage() {
 
         {/* Main poster */}
         <div
-          style={{ position: 'relative', padding: '32px 32px 56px', minHeight: 720 }}
+          style={{ position: 'relative', padding: '32px var(--gutter) 56px', minHeight: 'clamp(420px, 80vh, 720px)' }}
         >
           {/* Left fighter portrait — bleeding off the edge */}
           <div
+            className="lp-hero-bg"
             style={{
               position: 'absolute',
               left: -60,
@@ -88,6 +89,7 @@ export default function LandingPage() {
           </div>
           {/* Right fighter portrait */}
           <div
+            className="lp-hero-bg"
             style={{
               position: 'absolute',
               right: -60,
@@ -106,7 +108,7 @@ export default function LandingPage() {
             className="col ai-c gap-8"
             style={{ maxWidth: 720, margin: '0 auto', position: 'relative', paddingTop: 28 }}
           >
-            <span className="eyebrow" style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+            <span className="eyebrow" style={{ color: 'var(--text-dim)', textAlign: 'center' }}>
               AUTONOMOUS AI TRADING ARENA · LIVE ON SOMNIA
             </span>
 
@@ -195,7 +197,7 @@ export default function LandingPage() {
             </div>
 
             {/* CTAs */}
-            <div className="row gap-12 ai-c" style={{ marginTop: 24 }}>
+            <div className="row gap-12 ai-c" style={{ marginTop: 24, flexWrap: 'wrap', justifyContent: 'center' }}>
               <Link href="/duel">
                 <BracketButton variant="a">BACK DEGEN +2 USDso</BracketButton>
               </Link>
@@ -228,8 +230,8 @@ export default function LandingPage() {
       </section>
 
       {/* 3. Manifesto § 01 / 06 */}
-      <section style={{ padding: '120px 32px', maxWidth: 1320, margin: '0 auto', position: 'relative' }}>
-        <div className="row gap-32 ai-s">
+      <section style={{ padding: '120px var(--gutter)', maxWidth: 1320, margin: '0 auto', position: 'relative' }}>
+        <div className="row gap-32 ai-s stack-sm">
           <div className="col gap-12" style={{ width: 240, flexShrink: 0, paddingTop: 18 }}>
             <span className="sect-num">§ 01 / 06</span>
             <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>MANIFESTO</span>
@@ -250,7 +252,7 @@ export default function LandingPage() {
               We built the <span className="text-a">biggest mirror</span>.
             </p>
 
-            <div className="row gap-32" style={{ maxWidth: 880 }}>
+            <div className="row gap-32 stack-sm" style={{ maxWidth: 880 }}>
               <p
                 className="t-mono t-sm"
                 style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.8, flex: 1 }}
@@ -279,7 +281,7 @@ export default function LandingPage() {
       </section>
 
       {/* 4. Tale of the Tape § 02 / 06 */}
-      <section id="tape" style={{ padding: '0 32px 120px', maxWidth: 1320, margin: '0 auto' }}>
+      <section id="tape" style={{ padding: '0 var(--gutter) 120px', maxWidth: 1320, margin: '0 auto' }}>
         <div className="sect-head" style={{ marginBottom: 56 }}>
           <span className="sect-head-num">§ 02 / 06</span>
           <span className="sect-head-title">TALE OF THE TAPE</span>
@@ -287,7 +289,7 @@ export default function LandingPage() {
         </div>
 
         {/* Corners + gradient VS */}
-        <div className="row gap-32 ai-c" style={{ marginBottom: 32 }}>
+        <div className="row gap-32 ai-c stack-sm" style={{ marginBottom: 32 }}>
           <div className="col ai-c gap-16 flex-1">
             <FighterAvatar fighter="degen" context="card" size={160} state="winning" />
             <div className="col ai-c gap-4" style={{ marginTop: 8 }}>
@@ -419,17 +421,17 @@ export default function LandingPage() {
       </section>
 
       {/* 5. How a Fight Unfolds § 03 / 06 */}
-      <section style={{ padding: '0 32px 120px', maxWidth: 1320, margin: '0 auto' }}>
+      <section style={{ padding: '0 var(--gutter) 120px', maxWidth: 1320, margin: '0 auto' }}>
         <div className="sect-head" style={{ marginBottom: 56 }}>
           <span className="sect-head-num">§ 03 / 06</span>
           <span className="sect-head-title">HOW A FIGHT UNFOLDS</span>
           <span className="sect-head-meta">One round, roughly one minute</span>
         </div>
 
-        <div className="row gap-48 ai-s">
+        <div className="row gap-48 ai-s stack-sm">
           {/* Sticky left poem */}
           <div
-            className="col gap-16"
+            className="col gap-16 lp-side"
             style={{ width: 320, flexShrink: 0, position: 'sticky', top: 100 }}
           >
             <p
@@ -500,7 +502,7 @@ export default function LandingPage() {
 
       {/* 6. Roster § 04 / 06 */}
       <section id="roster" style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ padding: '0 32px', maxWidth: 1320, margin: '0 auto' }}>
+        <div style={{ padding: '0 var(--gutter)', maxWidth: 1320, margin: '0 auto' }}>
           <div className="sect-head" style={{ marginTop: 56, marginBottom: 32 }}>
             <span className="sect-head-num">§ 04 / 06</span>
             <span className="sect-head-title">THE ROSTER</span>
@@ -625,7 +627,7 @@ export default function LandingPage() {
           })}
         </div>
 
-        <div style={{ padding: '32px', maxWidth: 1320, margin: '0 auto', borderTop: '1px solid var(--border)' }}>
+        <div style={{ padding: '32px var(--gutter)', maxWidth: 1320, margin: '0 auto', borderTop: '1px solid var(--border)' }}>
           <div className="row jc-sb ai-c">
             <span className="t-mono t-xs t-dim">▸ HOVER A FIGHTER FOR THEIR STORY · CLICK TO READ MORE</span>
             <Link href="/duel">
@@ -636,7 +638,7 @@ export default function LandingPage() {
       </section>
 
       {/* 7. Tonight's Card § 05 / 06 */}
-      <section style={{ padding: '120px 32px', maxWidth: 1320, margin: '0 auto' }}>
+      <section style={{ padding: '120px var(--gutter)', maxWidth: 1320, margin: '0 auto' }}>
         <div className="sect-head" style={{ marginBottom: 48 }}>
           <span className="sect-head-num">§ 05 / 06</span>
           <span className="sect-head-title">LIVE</span>
@@ -661,7 +663,7 @@ export default function LandingPage() {
                   overflow: 'hidden',
                 }}
               >
-                <div className="row ai-c jc-sb" style={{ position: 'relative', gap: 24 }}>
+                <div className="row ai-c jc-sb stack-sm" style={{ position: 'relative', gap: 24 }}>
                   <div className="col gap-4" style={{ width: 140 }}>
                     <span
                       className="chip"
@@ -746,14 +748,14 @@ export default function LandingPage() {
       </section>
 
       {/* 8. Ledger § 06 / 06 */}
-      <section id="ledger" style={{ padding: '0 32px 120px', maxWidth: 1320, margin: '0 auto' }}>
+      <section id="ledger" style={{ padding: '0 var(--gutter) 120px', maxWidth: 1320, margin: '0 auto' }}>
         <div className="sect-head" style={{ marginBottom: 48 }}>
           <span className="sect-head-num">§ 06 / 06</span>
           <span className="sect-head-title">THE LEDGER</span>
           <span className="sect-head-meta">Every bout, on-chain, forever</span>
         </div>
 
-        <div className="row gap-32 ai-s" style={{ marginBottom: 32 }}>
+        <div className="row gap-32 ai-s stack-sm" style={{ marginBottom: 32 }}>
           <p
             className="fp-display flex-1"
             style={{
@@ -774,7 +776,7 @@ export default function LandingPage() {
 
         <div className="card" style={{ padding: '0 24px' }}>
           {/* Header row */}
-          <div className="tape-row" style={{ borderBottom: '1px solid var(--text-faint)' }}>
+          <div className="tape-row tape-head" style={{ borderBottom: '1px solid var(--text-faint)' }}>
             <span className="label-tiny">ROUND</span>
             <span className="label-tiny">BOUT</span>
             <span className="label-tiny" style={{ textAlign: 'center' }}>PNL Δ</span>
@@ -847,7 +849,7 @@ export default function LandingPage() {
       {/* 9. Closer */}
       <section
         style={{
-          padding: '140px 32px',
+          padding: '140px var(--gutter)',
           borderTop: '1px solid var(--border)',
           position: 'relative',
           overflow: 'hidden',
@@ -909,7 +911,7 @@ export default function LandingPage() {
       </section>
 
       {/* 10. Footer */}
-      <footer style={{ borderTop: '1px solid var(--border)', padding: '32px', background: 'var(--bg-stage)' }}>
+      <footer style={{ borderTop: '1px solid var(--border)', padding: '32px var(--gutter)', background: 'var(--bg-stage)' }}>
         <div className="row jc-sb ai-c" style={{ maxWidth: 1320, margin: '0 auto', flexWrap: 'wrap', gap: 24 }}>
           <div className="row gap-24 ai-c">
             <span className="brand" style={{ fontSize: 16 }}>COLISEUM</span>

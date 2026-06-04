@@ -706,6 +706,40 @@ body {
   .arena-vs { width: 100% !important; padding: var(--sp-1) 0; }
   .arena-vs .t-display { font-size: 28px !important; }
 }
+/* Landing/responsive helpers. inline styles can't hold breakpoints, so these
+   classes let the landing's fixed two-column sections reflow on small screens. */
+@media (max-width: 768px) {
+  /* a flex row that stacks into a column; children go full width */
+  .stack-sm { flex-direction: column; align-items: stretch; }
+  .stack-sm > * { width: 100% !important; max-width: 100% !important; flex: 0 1 auto !important; }
+  /* drop sticky positioning once a sidebar has stacked */
+  .lp-side { position: static !important; top: auto !important; }
+}
+@media (max-width: 640px) {
+  /* decorative hero backdrop art overlaps the headline on phones — hide it */
+  .lp-hero-bg { display: none !important; }
+}
+@media (max-width: 600px) {
+  /* Ledger tape-row: 5 data columns can't fit a phone, so stack each bout into
+     a compact card (round+when, full-width matchup, pnl+payout). */
+  .tape-head { display: none; }
+  .tape-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "round when"
+      "bout  bout"
+      "pnl   payout";
+    row-gap: var(--sp-2);
+    padding: var(--sp-4) 0;
+  }
+  .tape-row > *:nth-child(1) { grid-area: round; }
+  .tape-row > *:nth-child(2) { grid-area: bout; }
+  .tape-row > *:nth-child(3) { grid-area: pnl; justify-content: flex-start !important; }
+  .tape-row > *:nth-child(4) { grid-area: payout; text-align: left !important; }
+  .tape-row > *:nth-child(5) { grid-area: when; text-align: right !important; }
+  .tape-row .row { flex-wrap: wrap; } /* let the matchup names/avatars wrap */
+}
+
 @media (max-width: 520px) {
   body { font-size: 13px; }
   .standings-head { display: none; }
