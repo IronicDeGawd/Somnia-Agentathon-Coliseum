@@ -1,23 +1,22 @@
 'use client';
 
-import React, { useReducer, useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { formatUnits } from 'viem';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
-import { Sparkline } from '@/components/shared/Sparkline';
 import { OddsBar } from '@/components/shared/OddsBar';
 import { AnimatedNumber } from '@/components/shared/AnimatedNumber';
-import { Typewriter } from '@/components/shared/Typewriter';
 import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import BetPanel from '@/components/shared/BetPanel';
 import { RoundClock } from '@/components/shared/RoundClock';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
+import { useDuelLive } from '@/hooks/useDuelLive';
 import { useFighters } from '@/hooks/useFighters';
-import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { FIGHTERS } from '@/lib/fighters';
-import { fmtUsd, fmtPct, fmtTime } from '@/lib/format';
+import { fmtUsd, fmtPct } from '@/lib/format';
 
 type Layout = 'split' | 'oneUp' | 'stacked';
 
@@ -28,18 +27,17 @@ interface Holding {
 }
 
 // Visual identity per fighter index — mirrors VISUAL_IDENTITY in useFighters.ts.
-// These are the on-chain fighter indexes 0-5 from FighterRegistry.
 const FIGHTER_VISUAL_MAP: Record<number, {
   hex: string;
   side: 'a' | 'b';
   tier: string;
   rank: string;
-  fallbackId: string;   // key into FIGHTERS for avatar / tagline fallback
+  fallbackId: string;
 }> = {
   0: { hex: '#ff3366', side: 'a', tier: 'AGGRESSOR', rank: 'S', fallbackId: 'degen' },
   1: { hex: '#00d9ff', side: 'b', tier: 'TACTICIAN', rank: 'S', fallbackId: 'whale' },
-  2: { hex: '#a78bfa', side: 'a', tier: 'QUANT',     rank: 'A', fallbackId: 'reverter' },
-  3: { hex: '#fcd34d', side: 'b', tier: 'HOLDER',    rank: 'A', fallbackId: 'scalper' },
+  2: { hex: '#a78bfa', side: 'a', tier: 'QUANT',     rank: 'A', fallbackId: 'quant' },
+  3: { hex: '#fcd34d', side: 'b', tier: 'HOLDER',    rank: 'A', fallbackId: 'diamond' },
   4: { hex: '#f97316', side: 'a', tier: 'SCALPER',   rank: 'A', fallbackId: 'scalper' },
   5: { hex: '#34d399', side: 'b', tier: 'REBEL',     rank: 'B', fallbackId: 'contrarian' },
 };
@@ -109,21 +107,17 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
 function FighterCardSplit({
   fighter,
   pnl,
-  history,
   holdings,
   layout,
 }: {
   fighter: { id: string; name: string; hex: string; side: 'a' | 'b'; tier: string; tagline: string; rank: string };
   pnl: number;
-  history: number[];
   holdings: Holding[];
   layout: Layout;
 }) {
   const winning = pnl >= 0;
   const { hex, side, name, tier, tagline, rank } = fighter;
   const portraitSize = layout === 'oneUp' ? 220 : layout === 'stacked' ? 100 : 160;
-  const sparklineW = layout === 'oneUp' ? 600 : layout === 'stacked' ? 300 : 420;
-  const pct = (pnl / 300) * 100;
 
   if (layout === 'stacked') {
     return (
@@ -146,17 +140,8 @@ function FighterCardSplit({
                   <AnimatedNumber value={pnl} formatter={fmtUsd} duration={500} />
                 </span>
               </div>
-              <div className="col gap-2">
-                <span className="label-tiny">CHANGE</span>
-                <span className="t-num t-sm" style={{ color: winning ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
-                  {winning ? '▲' : '▼'} <AnimatedNumber value={pct} formatter={fmtPct} duration={500} />
-                </span>
-              </div>
-              <div className="flex-1" style={{ minWidth: 0 }}>
-                <Sparkline data={history} color={hex} width={sparklineW} height={36} />
-              </div>
             </div>
-            <HoldingsBlock holdings={holdings} color={hex} />
+            {holdings.length > 0 && <HoldingsBlock holdings={holdings} color={hex} />}
           </div>
         </div>
       </div>
@@ -184,23 +169,16 @@ function FighterCardSplit({
               <span className="t-num" style={{ fontSize: layout === 'oneUp' ? 40 : 32, lineHeight: 1, color: winning ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
                 <AnimatedNumber value={pnl} formatter={fmtUsd} duration={500} />
               </span>
-              <span className="t-num t-sm" style={{ color: winning ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
-                {winning ? '▲▲▲' : '▼▼▼'} <AnimatedNumber value={pct} formatter={fmtPct} duration={500} />
-              </span>
             </div>
           </div>
         </div>
 
-        <div className="col gap-4">
-          <div className="row jc-sb ai-c" style={{ gap: 12 }}>
-            <span className="label-tiny">PNL TIMELINE</span>
-            <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>ROUND 1—{history.length}</span>
-          </div>
-          <Sparkline data={history} color={hex} width={sparklineW} height={44} />
-        </div>
-
-        <hr className="divider" />
-        <HoldingsBlock holdings={holdings} color={hex} />
+        {holdings.length > 0 && (
+          <>
+            <hr className="divider" />
+            <HoldingsBlock holdings={holdings} color={hex} />
+          </>
+        )}
       </div>
     </div>
   );
@@ -209,9 +187,8 @@ function FighterCardSplit({
 export default function ArenaPage() {
   const params = useParams();
   const layout = useUIStore((state) => state.layout) as Layout;
-  const autoAdvance = true;
 
-  // Parse duel ID from URL params — BigInt for contract reads.
+  // Parse duel ID from URL params
   const rawId = params?.id;
   const duelIdNum = rawId ? Number(rawId) : 0;
   const duelId = BigInt(duelIdNum > 0 ? duelIdNum : 0) as bigint;
@@ -230,51 +207,36 @@ export default function ArenaPage() {
     refetch,
   } = useDuelState(duelId);
 
-  // ── Simulation (visual fallback when chain data is loading or absent) ────────
-  const turnsParam = Number(params?.turns ?? 15);
-  const totalTurns: 3 | 6 | 9 | 15 = ([3, 6, 9, 15] as const).includes(turnsParam as 3 | 6 | 9 | 15)
-    ? (turnsParam as 3 | 6 | 9 | 15)
-    : 15;
+  // ── Live on-chain portfolio data ──────────────────────────────────────────
+  const { fighterA: liveA, fighterB: liveB, markets } = useDuelLive(duelId, duel);
 
-  const [simState, dispatch] = useReducer(simReducer, makeInitialSim());
+  // ── Derived display values ───────────────────────────────────────────────────
+  const displayRound = duel ? currentTurn : 0;
+  const displayTurns = duel ? duel.turns : 0;
+  const duelActive   = isActive;
+  const duelResolved = isResolved;
+  const duelOver     = duelResolved;
 
-  useEffect(() => {
-    const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
-    return () => clearInterval(clock);
-  }, []);
+  // No duel (status=0 or not found)
+  const noDuel = !isLoading && (!duel || duel.status === 0);
 
-  const handleAdvance = () => dispatch({ type: 'ADVANCE' });
-  const handleFastForward = () => dispatch({ type: 'FAST_FORWARD' });
-
-  // ── Derived display values: chain data when available, sim as fallback ───────
-  // Use chain currentTurn when the duel is loaded; fall back to sim round.
-  const displayRound = (!isLoading && duel) ? currentTurn  : simState.round;
-  const displayTurns = (!isLoading && duel) ? duel.turns   : totalTurns;
-  const duelActive   = (!isLoading && duel) ? isActive     : true;
-  const duelResolved = (!isLoading && duel) ? isResolved   : false;
-  const duelOver     = duelResolved || (simState.round > 15 || simState.timeLeft <= 0);
-
-  // Odds: chain BPS → percentage. Fall back to simState.oddsDegen while loading.
-  const oddsDegenPct = (!isLoading && odds)
-    ? Math.round(odds.degenBps / 100)
-    : simState.oddsDegen;
+  // Odds: chain BPS → percentage. Default to 50/50 if unavailable.
+  const oddsDegenPct = odds ? Math.round(odds.degenBps / 100) : 50;
   const oddsWhalePct = 100 - oddsDegenPct;
 
-  // Real fighter indexes from the on-chain duel (duels() tuple slots 0/1), now
-  // exposed by useDuelState. Default to 0/1 (degen/whale) only while loading.
+  // Real fighter indexes from chain
   const fighterAIndex = duel ? duel.fighterA : 0;
   const fighterBIndex = duel ? duel.fighterB : 1;
 
-  // Resolve visual identity (corner color / side / tier) for each slot.
+  // Visual identity
   const visualA = FIGHTER_VISUAL_MAP[fighterAIndex] ?? DEFAULT_VISUAL;
   const visualB = FIGHTER_VISUAL_MAP[fighterBIndex] ?? { ...DEFAULT_VISUAL, side: 'b' as const };
 
-  // Static FIGHTERS persona = loading fallback for name/tagline/avatar.
+  // Static FIGHTERS persona fallback for name/tagline/avatar
   const fallbackA = FIGHTERS[visualA.fallbackId] ?? FIGHTERS.degen;
   const fallbackB = FIGHTERS[visualB.fallbackId] ?? FIGHTERS.whale;
 
-  // Real on-chain name/tagline from the FighterRegistry (one batched read for all
-  // six). Falls back to the static persona until the registry read resolves.
+  // Real on-chain name/tagline from FighterRegistry
   const { fighters: chainFighters } = useFighters();
   const chainA = chainFighters.find((f) => f.index === fighterAIndex);
   const chainB = chainFighters.find((f) => f.index === fighterBIndex);
@@ -298,24 +260,56 @@ export default function ArenaPage() {
     rank: visualB.rank,
   };
 
-  // Winner display: real winnerSlot from chain when resolved, else sim fallback.
+  // Winner from chain
   const resolvedWinnerSlot = duelResolved && winnerSlot !== null ? winnerSlot : null;
-  const simWinnerIsA = simState.degen.pnl >= simState.whale.pnl;
-  const winnerSlotDisplay = resolvedWinnerSlot !== null ? resolvedWinnerSlot : (simWinnerIsA ? 0 : 1);
-  const winnerName = winnerSlotDisplay === 0 ? degenF.name : whaleF.name;
+  const winnerName = resolvedWinnerSlot === 0 ? degenF.name : resolvedWinnerSlot === 1 ? whaleF.name : '—';
 
-  // Callback to refresh chain state whenever the RoundClock signals a new turn.
-  const handleTurnAdvanced = useCallback(() => {
-    refetch();
-    dispatch({ type: 'ADVANCE' });
-  }, [refetch]);
+  // Real portfolio PnL (float for AnimatedNumber)
+  const degenPnl = liveA.pnlNum;
+  const whalePnl = liveB.pnlNum;
+
+  // Real holdings: combine base+quote per pool into display rows
+  const toDisplayHoldings = (holdings: typeof liveA.holdings): Holding[] =>
+    holdings.flatMap((h) => [
+      { token: h.token, amount: Number(parseFloat(h.baseAmount).toFixed(6)) },
+      { token: 'USDso', amount: Number(parseFloat(h.quoteAmount).toFixed(2)) },
+    ]).filter((h) => (h.amount as number) > 0);
+
+  const degenHoldings = toDisplayHoldings(liveA.holdings);
+  const whaleHoldings = toDisplayHoldings(liveB.holdings);
+
+  // Pot from real bets (totalBetsA + totalBetsB), formatted as "$X.XX"
+  const potDisplay = `$${Number(formatUnits(totalBetsA + totalBetsB, 18)).toFixed(2)}`;
+
+  // Callback to refresh chain state when RoundClock signals a new turn
+  const handleTurnAdvanced = useCallback(() => { refetch(); }, [refetch]);
+
+  const [_layoutState, _setLayoutState] = useState(false); // keep for future use
 
   const degenCard = (
-    <FighterCardSplit fighter={degenF} pnl={simState.degen.pnl} history={simState.degen.history} holdings={simState.degen.holdings as Holding[]} layout={layout} />
+    <FighterCardSplit fighter={degenF} pnl={degenPnl} holdings={degenHoldings} layout={layout} />
   );
   const whaleCard = (
-    <FighterCardSplit fighter={whaleF} pnl={simState.whale.pnl} history={simState.whale.history} holdings={simState.whale.holdings as Holding[]} layout={layout} />
+    <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} />
   );
+
+  // ── Empty state when no active duel ──────────────────────────────────────
+  if (noDuel) {
+    return (
+      <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
+        <AppTopBar />
+        <div className="col ai-c jc-c" style={{ flex: 1, gap: 16, padding: 48, textAlign: 'center' }}>
+          <span className="t-display t-up" style={{ fontSize: 32, color: 'var(--text-faint)', letterSpacing: '0.14em' }}>
+            THIS ARENA IS DARK
+          </span>
+          <span className="t-mono t-sm t-dim">No active duel at #{duelIdNum} — check the lobby for live matches.</span>
+          <Link href="/duel">
+            <BracketButton variant="ghost">← BACK TO LOBBY</BracketButton>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
@@ -334,21 +328,17 @@ export default function ArenaPage() {
           <div className="row gap-16 ai-c" style={{ flexWrap: 'wrap' }}>
             <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>§ ARENA · MAIN EVENT</span>
             <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
-            <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
+            {duelActive && <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>}
+            {duelResolved && <Chip variant="gold">★ SETTLED</Chip>}
+            {!duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
               ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{displayRound}</span>
               <span className="t-faint"> / {displayTurns}</span>
             </span>
-            <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
-              BELL <span className="t-num" style={{ color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text)' }}>{fmtTime(simState.timeLeft)}</span>
-            </span>
           </div>
           <div className="row gap-16 ai-c" style={{ flexWrap: 'wrap' }}>
             <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
-              <span className="t-num" style={{ color: 'var(--text)' }}>{simState.spectators}</span> watching
-            </span>
-            <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
-              POT <span className="t-num text-gold">${simState.pot}</span>
+              POT <span className="t-num text-gold">{potDisplay}</span>
             </span>
             <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
             <Link href="/duel">
@@ -371,7 +361,6 @@ export default function ArenaPage() {
       <div className="shell-pad col" style={{ flex: 1, gap: 'clamp(32px, 5vw, 64px)', paddingBlock: 'clamp(24px, 4vw, 48px)' }}>
         {/* § COMBATANTS */}
         <div className="col gap-12" style={{ position: 'relative' }}>
-          {/* Stage spotlights — red corner left, blue corner right, converging center */}
           <div
             aria-hidden
             style={{
@@ -390,7 +379,7 @@ export default function ArenaPage() {
           {layout === 'split' && (
             <div className="row gap-16 arena-duo" style={{ alignItems: 'stretch', position: 'relative', zIndex: 1 }}>
               <div className="col gap-16" style={{ flex: 1 }}>{degenCard}</div>
-              {/* Central scoreboard HUD — the tale of the tape */}
+              {/* Central scoreboard HUD */}
               <div className="col ai-c jc-c arena-vs" style={{ width: 150, gap: 10 }}>
                 <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.22em', whiteSpace: 'nowrap' }}>
                   ROUND {displayRound}/{displayTurns}
@@ -405,9 +394,6 @@ export default function ArenaPage() {
                   }}
                 >
                   VS
-                </span>
-                <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: simState.timeLeft < 60 ? 'var(--loss)' : 'var(--text-dim)' }}>
-                  BELL <span className="t-num">{fmtTime(simState.timeLeft)}</span>
                 </span>
                 <div className="col ai-c gap-2" style={{ width: '100%', marginTop: 2 }}>
                   <div className="row ai-c jc-sb" style={{ width: '88%' }}>
@@ -426,7 +412,7 @@ export default function ArenaPage() {
           )}
 
           {layout === 'oneUp' && (() => {
-            const dWin = simState.degen.pnl >= simState.whale.pnl;
+            const dWin = degenPnl >= whalePnl;
             const Hero = dWin ? degenCard : whaleCard;
             const Other = dWin ? whaleCard : degenCard;
             return (
@@ -448,17 +434,16 @@ export default function ArenaPage() {
           )}
         </div>
 
-        {/* § FEED — Reasoning */}
+        {/* § FEED — Real last action + thinking state */}
         <div
           className="card pad-24 col gap-16"
           style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%), var(--bg-card)' }}
         >
           <div className="sect-head">
             <span className="sect-head-num">§ FEED</span>
-            <span className="sect-head-title">FIGHTER REASONING</span>
-            <span className="sect-head-meta">SOMNIA AGENTS · inferNumber(0..6)</span>
+            <span className="sect-head-title">FIGHTER ACTIONS</span>
+            <span className="sect-head-meta">SOMNIA AGENTS · on-chain FighterMove events</span>
           </div>
-          {/* Two opposing corners — red DEGEN / blue WHALE, mirroring the fight */}
           <div className="row gap-16 stack-sm" style={{ alignItems: 'stretch' }}>
             <div
               className="col gap-6 flex-1"
@@ -466,16 +451,21 @@ export default function ArenaPage() {
             >
               <div className="row gap-8 ai-c jc-sb">
                 <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
-                  <Dot variant="a" pulse={simState.degen.thinking} />
+                  <Dot variant="a" pulse={liveA.thinking} />
                   <span className="label-tiny" style={{ color: 'var(--fighter-a)', whiteSpace: 'nowrap' }}>
-                    {degenF.name} {simState.degen.thinking ? 'THINKING…' : 'DECIDED'}
+                    {degenF.name} {liveA.thinking ? 'THINKING…' : liveA.lastAction ? 'ACTED' : 'WAITING'}
                   </span>
                 </span>
                 <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>RED CORNER</span>
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
-                <span className="t-dim">{'> '}</span>
-                <Typewriter text={simState.degen.reasoning} speed={42} />
+                {liveA.thinking ? (
+                  <span className="t-dim">{'> '}<span style={{ color: 'var(--text-dim)' }}>THINKING…</span></span>
+                ) : liveA.lastAction ? (
+                  <span><span className="t-dim">{'> '}</span>{liveA.lastAction}</span>
+                ) : (
+                  <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
+                )}
               </div>
             </div>
             <div
@@ -484,72 +474,56 @@ export default function ArenaPage() {
             >
               <div className="row gap-8 ai-c jc-sb">
                 <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
-                  <Dot variant="b" pulse={simState.whale.thinking} />
+                  <Dot variant="b" pulse={liveB.thinking} />
                   <span className="label-tiny" style={{ color: 'var(--fighter-b)', whiteSpace: 'nowrap' }}>
-                    {whaleF.name} {simState.whale.thinking ? 'THINKING…' : 'DECIDED'}
+                    {whaleF.name} {liveB.thinking ? 'THINKING…' : liveB.lastAction ? 'ACTED' : 'WAITING'}
                   </span>
                 </span>
                 <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>BLUE CORNER</span>
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
-                <span className="t-dim">{'> '}</span>
-                <Typewriter text={simState.whale.reasoning} speed={42} />
+                {liveB.thinking ? (
+                  <span className="t-dim">{'> '}<span style={{ color: 'var(--text-dim)' }}>THINKING…</span></span>
+                ) : liveB.lastAction ? (
+                  <span><span className="t-dim">{'> '}</span>{liveB.lastAction}</span>
+                ) : (
+                  <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* § MARKET — WBTC ticker */}
+        {/* § MARKET — Real mark prices from MarkPriceSnapshot events */}
         <div className="card pad-24 col gap-12">
           <div className="sect-head">
             <span className="sect-head-num">§ MARKET</span>
-            <span className="sect-head-title">WBTC/USDso</span>
+            <span className="sect-head-title">MARK PRICES</span>
             <span className="sect-head-meta">
-              <Dot variant="win" pulse /> <span style={{ color: 'var(--win)' }}>LIVE</span> · dreamDEX mid mark
+              {markets.length > 0
+                ? <><Dot variant="win" pulse /> <span style={{ color: 'var(--win)' }}>ON-CHAIN</span> · dreamDEX mid mark · MarkPriceSnapshot events</>
+                : 'No mark price snapshots yet for this duel'}
             </span>
           </div>
-          <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
-            <div className="col gap-2" style={{ flexShrink: 0 }}>
-              <span className="label-tiny">BID</span>
-              <span className="t-num" style={{ fontSize: 18 }}>${simState.market.bid.toFixed(2)}</span>
+          {markets.length === 0 ? (
+            <div className="panel pad-16" style={{ textAlign: 'center', color: 'var(--text-dim)' }}>
+              <span className="t-mono t-sm">Waiting for first mark price snapshot from the Arena…</span>
             </div>
-            <div className="col gap-2" style={{ flexShrink: 0 }}>
-              <span className="label-tiny">ASK</span>
-              <span className="t-num" style={{ fontSize: 18 }}>${simState.market.ask.toFixed(2)}</span>
+          ) : (
+            <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
+              {markets.map((m) => (
+                <div key={m.poolKey} className="col gap-2" style={{ flexShrink: 0 }}>
+                  <span className="label-tiny">{m.poolKey}/USDso</span>
+                  <span className="t-num" style={{ fontSize: 18 }}>
+                    {m.markPrice > BigInt(0) ? `$${m.markPriceNum.toFixed(4)}` : '—'}
+                  </span>
+                </div>
+              ))}
             </div>
-            <div className="col gap-2" style={{ flexShrink: 0 }}>
-              <span className="label-tiny">24H</span>
-              <span className={`t-num ${simState.market.change >= 0 ? 'text-win' : 'text-loss'}`} style={{ fontSize: 18 }}>
-                {fmtPct(simState.market.change)}
-              </span>
-            </div>
-            <div className="col gap-2 grow">
-              <span className="label-tiny">LAST FILLS — {(simState.market.buyRatio * 100).toFixed(0)}% BUYS</span>
-              <div className="row gap-2 ai-c">
-                {Array.from({ length: 28 }).map((_, i) => {
-                  const buy = i < simState.market.buyRatio * 28;
-                  return (
-                    <span
-                      key={i}
-                      style={{
-                        flex: 1,
-                        height: 14,
-                        background: buy ? 'var(--win)' : 'var(--loss)',
-                        opacity: 0.85,
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-            <div className="col gap-2 ai-e" style={{ flexShrink: 0 }}>
-              <span className="label-tiny">VOL 24H</span>
-              <span className="t-num text-gold" style={{ fontSize: 18 }}>${simState.market.vol.toFixed(1)}M</span>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* § BOOK — Real BetPanel (chain). Gold-framed as the live-money wager window. */}
+        {/* § BOOK — Real BetPanel (chain). */}
         <div className="card pad-24 col gap-12" style={{ boxShadow: '0 0 0 1px rgba(252,211,77,0.14), 0 0 32px rgba(252,211,77,0.05)' }}>
           <div className="sect-head">
             <span className="sect-head-num">§ BOOK</span>
@@ -561,7 +535,7 @@ export default function ArenaPage() {
             </span>
           </div>
 
-          {/* Odds bar — uses real chain odds when loaded, sim otherwise */}
+          {/* Odds bar — real chain odds */}
           <div className="col gap-8">
             <div className="row jc-sb ai-c">
               <span className="t-mono t-xs" style={{ color: 'var(--fighter-a)' }}>
@@ -574,7 +548,7 @@ export default function ArenaPage() {
             <OddsBar oddsA={oddsDegenPct} oddsB={oddsWhalePct} />
           </div>
 
-          {/* Real BetPanel — handles wallet connection, approve, placeBet */}
+          {/* Real BetPanel */}
           {duelIdNum > 0 ? (
             <BetPanel
               duelId={duelId}
@@ -593,7 +567,7 @@ export default function ArenaPage() {
           )}
         </div>
 
-        {/* Turn controls / end-of-duel */}
+        {/* End-of-duel verdict */}
         {duelOver ? (
           <div className="card pad-24 row jc-sb ai-c" style={{ borderColor: 'var(--gold)' }}>
             <div className="row gap-16 ai-c">
@@ -605,10 +579,10 @@ export default function ArenaPage() {
                   style={{
                     fontSize: 18,
                     letterSpacing: '0.14em',
-                    color: winnerSlotDisplay === 0 ? 'var(--fighter-a)' : 'var(--fighter-b)',
+                    color: resolvedWinnerSlot === 0 ? 'var(--fighter-a)' : 'var(--fighter-b)',
                   }}
                 >
-                  {winnerName} WINS (winnerSlot {winnerSlotDisplay})
+                  {winnerName} WINS (slot {resolvedWinnerSlot})
                 </span>
               </div>
             </div>
@@ -619,12 +593,11 @@ export default function ArenaPage() {
         ) : (
           <div className="card pad-16 row jc-sb ai-c" style={{ borderColor: 'var(--border)', flexWrap: 'wrap', gap: 12 }}>
             <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.18em' }}>
-              ▸ NEXT TURN IN <span className="t-num" style={{ color: 'var(--text)' }}>{simState.turnIn}s</span> · AUTO {autoAdvance ? 'ON' : 'OFF'}
+              ▸ TURNS ADVANCE ON-CHAIN · AUTO
             </span>
-            <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
-              <BracketButton onClick={handleAdvance}>ADVANCE TURN ▸</BracketButton>
-              <BracketButton variant="ghost" onClick={handleFastForward}>▸▸ JUMP TO END</BracketButton>
-            </div>
+            <span className="t-mono t-xs t-dim">
+              Round {displayRound} of {displayTurns}
+            </span>
           </div>
         )}
       </div>
