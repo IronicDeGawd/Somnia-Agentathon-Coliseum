@@ -7,7 +7,7 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0x63d7b8bb05906f5f04b9f5a7baf13aa78a3eceba' as const,
   FighterRegistry: '0x5390b0656797b18258f2919a799abe956d21690f' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0x1343a8781636852b5ad520014a376ce92b5c26b9' as const,
+  Matchmaker: '0xf47370e636c844c34045bb18cefda8a3f756ae07' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0xbf7aed8960b82e3ad07874b52d843499dfd4897f' as `0x${string}`,
 };
@@ -59,7 +59,6 @@ export interface DuelData {
   poolMask: number;
   status: DuelStatus;
   initialUsdsoPerFighter: bigint;
-  lastAction: [number, number];
   fundsRecovered: boolean;
   winnerSlot: number;
 }
@@ -88,7 +87,9 @@ export interface OddsData {
 
 export const ABIS = {
   Arena: parseAbi([
-    'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, uint8[2] lastAction, bool fundsRecovered, uint8 winnerSlot)',
+    // Solidity OMITS the uint8[2] lastAction array from the struct getter, so the
+    // tuple is 12 fields: ...initialUsdsoPerFighter[9], fundsRecovered[10], winnerSlot[11].
+    'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, bool fundsRecovered, uint8 winnerSlot)',
     'function fighterBalances(address pool, uint256 duelId, uint8 fighterId) view returns (uint256 baseTokenAmount, uint256 quoteTokenAmount)',
     'function activeDuelId() view returns (uint256)',
     'function minDepositFor(uint16 turns) view returns (uint256)',

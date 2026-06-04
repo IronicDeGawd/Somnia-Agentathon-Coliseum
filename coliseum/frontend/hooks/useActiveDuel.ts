@@ -59,7 +59,6 @@ export function useActiveDuel(): UseActiveDuelResult {
       poolMask,
       status,
       initialUsdsoPerFighter,
-      lastAction,
       fundsRecovered,
       winnerSlot,
     ] = rawDuel as [
@@ -73,7 +72,6 @@ export function useActiveDuel(): UseActiveDuelResult {
       number,
       number,
       bigint,
-      [number, number],
       boolean,
       number,
     ];
@@ -88,7 +86,6 @@ export function useActiveDuel(): UseActiveDuelResult {
       poolMask,
       status,
       initialUsdsoPerFighter,
-      lastAction,
       fundsRecovered,
       winnerSlot,
     };
