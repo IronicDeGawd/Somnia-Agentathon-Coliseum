@@ -8,6 +8,7 @@ import "./interfaces/IFighterRegistry.sol";
 import "./interfaces/ISpotPool.sol";
 import "./interfaces/IERC20Minimal.sol";
 import "./interfaces/ISomniaAgents.sol";
+import "./interfaces/IDuelHistory.sol";
 
 /// @title Arena
 /// @notice 1v1 AI-agent trading duel orchestrator on Somnia.
@@ -63,6 +64,10 @@ contract Arena is ArenaVault {
     ///         all callbacks are complete — no further trading can move the book).
     mapping(uint256 => mapping(address => uint256)) public duelMarkSnapshots;
 
+    /// @notice Optional history sink. When set, _resolveDuel records each duel's
+    ///         outcome here (best-effort). Configured post-deploy via setDuelHistory.
+    address public duelHistory;
+
     // ─── Constructor ─────────────────────────────────────────────────────────
 
     constructor(
@@ -100,6 +105,12 @@ contract Arena is ArenaVault {
         if (blockNumber % TURN_INTERVAL_BLOCKS != 0) return;
         if (activeDuelId == 0) return;
         _runTurn();
+    }
+
+    /// @notice Set the DuelHistory sink (owner-only). Recording is best-effort and
+    ///         never blocks resolution, so this can be set or updated at any time.
+    function setDuelHistory(address h) external onlyOwner {
+        duelHistory = h;
     }
 
     /// @notice Manual turn advance, owner-only. Reactivity `onEvent` drives turns automatically;
@@ -271,6 +282,21 @@ contract Arena is ArenaVault {
         duel.status = ArenaTypes.DuelStatus.Resolved;
         activeDuelId = 0;
         emit ArenaTypes.DuelResolved(duelId, winnerFighterId, valueA, valueB);
+
+        // Best-effort: record the outcome in the history sink. A revert here must
+        // never block duel resolution, so it is wrapped in try/catch.
+        address h = duelHistory;
+        if (h != address(0)) {
+            try IDuelHistory(h).onResolved(
+                duelId,
+                duel.fighterA,
+                duel.fighterB,
+                slot,
+                valueA,
+                valueB,
+                duel.initialUsdsoPerFighter
+            ) {} catch {}
+        }
     }
 
     /// @notice Duel creator withdraws their USDso back after the duel resolves.
