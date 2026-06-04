@@ -486,12 +486,16 @@ export default function LobbyPage() {
           ) : (
             leaderboardRows.map((r, i) => {
               const fighterId = fighterIndexToId(r.index);
-              const pnlFloat = parseFloat(formatUnits(r.pnl < BigInt(0) ? -r.pnl : r.pnl, 18)) * (r.pnl < BigInt(0) ? -1 : 1);
+              const hasDuels = r.duels > 0;
               const isPos = r.pnl >= BigInt(0);
-              const maxAbs = 400;
-              const w = Math.min(100, (Math.abs(pnlFloat) / maxAbs) * 100);
+              const absPnl = parseFloat(formatUnits(r.pnl < BigInt(0) ? -r.pnl : r.pnl, 18));
+              // Adaptive precision so sub-cent PnL is still visible (these duels
+              // can end near-tie with PnL well under a cent).
+              const pnlDecimals = absPnl > 0 && absPnl < 0.01 ? 4 : 2;
+              const pnlAbs = absPnl.toFixed(pnlDecimals);
               const pnlSign = r.pnl > BigInt(0) ? '+' : r.pnl < BigInt(0) ? '-' : '';
-              const pnlAbs = parseFloat(formatUnits(r.pnl < BigInt(0) ? -r.pnl : r.pnl, 18)).toFixed(2);
+              // FORM = win rate (wins / duels), left-anchored bar.
+              const winRate = hasDuels ? r.wins / r.duels : 0;
               return (
                 <div
                   key={r.index}
@@ -508,21 +512,29 @@ export default function LobbyPage() {
                     <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
                   </div>
                   <span className="st-rec t-num t-sm">{r.wins}W-{r.losses}L</span>
-                  <span className="st-pnl t-num" style={{ textAlign: 'right', color: isPos ? 'var(--win)' : 'var(--loss)' }}>
-                    {pnlSign}${pnlAbs}
+                  <span
+                    className="st-pnl t-num"
+                    style={{ textAlign: 'right', color: !hasDuels ? 'var(--text-faint)' : isPos ? 'var(--win)' : 'var(--loss)' }}
+                  >
+                    {hasDuels ? `${pnlSign}$${pnlAbs}` : '—'}
                   </span>
-                  <div className="st-form" style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        bottom: 0,
-                        left: isPos ? '50%' : `${50 - w / 2}%`,
-                        width: `${w / 2}%`,
-                        background: isPos ? 'var(--win)' : 'var(--loss)',
-                      }}
-                    />
-                    <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: 'var(--text-faint)' }} />
+                  <div
+                    className="st-form"
+                    style={{ height: 4, background: 'var(--bg-card-2)', position: 'relative' }}
+                    title={hasDuels ? `${Math.round(winRate * 100)}% win rate (${r.wins}/${r.duels})` : 'no duels yet'}
+                  >
+                    {hasDuels && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          bottom: 0,
+                          left: 0,
+                          width: `${winRate * 100}%`,
+                          background: winRate >= 0.5 ? 'var(--win)' : 'var(--loss)',
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               );
