@@ -3,7 +3,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
-import { useDuelState } from '@/hooks/useDuelState';
 import { usePlaceBet } from '@/hooks/usePlaceBet';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,6 +11,13 @@ interface BetPanelProps {
   duelId: bigint;
   fighterAName: string;
   fighterBName: string;
+  // Duel state is owned by the parent arena page (single useDuelState poll) and
+  // passed down, so this panel does not spawn a second poller / event watcher.
+  odds: { degenBps: number; whaleBps: number } | null;
+  totalBetsA: bigint;
+  totalBetsB: bigint;
+  isActive: boolean;
+  isLoading: boolean;
 }
 
 type FighterSlot = 0 | 1;
@@ -57,16 +63,17 @@ function calcPayoutEstimate(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function BetPanel({ duelId, fighterAName, fighterBName }: BetPanelProps) {
+export default function BetPanel({
+  duelId,
+  fighterAName,
+  fighterBName,
+  odds,
+  totalBetsA,
+  totalBetsB,
+  isActive,
+  isLoading: duelLoading,
+}: BetPanelProps) {
   const { address } = useAccount();
-
-  const {
-    odds,
-    totalBetsA,
-    totalBetsB,
-    isActive,
-    isLoading: duelLoading,
-  } = useDuelState(duelId);
 
   const [selectedSlot, setSelectedSlot] = useState<FighterSlot | null>(null);
   const [customAmount, setCustomAmount] = useState<string>('');
