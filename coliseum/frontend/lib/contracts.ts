@@ -1,15 +1,15 @@
 import { parseAbi } from 'viem';
 
 export const CONTRACT_ADDRESSES = {
-  Arena: '0x2f38647596cda697f8fd674430cb4c9b31eb6a1b' as const,
-  Bookmaker: '0xdf5709661a3f16f4ef3ee8cc232a087f016dbf7f' as const,
+  // Arena+DuelHistory migration (deploy block 400071276). Arena now carries the
+  // DuelHistory hook; Bookmaker/Matchmaker redeployed (they hold Arena immutable).
+  Arena: '0xf0498f3a25b52d6b876082bab5132a7a632c7195' as const,
+  Bookmaker: '0x63d7b8bb05906f5f04b9f5a7baf13aa78a3eceba' as const,
   FighterRegistry: '0x5390b0656797b18258f2919a799abe956d21690f' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0x92ddaca48f65586e9d8c117ae4252813e120a157' as const,
+  Matchmaker: '0x1343a8781636852b5ad520014a376ce92b5c26b9' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
-  // Set on the Arena redeploy that wires setDuelHistory (see context/plan/leaderboard-history.md).
-  // Zero until then — leaderboard/history hooks detect this and render honest empty states.
-  DuelHistory: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+  DuelHistory: '0xbf7aed8960b82e3ad07874b52d843499dfd4897f' as `0x${string}`,
 };
 
 /** True once DuelHistory has a real (non-zero) deployed address. */
@@ -22,7 +22,7 @@ export const DUEL_HISTORY_DEPLOYED =
  * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
  * never ask a public RPC to scan from genesis — that gets rejected/throttled.
  */
-export const BOOKMAKER_DEPLOY_BLOCK = BigInt(394572942);
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(400071276);
 
 export enum DuelStatus {
   None = 0,
