@@ -339,7 +339,7 @@ export default function PreDuelPage() {
         <div className="row gap-16 ai-c">
           <BracketButton
             variant="ghost"
-            onClick={() => router.push('/lobby')}
+            onClick={() => router.push('/duel')}
           >
             ← BACK TO LOBBY
           </BracketButton>
