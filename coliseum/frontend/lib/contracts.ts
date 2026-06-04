@@ -24,6 +24,23 @@ export const DUEL_HISTORY_DEPLOYED =
  */
 export const BOOKMAKER_DEPLOY_BLOCK = BigInt(400071276);
 
+/**
+ * Active dreamDEX pools the Arena trades on, keyed by the poolMask bit.
+ * `bit` matches ArenaTypes (WETH 0x01, WBTC 0x02, SOMI 0x04); `decimals` is the
+ * base-token decimals used to value holdings (value = quote + base*mark/10^dec).
+ * A duel's active pools = those whose bit is set in duels().poolMask.
+ */
+export const POOLS = [
+  { key: 'WETH', address: '0xD180195da5459C7a0DEA188ed61216ec43682b50' as `0x${string}`, bit: 0x01, decimals: 18 },
+  { key: 'WBTC', address: '0x3605f28aA7C50e7441211e77Cb0762d49539326C' as `0x${string}`, bit: 0x02, decimals: 8 },
+  { key: 'SOMI', address: '0x259fD6559214dd5aD3752322426eA9F9fABEFff4' as `0x${string}`, bit: 0x04, decimals: 18 },
+] as const;
+
+/** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
+export const FIGHTER_ACTIONS = [
+  'HOLD', 'BUY WBTC', 'SELL WBTC', 'BUY WETH', 'SELL WETH', 'BUY SOMI', 'SELL SOMI',
+] as const;
+
 export enum DuelStatus {
   None = 0,
   Active = 1,
@@ -72,6 +89,7 @@ export interface OddsData {
 export const ABIS = {
   Arena: parseAbi([
     'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, uint8[2] lastAction, bool fundsRecovered, uint8 winnerSlot)',
+    'function fighterBalances(address pool, uint256 duelId, uint8 fighterId) view returns (uint256 baseTokenAmount, uint256 quoteTokenAmount)',
     'function activeDuelId() view returns (uint256)',
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function nextDuelId() view returns (uint256)',
