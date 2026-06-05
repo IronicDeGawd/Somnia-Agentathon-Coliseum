@@ -40,6 +40,9 @@ module.exports = {
       cwd: "./frontend",
       script: "pnpm",
       args: "start:prod",
+      env: {
+        NODE_ENV: "production",
+      },
       // Next dev/start handles its own watchers; PM2 just supervises.
       autorestart: true,
       max_restarts: 10,
