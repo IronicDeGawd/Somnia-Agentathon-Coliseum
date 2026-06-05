@@ -33,15 +33,13 @@
  * No secrets are duplicated into this file.
  */
 
-const isProd = process.env.NODE_ENV === "production";
-
 module.exports = {
   apps: [
     {
       name: "coliseum-frontend",
       cwd: "./frontend",
       script: "pnpm",
-      args: isProd ? "start:prod" : "dev",
+      args: "start:prod",
       // Next dev/start handles its own watchers; PM2 just supervises.
       autorestart: true,
       max_restarts: 10,
