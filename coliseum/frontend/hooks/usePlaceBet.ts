@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useAccount, useReadContract, useWriteContract } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { config } from '@/lib/chain';
 
 export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
   const { address } = useAccount();
+  const publicClient = usePublicClient({ config });
   const [isPending, setIsPending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -32,6 +34,8 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
     setError(null);
 
     try {
+      const gasPrice = publicClient ? await publicClient.getGasPrice() : undefined;
+
       // Step 1: Check allowance and approve if needed
       const { data: freshAllowance } = await refetchAllowance();
       const currentAllowance = (freshAllowance as bigint | undefined) ?? BigInt(0);
@@ -42,6 +46,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
           abi: ABIS.USDso,
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Bookmaker, amount],
+          gasPrice,
         });
       }
 
@@ -51,6 +56,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
         abi: ABIS.Bookmaker,
         functionName: 'placeBet',
         args: [duelId, slot, amount],
+        gasPrice,
       });
 
       setIsSuccess(true);
@@ -59,7 +65,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
     } finally {
       setIsPending(false);
     }
-  }, [address, amount, duelId, slot, approveAsync, placeBetAsync, refetchAllowance]);
+  }, [address, amount, duelId, slot, approveAsync, placeBetAsync, refetchAllowance, publicClient]);
 
   return { placeBet, isPending, isSuccess, error };
 }

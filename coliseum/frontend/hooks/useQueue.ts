@@ -74,6 +74,9 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      // Somnia Shannon testnet only accepts legacy (type-0) transactions.
+      // Passing gasPrice forces viem/MetaMask out of EIP-1559 (type-2) mode.
+      const gasPrice = await publicClient.getGasPrice();
       const currentAllowance = (allowanceRaw as bigint | undefined) ?? BigInt(0);
 
       if (currentAllowance < halfDeposit) {
@@ -82,6 +85,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
           abi: ABIS.USDso,
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Matchmaker, halfDeposit],
+          gasPrice,
         });
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
         await refetchAllowance();
@@ -92,6 +96,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
         abi: ABIS.Matchmaker,
         functionName: 'queue',
         args: [fighter, turns],
+        gasPrice,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
@@ -117,11 +122,13 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      const gasPrice = await publicClient.getGasPrice();
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'cancelQueue',
         args: [turns],
+        gasPrice,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await refetchHalfDeposit();
@@ -148,11 +155,13 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      const gasPrice = await publicClient.getGasPrice();
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'claimWinnings',
         args: [duelId],
+        gasPrice,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 

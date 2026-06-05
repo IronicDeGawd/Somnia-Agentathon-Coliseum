@@ -46,7 +46,8 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
     args: [duelId],
   });
 
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContractAsync, isPending } = useWriteContract();
+  const publicClient = usePublicClient();
 
   if (isLoading || !matchData) {
     return (
@@ -74,12 +75,15 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
 
   const alreadyClaimed = isPlayerA ? settledA : settledB;
 
-  function handleClaim() {
-    writeContract({
+  async function handleClaim() {
+    if (!publicClient) return;
+    const gasPrice = await publicClient.getGasPrice();
+    await writeContractAsync({
       address: CONTRACT_ADDRESSES.Matchmaker,
       abi: ABIS.Matchmaker,
       functionName: 'claimWinnings',
       args: [duelId],
+      gasPrice,
     });
   }
 
