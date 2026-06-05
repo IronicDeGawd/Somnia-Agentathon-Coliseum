@@ -30,11 +30,7 @@ export const AppTopBar: React.FC = () => {
   const { formatted: usdsoBalance } = useUSDsoBalance(address);
 
   const onLobby = pathname === '/duel';
-  const onArena =
-    pathname.startsWith('/duel/') &&
-    !pathname.endsWith('/preduel') &&
-    !pathname.endsWith('/result');
-  const onProfile = pathname.startsWith('/fighters/');
+  const onProfile = pathname.startsWith('/fighters');
 
   return (
     <div className="topbar">
@@ -62,14 +58,7 @@ export const AppTopBar: React.FC = () => {
           Lobby
         </Link>
         <Link
-          href="/duel/1"
-          className={`nav-link ${onArena ? 'active' : ''}`}
-          style={{ textDecoration: 'none' }}
-        >
-          Arena
-        </Link>
-        <Link
-          href="/fighters/degen"
+          href="/fighters"
           className={`nav-link ${onProfile ? 'active' : ''}`}
           style={{ textDecoration: 'none' }}
         >
