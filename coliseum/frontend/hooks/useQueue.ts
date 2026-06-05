@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
-import { config } from '@/lib/chain';
+import { config, somniaTestnet } from '@/lib/chain';
 
 export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const publicClient = usePublicClient({ config });
   const { writeContractAsync } = useWriteContract();
+  const { switchChainAsync } = useSwitchChain();
 
   const [isPending, setIsPending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -74,6 +75,9 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
       // Somnia Shannon testnet only accepts legacy (type-0) transactions.
       // Passing gasPrice forces viem/MetaMask out of EIP-1559 (type-2) mode.
       const gasPrice = await publicClient.getGasPrice();
@@ -107,7 +111,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, allowanceRaw, fighter, turns, halfDeposit, publicClient, writeContractAsync, refetchAllowance]);
+  }, [address, chainId, allowanceRaw, fighter, turns, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
 
   const cancelQueue = useCallback(async (): Promise<void> => {
     if (!address) {
@@ -122,6 +126,9 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
       const gasPrice = await publicClient.getGasPrice();
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
@@ -140,7 +147,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, turns, publicClient, writeContractAsync, refetchHalfDeposit]);
+  }, [address, chainId, turns, publicClient, writeContractAsync, switchChainAsync, refetchHalfDeposit]);
 
   const claimWinnings = useCallback(async (duelId: bigint): Promise<void> => {
     if (!address) {
@@ -155,6 +162,9 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
       const gasPrice = await publicClient.getGasPrice();
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
@@ -172,7 +182,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, publicClient, writeContractAsync]);
+  }, [address, chainId, publicClient, writeContractAsync, switchChainAsync]);
 
   return {
     halfDeposit,

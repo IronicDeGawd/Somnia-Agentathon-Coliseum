@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
-import { config } from '@/lib/chain';
+import { config, somniaTestnet } from '@/lib/chain';
 
 export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const publicClient = usePublicClient({ config });
+  const { switchChainAsync } = useSwitchChain();
   const [isPending, setIsPending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -34,6 +35,9 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
     setError(null);
 
     try {
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
       const gasPrice = publicClient ? await publicClient.getGasPrice() : undefined;
 
       // Step 1: Check allowance and approve if needed
@@ -65,7 +69,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
     } finally {
       setIsPending(false);
     }
-  }, [address, amount, duelId, slot, approveAsync, placeBetAsync, refetchAllowance, publicClient]);
+  }, [address, chainId, amount, duelId, slot, approveAsync, placeBetAsync, refetchAllowance, publicClient, switchChainAsync]);
 
   return { placeBet, isPending, isSuccess, error };
 }
