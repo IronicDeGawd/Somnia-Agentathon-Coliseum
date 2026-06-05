@@ -51,6 +51,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Bookmaker, amount],
           gasPrice,
+          gas: BigInt(100000),
         });
       }
 
@@ -61,6 +62,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
         functionName: 'placeBet',
         args: [duelId, slot, amount],
         gasPrice,
+        gas: BigInt(200000),
       });
 
       setIsSuccess(true);

@@ -89,6 +89,7 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
       functionName: 'claimWinnings',
       args: [duelId],
       gasPrice,
+      gas: BigInt(300000),
     });
   }
 

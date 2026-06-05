@@ -90,6 +90,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Matchmaker, halfDeposit],
           gasPrice,
+          gas: BigInt(100000),
         });
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
         await refetchAllowance();
@@ -101,6 +102,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
         functionName: 'queue',
         args: [fighter, turns],
         gasPrice,
+        gas: BigInt(300000),
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
@@ -136,6 +138,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
         functionName: 'cancelQueue',
         args: [turns],
         gasPrice,
+        gas: BigInt(200000),
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await refetchHalfDeposit();
@@ -172,6 +175,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
         functionName: 'claimWinnings',
         args: [duelId],
         gasPrice,
+        gas: BigInt(300000),
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
