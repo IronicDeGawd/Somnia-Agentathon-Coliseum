@@ -13,13 +13,20 @@ const LIFESPAN_TAIL_BLOCKS = BigInt(1500);
 const MAX_RANGE = BigInt(1000);
 
 /**
- * Upper-bound block for a duel's events. Every MarkPriceSnapshot / FighterMove /
- * DuelResolved for a duel lands within [startBlock, startBlock + turns×600 + tail],
- * so we never need to scan to chain head — which keeps getLogs inside the RPC's
- * range limit no matter how long ago the duel ran.
+ * Upper-bound block for a duel's events. Normally a duel resolves within
+ * startBlock + turns×600 + tail. But a duel can advance slower than the nominal
+ * cadence (e.g. a stalled duel only driven once a referee picks it up), pushing
+ * its DuelResolved/last FighterMove far past the scheduled bound. When the duel's
+ * real lastTurnBlock is known, bound from THAT instead so delayed duels don't
+ * come back blank.
  */
-export function duelToBlock(startBlock: bigint, turns: number): bigint {
-  return startBlock + BigInt(turns) * TURN_INTERVAL_BLOCKS + LIFESPAN_TAIL_BLOCKS;
+export function duelToBlock(startBlock: bigint, turns: number, lastTurnBlock?: bigint): bigint {
+  const scheduled = startBlock + BigInt(turns) * TURN_INTERVAL_BLOCKS + LIFESPAN_TAIL_BLOCKS;
+  if (lastTurnBlock !== undefined && lastTurnBlock > BigInt(0)) {
+    const actual = lastTurnBlock + LIFESPAN_TAIL_BLOCKS;
+    return actual > scheduled ? actual : scheduled;
+  }
+  return scheduled;
 }
 
 /**
