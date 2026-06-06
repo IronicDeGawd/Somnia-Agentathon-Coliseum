@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
+import { maxUint256 } from 'viem';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 import { config, somniaTestnet } from '@/lib/chain';
 
@@ -28,7 +29,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
   const halfDeposit: bigint | null =
     halfDepositRaw !== undefined ? (halfDepositRaw as bigint) : null;
 
-  const { data: allowanceRaw, refetch: refetchAllowance } = useReadContract({
+  const { refetch: refetchAllowance } = useReadContract({
     address: CONTRACT_ADDRESSES.USDso,
     abi: ABIS.USDso,
     functionName: 'allowance',
@@ -81,14 +82,20 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
       // Somnia Shannon testnet only accepts legacy (type-0) transactions.
       // Passing gasPrice forces viem/MetaMask out of EIP-1559 (type-2) mode.
       const gasPrice = await publicClient.getGasPrice();
-      const currentAllowance = (allowanceRaw as bigint | undefined) ?? BigInt(0);
+      // Always read allowance fresh from chain — wagmi cache can be stale.
+      const currentAllowance = await publicClient.readContract({
+        address: CONTRACT_ADDRESSES.USDso,
+        abi: ABIS.USDso,
+        functionName: 'allowance',
+        args: [address, CONTRACT_ADDRESSES.Matchmaker],
+      }) as bigint;
 
       if (currentAllowance < halfDeposit) {
         const approveTxHash = await writeContractAsync({
           address: CONTRACT_ADDRESSES.USDso,
           abi: ABIS.USDso,
           functionName: 'approve',
-          args: [CONTRACT_ADDRESSES.Matchmaker, halfDeposit],
+          args: [CONTRACT_ADDRESSES.Matchmaker, maxUint256],
           gasPrice,
           gas: BigInt(100000),
         });
@@ -113,7 +120,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, chainId, allowanceRaw, fighter, turns, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
+  }, [address, chainId, fighter, turns, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
 
   const cancelQueue = useCallback(async (): Promise<void> => {
     if (!address) {
