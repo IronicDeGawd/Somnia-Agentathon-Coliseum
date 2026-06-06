@@ -22,18 +22,23 @@ type TurnOption = typeof TURN_OPTIONS[number];
 
 interface DuelCreatorProps {
   onMatchFound?: (duelId: bigint) => void;
+  // When set, the tier is fixed (e.g. joining a specific waiting opponent) —
+  // the round selector is hidden and only the fighter is chosen.
+  lockedTurns?: TurnOption;
 }
 
 // Inner: re-created when fighter/turns change so hooks get stable args
 function QueueInner({
   fighter,
   turns,
+  locked,
   onMatchFound,
   onFighterChange,
   onTurnsChange,
 }: {
   fighter: number;
   turns: TurnOption;
+  locked: boolean;
   onMatchFound?: (duelId: bigint) => void;
   onFighterChange: (idx: number) => void;
   onTurnsChange: (t: TurnOption) => void;
@@ -217,7 +222,9 @@ function QueueInner({
       {/* Header */}
       <div className="sect-head">
         <span className="sect-head-num">01</span>
-        <span className="sect-head-title">ENTER THE ARENA</span>
+        <span className="sect-head-title">
+          {locked ? `JOIN ${turns}-ROUND DUEL` : 'ENTER THE ARENA'}
+        </span>
       </div>
 
       {/* Fighter picker */}
@@ -276,7 +283,26 @@ function QueueInner({
         </div>
       </div>
 
-      {/* Tier / Turns selector */}
+      {/* Tier / Turns — fixed when joining a specific tier, else selectable */}
+      {locked ? (
+        <div className="col gap-12">
+          <div className="eyebrow">TIER / ROUNDS</div>
+          <div className="panel pad-16 row jc-sb ai-c">
+            <span
+              className="t-mono"
+              style={{ color: 'var(--gold)', fontSize: '16px', fontWeight: 700, lineHeight: 1 }}
+            >
+              {turns} ROUNDS
+            </span>
+            <span
+              className="t-up"
+              style={{ color: 'var(--text-faint)', fontSize: '10px', letterSpacing: '0.04em' }}
+            >
+              {TIER_POOLS[turns].join(' + ')}
+            </span>
+          </div>
+        </div>
+      ) : (
       <div className="col gap-12">
         <div className="eyebrow">TIER / ROUNDS</div>
         <div
@@ -339,6 +365,7 @@ function QueueInner({
           })}
         </div>
       </div>
+      )}
 
       {/* Queue slot info + Deposit */}
       <div className="panel pad-16 col gap-12">
@@ -449,15 +476,22 @@ function QueueInner({
   );
 }
 
-export function DuelCreator({ onMatchFound }: DuelCreatorProps) {
+export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
   const [fighter, setFighter] = useState(0);
-  const [turns, setTurns] = useState<TurnOption>(6);
+  const [turns, setTurns] = useState<TurnOption>(lockedTurns ?? 6);
+
+  // Sync the tier when the user opens a different locked tier while the
+  // creator is already mounted (e.g. clicking JOIN on another card).
+  useEffect(() => {
+    if (lockedTurns != null) setTurns(lockedTurns);
+  }, [lockedTurns]);
 
   return (
     <div className="card pad-24">
       <QueueInner
         fighter={fighter}
         turns={turns}
+        locked={lockedTurns != null}
         onMatchFound={onMatchFound}
         onFighterChange={setFighter}
         onTurnsChange={setTurns}
