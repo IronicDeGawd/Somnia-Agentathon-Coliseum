@@ -4,6 +4,8 @@ import React, { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { formatUnits } from 'viem';
+import { useAccount, useReadContract } from 'wagmi';
+import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { OddsBar } from '@/components/shared/OddsBar';
@@ -210,6 +212,21 @@ export default function ArenaPage() {
 
   // ── Live on-chain portfolio data ──────────────────────────────────────────
   const { fighterA: liveA, fighterB: liveB, markets } = useDuelLive(duelId, duel);
+
+  // ── Duelist guard: the two fighters' players can't bet on their own duel ───
+  const { address: connectedAddress } = useAccount();
+  const { data: matchData } = useReadContract({
+    address: CONTRACT_ADDRESSES.Matchmaker,
+    abi: ABIS.Matchmaker,
+    functionName: 'matches',
+    args: [duelId],
+    query: { enabled: duelId > BigInt(0) },
+  });
+  const isDuelParticipant =
+    !!connectedAddress &&
+    !!matchData &&
+    [(matchData as readonly unknown[])[0], (matchData as readonly unknown[])[1]]
+      .some((p) => typeof p === 'string' && p.toLowerCase() === connectedAddress.toLowerCase());
 
   // A finished duel has nothing live to watch → send it to the result page,
   // which carries the winner summary and the move-by-move transcript.
@@ -570,6 +587,7 @@ export default function ArenaPage() {
               totalBetsB={totalBetsB}
               isActive={isActive}
               isLoading={isLoading}
+              isParticipant={isDuelParticipant}
             />
           ) : (
             <div className="panel pad-16" style={{ textAlign: 'center', color: 'var(--text-dim)' }}>
