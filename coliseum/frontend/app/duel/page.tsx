@@ -32,12 +32,17 @@ const FIGHTER_INDEX_TO_ID: Record<number, string> = {
 export default function LobbyPage() {
   const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
   const [creatorExpanded, setCreatorExpanded] = useState(false);
+  // When set, the creator opens with the tier fixed (joining a specific tier);
+  // null means the generic creator with a selectable tier.
+  const [lockedTurns, setLockedTurns] = useState<QueueTier | null>(null);
   const creatorRef = useRef<HTMLElement>(null);
 
   // The "START A DUEL" buttons live at the top of the page, but the creator
   // form renders several sections down. Expanding alone gives no visible
   // feedback, so scroll the now-open form into view on the next paint.
-  const openCreator = useCallback(() => {
+  // Pass a tier to lock the round (JOIN on a card); omit it for the generic form.
+  const openCreator = useCallback((turns?: QueueTier) => {
+    setLockedTurns(turns ?? null);
     setCreatorExpanded(true);
     requestAnimationFrame(() =>
       creatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
@@ -196,7 +201,7 @@ export default function LobbyPage() {
               <button
                 className="bk bk-primary"
                 style={{ padding: '12px 32px', letterSpacing: '0.08em' }}
-                onClick={openCreator}
+                onClick={() => openCreator()}
               >
                 START THE FIRST DUEL →
               </button>
@@ -271,7 +276,7 @@ export default function LobbyPage() {
             <button
               className="bk bk-primary"
               style={{ padding: '10px 24px', letterSpacing: '0.08em' }}
-              onClick={openCreator}
+              onClick={() => openCreator()}
             >
               START A DUEL →
             </button>
@@ -424,9 +429,9 @@ export default function LobbyPage() {
                 <button
                   className="bk bk-ghost"
                   style={{ padding: '8px 16px', letterSpacing: '0.08em', marginTop: 4 }}
-                  onClick={openCreator}
+                  onClick={() => openCreator(turns)}
                 >
-                  JOIN →
+                  {slot ? 'JOIN →' : 'START →'}
                 </button>
               </div>
             );
@@ -439,16 +444,23 @@ export default function LobbyPage() {
         <div
           className="sect-head"
           style={{ cursor: 'pointer' }}
-          onClick={() => setCreatorExpanded(v => !v)}
+          onClick={() => {
+            // Header toggle opens the generic creator (selectable tier).
+            if (!creatorExpanded) setLockedTurns(null);
+            setCreatorExpanded(v => !v);
+          }}
         >
           <span className="sect-head-num">§ 02</span>
-          <span className="sect-head-title">CREATE NEW DUEL</span>
+          <span className="sect-head-title">{lockedTurns ? `JOIN ${lockedTurns}-ROUND TIER` : 'CREATE NEW DUEL'}</span>
           <span className="sect-head-meta">{creatorExpanded ? '▲ collapse' : '▼ expand to start a duel'}</span>
         </div>
 
         {creatorExpanded && (
           <div style={{ maxWidth: 520 }}>
-            <DuelCreator onMatchFound={() => setCreatorExpanded(false)} />
+            <DuelCreator
+              lockedTurns={lockedTurns ?? undefined}
+              onMatchFound={() => setCreatorExpanded(false)}
+            />
           </div>
         )}
       </section>

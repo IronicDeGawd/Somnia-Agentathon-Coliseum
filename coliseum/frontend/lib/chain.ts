@@ -32,7 +32,7 @@ export const somniaTestnet = defineChain({
 // full wallet list (Rainbow, MetaMask, WalletConnect QR, Coinbase) works
 // out of the box.
 const WC_PROJECT_ID =
-  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '6af78a1e30c8055287399862f108dc91';
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? 'aa06fae24033614abcb0a99765157d71';
 
 export const config = getDefaultConfig({
   appName: 'Coliseum',

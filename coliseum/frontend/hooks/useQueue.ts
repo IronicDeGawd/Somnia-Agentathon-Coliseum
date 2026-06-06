@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
+import { maxUint256 } from 'viem';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
-import { config } from '@/lib/chain';
+import { config, somniaTestnet } from '@/lib/chain';
 
 export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const publicClient = usePublicClient({ config });
   const { writeContractAsync } = useWriteContract();
+  const { switchChainAsync } = useSwitchChain();
 
   const [isPending, setIsPending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -27,7 +29,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
   const halfDeposit: bigint | null =
     halfDepositRaw !== undefined ? (halfDepositRaw as bigint) : null;
 
-  const { data: allowanceRaw, refetch: refetchAllowance } = useReadContract({
+  const { refetch: refetchAllowance } = useReadContract({
     address: CONTRACT_ADDRESSES.USDso,
     abi: ABIS.USDso,
     functionName: 'allowance',
@@ -55,6 +57,22 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     setError(null);
   }
 
+  // Gas for Matchmaker calls whose heavy path makes an Arena external call
+  // (queue→startDuel, claimWinnings→recoverFunds). Estimate live, add 50%
+  // headroom, floor at 5M to survive the match race, fall back to 12M if the
+  // Somnia estimator is momentarily unavailable. (ES2017 target: BigInt(), no n.)
+  async function withGasHeadroom(estimate: () => Promise<bigint>): Promise<bigint> {
+    const FLOOR = BigInt(5000000);
+    const FALLBACK = BigInt(12000000);
+    try {
+      const est = await estimate();
+      const buffered = (est * BigInt(15)) / BigInt(10);
+      return buffered > FLOOR ? buffered : FLOOR;
+    } catch {
+      return FALLBACK;
+    }
+  }
+
   // --- actions ---
 
   const enterQueue = useCallback(async (): Promise<void> => {
@@ -74,24 +92,54 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
-      const currentAllowance = (allowanceRaw as bigint | undefined) ?? BigInt(0);
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
+      // Somnia Shannon testnet only accepts legacy (type-0) transactions.
+      // Passing gasPrice forces viem/MetaMask out of EIP-1559 (type-2) mode.
+      const gasPrice = await publicClient.getGasPrice();
+      // Always read allowance fresh from chain — wagmi cache can be stale.
+      const currentAllowance = await publicClient.readContract({
+        address: CONTRACT_ADDRESSES.USDso,
+        abi: ABIS.USDso,
+        functionName: 'allowance',
+        args: [address, CONTRACT_ADDRESSES.Matchmaker],
+      }) as bigint;
 
       if (currentAllowance < halfDeposit) {
         const approveTxHash = await writeContractAsync({
           address: CONTRACT_ADDRESSES.USDso,
           abi: ABIS.USDso,
           functionName: 'approve',
-          args: [CONTRACT_ADDRESSES.Matchmaker, halfDeposit],
+          args: [CONTRACT_ADDRESSES.Matchmaker, maxUint256],
+          gasPrice,
+          gas: BigInt(100000),
         });
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
         await refetchAllowance();
       }
+
+      // When this player matches an already-queued opponent, queue() runs
+      // Arena.startDuel inline (dreamDEX swaps + order placement) — millions of
+      // gas, far above the cheap first-player path. Estimate per call with
+      // headroom; floor guards the match race; fallback covers estimator outages.
+      const queueGas = await withGasHeadroom(() =>
+        publicClient.estimateContractGas({
+          address: CONTRACT_ADDRESSES.Matchmaker,
+          abi: ABIS.Matchmaker,
+          functionName: 'queue',
+          args: [fighter, turns],
+          account: address,
+        }),
+      );
 
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'queue',
         args: [fighter, turns],
+        gasPrice,
+        gas: queueGas,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
@@ -102,7 +150,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, allowanceRaw, fighter, turns, halfDeposit, publicClient, writeContractAsync, refetchAllowance]);
+  }, [address, chainId, fighter, turns, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
 
   const cancelQueue = useCallback(async (): Promise<void> => {
     if (!address) {
@@ -117,11 +165,17 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
+      const gasPrice = await publicClient.getGasPrice();
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'cancelQueue',
         args: [turns],
+        gasPrice,
+        gas: BigInt(200000),
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await refetchHalfDeposit();
@@ -133,7 +187,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, turns, publicClient, writeContractAsync, refetchHalfDeposit]);
+  }, [address, chainId, turns, publicClient, writeContractAsync, switchChainAsync, refetchHalfDeposit]);
 
   const claimWinnings = useCallback(async (duelId: bigint): Promise<void> => {
     if (!address) {
@@ -148,11 +202,29 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     resetState();
 
     try {
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
+      const gasPrice = await publicClient.getGasPrice();
+      // The first claimer triggers Arena.recoverFunds (dreamDEX withdrawal) —
+      // a heavy external call; the second claimer just reads + transfers. Size
+      // the limit to the heavy path so the first claim never out-of-gas reverts.
+      const claimGas = await withGasHeadroom(() =>
+        publicClient.estimateContractGas({
+          address: CONTRACT_ADDRESSES.Matchmaker,
+          abi: ABIS.Matchmaker,
+          functionName: 'claimWinnings',
+          args: [duelId],
+          account: address,
+        }),
+      );
       const txHash = await writeContractAsync({
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'claimWinnings',
         args: [duelId],
+        gasPrice,
+        gas: claimGas,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
@@ -163,7 +235,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, publicClient, writeContractAsync]);
+  }, [address, chainId, publicClient, writeContractAsync, switchChainAsync]);
 
   return {
     halfDeposit,

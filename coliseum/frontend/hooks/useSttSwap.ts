@@ -183,11 +183,14 @@ export function useSttSwap() {
       })) as bigint;
 
       setStage('fallback-awaiting-signature');
+      const gasPrice = await publicClient.getGasPrice();
       const fallbackHash = await walletClient.writeContract({
         address: fb,
         abi: FALLBACK_ABI,
         functionName: 'fallbackSwap',
         value: sellAmount,
+        gasPrice,
+        gas: BigInt(100000),
       });
       setResult((r) => ({ ...r, fallbackHash, path: 'fallback' }));
       setStage('fallback-swapping');
@@ -309,12 +312,15 @@ export function useSttSwap() {
           args: [address],
         })) as bigint;
 
+        const gasPrice = await publicClient.getGasPrice();
         const swapHash = await walletClient.writeContract({
           address: SOMI_POOL,
           abi: POOL_ABI,
           functionName: 'placeTakerOrderWithoutVault',
           value: sellAmount,
           args,
+          gasPrice,
+          gas: BigInt(2000000),
         });
         setResult((r) => ({ ...r, swapHash, path: 'market' }));
         setStage('swapping');
@@ -335,6 +341,8 @@ export function useSttSwap() {
             abi: POOL_ABI,
             functionName: 'withdraw',
             args: [CONTRACT_ADDRESSES.USDso, vaultBal],
+            gasPrice,
+            gas: BigInt(100000),
           });
           setResult((r) => ({ ...r, withdrawHash }));
           setStage('withdrawing');

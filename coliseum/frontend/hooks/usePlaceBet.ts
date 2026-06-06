@@ -1,22 +1,18 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useAccount, useReadContract, useWriteContract } from 'wagmi';
+import { useAccount, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
+import { maxUint256 } from 'viem';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { config, somniaTestnet } from '@/lib/chain';
 
 export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
+  const publicClient = usePublicClient({ config });
+  const { switchChainAsync } = useSwitchChain();
   const [isPending, setIsPending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-
-  const { data: allowance, refetch: refetchAllowance } = useReadContract({
-    address: CONTRACT_ADDRESSES.USDso,
-    abi: ABIS.USDso,
-    functionName: 'allowance',
-    args: address ? [address, CONTRACT_ADDRESSES.Bookmaker] : undefined,
-    query: { enabled: !!address },
-  });
 
   const { writeContractAsync: approveAsync } = useWriteContract();
   const { writeContractAsync: placeBetAsync } = useWriteContract();
@@ -32,17 +28,31 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
     setError(null);
 
     try {
-      // Step 1: Check allowance and approve if needed
-      const { data: freshAllowance } = await refetchAllowance();
-      const currentAllowance = (freshAllowance as bigint | undefined) ?? BigInt(0);
+      if (chainId !== somniaTestnet.id) {
+        await switchChainAsync({ chainId: somniaTestnet.id });
+      }
+      const gasPrice = publicClient ? await publicClient.getGasPrice() : undefined;
+
+      // Step 1: Check allowance fresh from chain and approve if needed
+      const currentAllowance = publicClient ? await publicClient.readContract({
+        address: CONTRACT_ADDRESSES.USDso,
+        abi: ABIS.USDso,
+        functionName: 'allowance',
+        args: [address, CONTRACT_ADDRESSES.Bookmaker],
+      }) as bigint : BigInt(0);
 
       if (currentAllowance < amount) {
-        await approveAsync({
+        const approveTxHash = await approveAsync({
           address: CONTRACT_ADDRESSES.USDso,
           abi: ABIS.USDso,
           functionName: 'approve',
-          args: [CONTRACT_ADDRESSES.Bookmaker, amount],
+          args: [CONTRACT_ADDRESSES.Bookmaker, maxUint256],
+          gasPrice,
+          gas: BigInt(100000),
         });
+        if (publicClient && approveTxHash) {
+          await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+        }
       }
 
       // Step 2: Place the bet
@@ -51,6 +61,8 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
         abi: ABIS.Bookmaker,
         functionName: 'placeBet',
         args: [duelId, slot, amount],
+        gasPrice,
+        gas: BigInt(200000),
       });
 
       setIsSuccess(true);
@@ -59,7 +71,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
     } finally {
       setIsPending(false);
     }
-  }, [address, amount, duelId, slot, approveAsync, placeBetAsync, refetchAllowance]);
+  }, [address, chainId, amount, duelId, slot, approveAsync, placeBetAsync, publicClient, switchChainAsync]);
 
   return { placeBet, isPending, isSuccess, error };
 }

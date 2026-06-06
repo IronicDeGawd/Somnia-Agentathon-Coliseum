@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { formatUnits, parseAbiItem } from 'viem';
-import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useSettleBets } from '@/hooks/useSettleBets';
 import { useFighters } from '@/hooks/useFighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { somniaTestnet } from '@/lib/chain';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 // DuelResolved event for final value backfill (mirrors result page pattern).
@@ -37,7 +38,7 @@ function formatUsdso(raw: bigint, decimals = 2): string {
 // ─── Matchmaker Claim Section ─────────────────────────────────────────────────
 
 function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
 
   const { data: matchData, isLoading } = useReadContract({
     address: CONTRACT_ADDRESSES.Matchmaker,
@@ -46,7 +47,9 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
     args: [duelId],
   });
 
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContractAsync, isPending } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { switchChainAsync } = useSwitchChain();
 
   if (isLoading || !matchData) {
     return (
@@ -74,12 +77,19 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
 
   const alreadyClaimed = isPlayerA ? settledA : settledB;
 
-  function handleClaim() {
-    writeContract({
+  async function handleClaim() {
+    if (!publicClient) return;
+    if (chainId !== somniaTestnet.id) {
+      await switchChainAsync({ chainId: somniaTestnet.id });
+    }
+    const gasPrice = await publicClient.getGasPrice();
+    await writeContractAsync({
       address: CONTRACT_ADDRESSES.Matchmaker,
       abi: ABIS.Matchmaker,
       functionName: 'claimWinnings',
       args: [duelId],
+      gasPrice,
+      gas: BigInt(300000),
     });
   }
 

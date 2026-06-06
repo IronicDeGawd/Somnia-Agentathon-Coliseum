@@ -273,10 +273,11 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
               const absVal = parseFloat(formatUnits(myPnl < BigInt(0) ? -myPnl : myPnl, 18)).toFixed(2);
               const sign = myPnl > BigInt(0) ? '+' : myPnl < BigInt(0) ? '-' : '';
               return (
-                <div
+                <Link
                   key={i}
+                  href={`/duel/${entry.duelId}/result`}
                   className="row ai-c jc-sb"
-                  style={{ padding: '12px 16px', background: 'var(--bg-card)', gap: 12, flexWrap: 'wrap' }}
+                  style={{ padding: '12px 16px', background: 'var(--bg-card)', gap: 12, flexWrap: 'wrap', textDecoration: 'none', cursor: 'pointer' }}
                 >
                   <div className="row gap-12 ai-c" style={{ flexWrap: 'wrap', minWidth: 0 }}>
                     <span className="t-mono t-xs t-faint">#{entry.duelId.toString()}</span>
@@ -288,13 +289,16 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
                     </span>
                     <span className="t-mono t-xs t-dim">vs {opponentId.toUpperCase()}</span>
                   </div>
-                  <span
-                    className="t-num t-sm"
-                    style={{ color: isPos ? 'var(--win)' : 'var(--loss)' }}
-                  >
-                    {sign}${absVal}
-                  </span>
-                </div>
+                  <div className="row gap-8 ai-c">
+                    <span
+                      className="t-num t-sm"
+                      style={{ color: isPos ? 'var(--win)' : 'var(--loss)' }}
+                    >
+                      {sign}${absVal}
+                    </span>
+                    <span className="t-mono t-xs t-faint">VIEW →</span>
+                  </div>
+                </Link>
               );
             })}
           </div>
