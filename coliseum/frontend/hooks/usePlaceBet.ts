@@ -48,7 +48,7 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Bookmaker, maxUint256],
           gasPrice,
-          gas: BigInt(100000),
+          gas: BigInt(1500000),
         });
         if (publicClient && approveTxHash) {
           await publicClient.waitForTransactionReceipt({ hash: approveTxHash });

@@ -113,7 +113,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Matchmaker, maxUint256],
           gasPrice,
-          gas: BigInt(100000),
+          gas: BigInt(1500000),
         });
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
         await refetchAllowance();
