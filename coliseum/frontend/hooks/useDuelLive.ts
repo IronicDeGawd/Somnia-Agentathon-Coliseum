@@ -2,34 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient, useReadContracts } from 'wagmi';
-import { parseAbiItem, formatUnits, createPublicClient, webSocket, type PublicClient } from 'viem';
+import { parseAbiItem, formatUnits } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES, POOLS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
-import { somniaTestnet } from '@/lib/chain';
+import { getWsClient } from '@/lib/wsClient';
 import type { DuelData } from '@/hooks/useDuelState';
-
-// Somnia testnet has a working WebSocket RPC at api.infra.testnet (NOT the
-// dream-rpc host, which 502s on WS upgrade). We use a dedicated WS client just
-// for the live event feed, so eth_subscribe streams FighterMove/MarkPrice in
-// real time without routing the rest of the app's reads/writes over WS.
-const WS_RPC_URL =
-  process.env.NEXT_PUBLIC_SOMNIA_WSS ?? 'wss://api.infra.testnet.somnia.network/ws';
-
-let sharedWsClient: PublicClient | null = null;
-function getWsClient(): PublicClient | null {
-  if (typeof window === 'undefined') return null; // no WS during SSR
-  if (!sharedWsClient) {
-    try {
-      sharedWsClient = createPublicClient({
-        chain: somniaTestnet,
-        transport: webSocket(WS_RPC_URL, { reconnect: true }),
-      });
-    } catch {
-      return null;
-    }
-  }
-  return sharedWsClient;
-}
 
 type RawLog = { transactionHash: `0x${string}` | null; logIndex: number | null; args: unknown };
 
