@@ -1,14 +1,15 @@
 import { parseAbi } from 'viem';
 
 export const CONTRACT_ADDRESSES = {
-  // Escrow-custody + turn-scaled-fee redeploy (deploy block 400321900). Arena
-  // carries the DuelHistory hook; Bookmaker/Matchmaker hold Arena immutable so
-  // all four redeployed together.
-  Arena: '0xb1ce740636dc5f6131cae98c052b773253be3387' as const,
-  Bookmaker: '0xcfb1efade9bdd7ac183fd22ce4d29e51ede60003' as const,
-  FighterRegistry: '0x5390b0656797b18258f2919a799abe956d21690f' as const,
+  // Fighter-aggression redeploy (deploy block 403508216): price+trend market
+  // signal, action-forcing prompts, owner-mutable FighterRegistry, and the
+  // Bookmaker duelist-bet guard. Arena holds the registry immutable and
+  // Bookmaker/Matchmaker hold Arena immutable, so all four redeployed together.
+  Arena: '0x1df22b4413c9fbfc7cdf1f4f440b0bc9f07bfd06' as const,
+  Bookmaker: '0xa0c0866cab9701505bcab688c92ac4029b86b7fa' as const,
+  FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0xaa9171c88d2a9d225ad9822835dea400a858a87a' as const,
+  Matchmaker: '0x77a47a829b6db60f401f895ce6e56600df06cb61' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0x5f2dd5c8a28036f7aba84ec00b4358800599d117' as `0x${string}`,
 };
@@ -23,7 +24,7 @@ export const DUEL_HISTORY_DEPLOYED =
  * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
  * never ask a public RPC to scan from genesis — that gets rejected/throttled.
  */
-export const BOOKMAKER_DEPLOY_BLOCK = BigInt(400321900);
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(403508216);
 
 /**
  * Active dreamDEX pools the Arena trades on, keyed by the poolMask bit.
