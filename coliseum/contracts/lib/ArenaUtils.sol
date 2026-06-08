@@ -104,7 +104,9 @@ library ArenaUtils {
         address poolWbtc,
         address poolSomi,
         mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
-        mapping(address => ArenaTypes.PoolMeta) storage poolMeta
+        mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
+        mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
+        mapping(uint256 => mapping(address => uint256)) storage prevMarkSnapshots
     ) internal view returns (string memory) {
         uint16 turnNum = duel.completedCallbacks / 2 + 1;
         // lastAction is uint8[2], indexed by SLOT (0=fighterA, 1=fighterB) — NOT
@@ -126,7 +128,8 @@ library ArenaUtils {
             if (duel.poolMask & bits[i] == 0) continue;
             summary = string.concat(summary, " ", vaultLine(
                 labels[i], pools[i], duelId, fighterId,
-                fighterBalances, poolMeta
+                fighterBalances, poolMeta,
+                markSnapshots, prevMarkSnapshots
             ));
         }
 
@@ -153,7 +156,9 @@ library ArenaUtils {
         uint256 duelId,
         uint8   fighterId,
         mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
-        mapping(address => ArenaTypes.PoolMeta) storage poolMeta
+        mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
+        mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
+        mapping(uint256 => mapping(address => uint256)) storage prevMarkSnapshots
     ) internal view returns (string memory) {
         ArenaTypes.PoolBalance memory bal = fighterBalances[pool][duelId][fighterId];
         ArenaTypes.PoolMeta    memory meta = poolMeta[pool];
@@ -170,7 +175,35 @@ library ArenaUtils {
         return string.concat(
             label, ": ", uint256ToString(usdso), " USDso / ",
             uint256ToString(baseWhole), ".", uint256ToString(baseFrac), " base",
+            priceTrend(pool, duelId, markPrice, markSnapshots, prevMarkSnapshots),
             flag, "."
         );
+    }
+
+    /// @notice Build the " price <P> (+/-<bps>bps)" fragment so fighters can see
+    ///         the current mark price and how far it moved since last turn. Uses
+    ///         the turn snapshot (consistent within a turn), falling back to the
+    ///         live mid when no snapshot has been taken yet.
+    function priceTrend(
+        address pool,
+        uint256 duelId,
+        uint256 liveMark,
+        mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
+        mapping(uint256 => mapping(address => uint256)) storage prevMarkSnapshots
+    ) internal view returns (string memory) {
+        uint256 cur = markSnapshots[duelId][pool];
+        if (cur == 0) cur = liveMark;
+        uint256 prev = prevMarkSnapshots[duelId][pool];
+        string memory trend;
+        if (prev == 0) {
+            trend = " (new)";
+        } else if (cur > prev) {
+            trend = string.concat(" (+", uint256ToString((cur - prev) * 10000 / prev), "bps)");
+        } else if (cur < prev) {
+            trend = string.concat(" (-", uint256ToString((prev - cur) * 10000 / prev), "bps)");
+        } else {
+            trend = " (flat)";
+        }
+        return string.concat(" price ", uint256ToString(cur / 1e18), trend);
     }
 }

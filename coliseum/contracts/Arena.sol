@@ -70,6 +70,11 @@ contract Arena is ArenaVault {
     ///         all callbacks are complete — no further trading can move the book).
     mapping(uint256 => mapping(address => uint256)) public duelMarkSnapshots;
 
+    /// @notice Previous-turn mark price per duel/pool. Carried forward from
+    ///         duelMarkSnapshots before each turn's snapshot overwrites it, so the
+    ///         market summary handed to fighters can show the move since last turn.
+    mapping(uint256 => mapping(address => uint256)) public duelPrevMarkSnapshots;
+
     /// @notice Optional history sink. When set, _resolveDuel records each duel's
     ///         outcome here (best-effort). Configured post-deploy via setDuelHistory.
     address public duelHistory;
@@ -151,6 +156,9 @@ contract Arena is ArenaVault {
             if (duel.poolMask & bits[i] == 0) continue;
             uint256 mp = ArenaUtils.midMarkPrice(pools[i]);
             if (mp > 0) {
+                // Carry the prior snapshot forward so the market summary can show
+                // the move since last turn, then record this turn's price.
+                duelPrevMarkSnapshots[duelId][pools[i]] = duelMarkSnapshots[duelId][pools[i]];
                 duelMarkSnapshots[duelId][pools[i]] = mp;
                 emit ArenaTypes.MarkPriceSnapshot(duelId, pools[i], mp, turnNum);
             }
@@ -371,7 +379,8 @@ contract Arena is ArenaVault {
         string memory marketSummary = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
             POOL_WETH, POOL_WBTC, POOL_SOMI,
-            fighterBalances, poolMeta
+            fighterBalances, poolMeta,
+            duelMarkSnapshots, duelPrevMarkSnapshots
         );
         bytes memory payload = abi.encodeWithSelector(
             ILLMInferenceAgent.inferNumber.selector,
