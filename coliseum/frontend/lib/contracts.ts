@@ -1,17 +1,18 @@
 import { parseAbi } from 'viem';
 
 export const CONTRACT_ADDRESSES = {
-  // Fighter-aggression redeploy (deploy block 403508216): price+trend market
-  // signal, action-forcing prompts, owner-mutable FighterRegistry, and the
-  // Bookmaker duelist-bet guard. Arena holds the registry immutable and
-  // Bookmaker/Matchmaker hold Arena immutable, so all four redeployed together.
-  Arena: '0x1df22b4413c9fbfc7cdf1f4f440b0bc9f07bfd06' as const,
-  Bookmaker: '0xa0c0866cab9701505bcab688c92ac4029b86b7fa' as const,
+  // Simulated-market migration (deploy block 403937518): per-duel real/simulated
+  // pool routing, a fresh DuelHistory wired to the new Arena, and the existing
+  // FighterRegistry reused (immutable persona data). Arena holds the registry
+  // immutable and Bookmaker/Matchmaker hold Arena immutable, so all four (plus a
+  // new DuelHistory) were redeployed together.
+  Arena: '0x8813fef83ae3faa8d700c6fbcb8cf92de08ea726' as const,
+  Bookmaker: '0x323cf312d93a5cbe575d30ef4d39a56ac362ece3' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0x77a47a829b6db60f401f895ce6e56600df06cb61' as const,
+  Matchmaker: '0xadfc07d9e36622476860f8d27ba0a08e33e592e0' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
-  DuelHistory: '0x5f2dd5c8a28036f7aba84ec00b4358800599d117' as `0x${string}`,
+  DuelHistory: '0xa4aeab0164c9086dab7f9e5540c40f0935945fcd' as `0x${string}`,
 };
 
 /** True once DuelHistory has a real (non-zero) deployed address. */
@@ -24,7 +25,7 @@ export const DUEL_HISTORY_DEPLOYED =
  * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
  * never ask a public RPC to scan from genesis — that gets rejected/throttled.
  */
-export const BOOKMAKER_DEPLOY_BLOCK = BigInt(403508216);
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(403937518);
 
 /**
  * Active dreamDEX pools the Arena trades on, keyed by the poolMask bit.
@@ -39,18 +40,18 @@ export const POOLS = [
 ] as const;
 
 /**
- * Placeholder pool addresses for the simulated market.
- * Same bit/decimals layout as POOLS; addresses are zero until the simulated
- * pools are deployed — flip SIM_MARKET_ENABLED and fill addresses at that time.
+ * Simulated-market pools (MockSpotPool) fed by scripts/sim-market.ts. All three
+ * are registered on-chain with 18-decimal base (setSimPools([18,18,18])), so the
+ * WBTC entry uses 18 here — unlike the real WBTC pool, which is 8-decimal.
  */
 export const SIM_POOLS = [
-  { key: 'WETH', address: '0x0000000000000000000000000000000000000000' as `0x${string}`, bit: 0x01, decimals: 18 },
-  { key: 'WBTC', address: '0x0000000000000000000000000000000000000000' as `0x${string}`, bit: 0x02, decimals: 8 },
-  { key: 'SOMI', address: '0x0000000000000000000000000000000000000000' as `0x${string}`, bit: 0x04, decimals: 18 },
+  { key: 'WETH', address: '0x3eefa7384f046532eee8bb0acd3057fc8abc1c08' as `0x${string}`, bit: 0x01, decimals: 18 },
+  { key: 'WBTC', address: '0x41525ddda51d7b82fddf7b4ec478dcddb1922a95' as `0x${string}`, bit: 0x02, decimals: 18 },
+  { key: 'SOMI', address: '0xbbfd95bb70085dea83488668eeceffb2e2e1f86f' as `0x${string}`, bit: 0x04, decimals: 18 },
 ] as const;
 
-/** Flip to true after the simulated pools are deployed and addresses filled in SIM_POOLS. */
-export const SIM_MARKET_ENABLED = false;
+/** Simulated market is live (sim pools deployed + seeded, injector running). */
+export const SIM_MARKET_ENABLED = true;
 
 /** Returns the correct pool list for a given duel: real market or simulated. */
 export function POOLS_FOR(simulated: boolean): typeof POOLS | typeof SIM_POOLS {
