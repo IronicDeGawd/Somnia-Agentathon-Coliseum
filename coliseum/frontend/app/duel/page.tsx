@@ -1,21 +1,18 @@
 'use client';
 
-import React, { useReducer, useEffect, useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
-import { Sparkline } from '@/components/shared/Sparkline';
-import { OddsBar } from '@/components/shared/OddsBar';
 import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import { DuelCreator } from '@/components/shared/DuelCreator';
 import DuelCard from '@/components/shared/DuelCard';
 import { useActiveDuel } from '@/hooks/useActiveDuel';
+import { useDuelState } from '@/hooks/useDuelState';
 import { useQueueState, type QueueTier } from '@/hooks/useQueueState';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
-import { simReducer, makeInitialSim } from '@/lib/simulation';
 import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
-import { fmtUsd, fmtTime } from '@/lib/format';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
 
@@ -30,7 +27,6 @@ const FIGHTER_INDEX_TO_ID: Record<number, string> = {
 };
 
 export default function LobbyPage() {
-  const [sim, dispatch] = useReducer(simReducer, makeInitialSim());
   const [creatorExpanded, setCreatorExpanded] = useState(false);
   // When set, the creator opens with the tier fixed (joining a specific tier);
   // null means the generic creator with a selectable tier.
@@ -54,11 +50,8 @@ export default function LobbyPage() {
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
   const { slots: queueSlots, isLoading: isQueueLoading } = useQueueState();
-
-  useEffect(() => {
-    const clock = setInterval(() => dispatch({ type: 'TICK' }), 1000);
-    return () => clearInterval(clock);
-  }, []);
+  // Live betting odds for the active duel (real Bookmaker pools, 0 = disabled).
+  const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
 
   // Derive display values from on-chain duel when available
   const activeDuelIdStr = activeDuelId !== null ? activeDuelId.toString() : null;
@@ -71,12 +64,16 @@ export default function LobbyPage() {
   const fighterAName = ROSTER.find(r => r.id === fighterAId)?.name ?? `FIGHTER #${fighterAIndex}`;
   const fighterBName = ROSTER.find(r => r.id === fighterBId)?.name ?? `FIGHTER #${fighterBIndex}`;
 
+  // Real on-chain stats for the hero strip. Purse = both duelists' staked pot
+  // (initialUsdsoPerFighter × 2). Odds = live Bookmaker spectator odds (fighter A %).
+  const pursePot = duel ? duel.initialUsdsoPerFighter * BigInt(2) : BigInt(0);
+  const liveOddsAPct = liveOdds ? Math.round(liveOdds.degenBps / 100) : 50;
+
   // Ticker items — prices deferred to future price-feed wiring
   const tickerItemNodes: React.ReactNode[] = [
     <>WBTC/USDso <span className="t-num t-dim">—</span></>,
     <>WETH/USDso <span className="t-num t-dim">—</span></>,
     <>SOMI/USDso <span className="t-num t-dim">—</span></>,
-    <>VOLUME 24H <span className="t-num">$12.4M</span></>,
     <>ONE ARENA · ONE LIVE DUEL</>,
     activeDuelId !== null
       ? <>ACTIVE DUEL <span className="t-num text-gold">#{activeDuelIdStr}</span></>
@@ -142,30 +139,25 @@ export default function LobbyPage() {
             </h1>
           </div>
 
-          {/* 4-up stat strip — BELL IN / PURSE / ODDS / BETTORS */}
+          {/* 3-up stat strip — PURSE / ODDS / ROUND (all read from chain) */}
           <div className="row ai-c jc-c" style={{ marginTop: 8, gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
-            <div className="col ai-c gap-2">
-              <span className="eyebrow">BELL IN</span>
-              <span className="t-num text-gold" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1 }}>
-                {activeDuelId !== null ? fmtTime(sim.countdown) : '—'}
-              </span>
-            </div>
-            <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
               <span className="eyebrow">PURSE</span>
               <span className="t-num text-gold" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1 }}>
-                {activeDuelId !== null ? `$${sim.potNext}` : '—'}
+                {activeDuelId !== null && duel
+                  ? `$${parseFloat(formatUnits(pursePot, 18)).toFixed(2)}`
+                  : '—'}
               </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
             <div className="col ai-c gap-2">
               <span className="eyebrow">ODDS</span>
               <span className="t-num" style={{ fontSize: 'clamp(22px, 5vw, 36px)', lineHeight: 1, whiteSpace: 'nowrap' }}>
-                {activeDuelId !== null ? (
+                {activeDuelId !== null && liveOdds ? (
                   <>
-                    <span className="text-a">{sim.oddsDegen}</span>
+                    <span className="text-a">{liveOddsAPct}</span>
                     <span style={{ color: 'var(--text-faint)', fontSize: 22 }}> · </span>
-                    <span className="text-b">{100 - sim.oddsDegen}</span>
+                    <span className="text-b">{100 - liveOddsAPct}</span>
                   </>
                 ) : (
                   <span className="t-dim">—</span>
@@ -283,80 +275,6 @@ export default function LobbyPage() {
           </div>
         )}
 
-        {/* Sim-driven sparkline preview (always shown as fight preview) */}
-        {activeDuelId !== null && (
-          <div className="card corner-card acc-a glow-a" style={{ overflow: 'hidden' }}>
-            {/* Header strip */}
-            <div
-              className="row ai-c"
-              style={{
-                padding: '10px 16px',
-                background: 'linear-gradient(90deg, var(--fighter-a-soft), transparent 70%)',
-                borderBottom: '1px solid var(--border)',
-                gap: 12,
-              }}
-            >
-              <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>
-              <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
-                R<span className="t-num" style={{ color: 'var(--text)' }}>{sim.round}/{totalTurns}</span>
-                <span style={{ margin: '0 8px' }}>·</span>
-                <span className="t-num" style={{ color: 'var(--text)' }}>{fmtTime(sim.timeLeft)}</span> left
-              </span>
-              <div className="grow" />
-              <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>{sim.spectators} watching</span>
-            </div>
-
-            {/* Two-fighter body */}
-            <div className="row gap-24" style={{ padding: 24, alignItems: 'stretch' }}>
-              <div className="col gap-12 flex-1">
-                <div className="row jc-sb ai-c">
-                  <div className="row ai-c" style={{ gap: 10 }}>
-                    <FighterAvatar fighter={fighterAId} context="mini" size={32} />
-                    <span className="t-display t-up" style={{ color: 'var(--fighter-a)', letterSpacing: '0.12em', fontSize: 14 }}>{fighterAName}</span>
-                  </div>
-                  <span className="t-num" style={{ fontSize: 24, color: sim.degen.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}>
-                    {fmtUsd(sim.degen.pnl)}
-                  </span>
-                </div>
-                <Sparkline data={sim.degen.history} color="var(--fighter-a)" height={48} />
-              </div>
-
-              <div className="col ai-c jc-c" style={{ width: 60 }}>
-                <span className="t-display" style={{ fontSize: 32, color: 'var(--text-faint)' }}>VS</span>
-              </div>
-
-              <div className="col gap-12 flex-1">
-                <div className="row jc-sb ai-c">
-                  <span className="t-num" style={{ fontSize: 24, color: sim.whale.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}>
-                    {fmtUsd(sim.whale.pnl)}
-                  </span>
-                  <div className="row ai-c" style={{ gap: 10 }}>
-                    <span className="t-display t-up" style={{ color: 'var(--fighter-b)', letterSpacing: '0.12em', fontSize: 14 }}>{fighterBName}</span>
-                    <FighterAvatar fighter={fighterBId} context="mini" size={32} />
-                  </div>
-                </div>
-                <Sparkline data={sim.whale.history} color="var(--fighter-b)" height={48} />
-              </div>
-            </div>
-
-            {/* Footer: odds + WATCH LIVE */}
-            <div
-              className="row ai-c jc-sb"
-              style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-stage)' }}
-            >
-              <div className="col gap-4" style={{ flex: 2 }}>
-                <div className="row jc-sb t-mono t-xs">
-                  <span className="text-a">{fighterAName} {sim.oddsDegen}%</span>
-                  <span className="text-b">{fighterBName} {100 - sim.oddsDegen}%</span>
-                </div>
-                <OddsBar oddsA={sim.oddsDegen} oddsB={100 - sim.oddsDegen} className="!h-[8px]" />
-              </div>
-              <Link href={`/duel/${activeDuelIdStr}`} style={{ marginLeft: 24 }}>
-                <BracketButton variant="a">JOIN SPECTATORS →</BracketButton>
-              </Link>
-            </div>
-          </div>
-        )}
       </section>
 
       {/* ── § 02 · QUEUE STATE ────────────────────────────────────── */}

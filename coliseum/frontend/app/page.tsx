@@ -1,35 +1,39 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
+import { formatUnits } from 'viem';
 import { TopBar } from '@/components/shared/TopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot, Ticker } from '@/components/shared/OtherHUD';
-import { FIGHTERS, ROSTER } from '@/lib/fighters';
+import { FIGHTERS, ROSTER, fighterIndexToId } from '@/lib/fighters';
 import { fmtUsd } from '@/lib/format';
-
-function fmtTime(s: number) {
-  const m = Math.floor(s / 60);
-  const ss = Math.floor(s % 60);
-  return `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-}
+import { useActiveDuel } from '@/hooks/useActiveDuel';
+import { useDuelState } from '@/hooks/useDuelState';
+import { useLeaderboard } from '@/hooks/useLeaderboard';
+import { useDuelLedger } from '@/hooks/useDuelLedger';
 
 export default function LandingPage() {
   const [activeFstrip, setActiveFstrip] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(263);
 
-  useEffect(() => {
-    const id = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 263)), 1000);
-    return () => clearInterval(id);
-  }, []);
+  // Real on-chain state powering the "live" + stats sections.
+  const { activeDuelId, duel } = useActiveDuel();
+  const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
+  const { rows: leaderboardRows } = useLeaderboard();
+  const { entries: ledgerEntries, total: ledgerTotal } = useDuelLedger(7);
+
+  // Active-duel display helpers (null-safe; "ARENA DARK" when no live duel).
+  const liveIdStr = activeDuelId !== null ? activeDuelId.toString() : null;
+  const liveAId = duel ? fighterIndexToId(duel.fighterA) : null;
+  const liveBId = duel ? fighterIndexToId(duel.fighterB) : null;
+  const liveOddsAPct = liveOdds ? Math.round(liveOdds.degenBps / 100) : 50;
+  const livePot = duel ? parseFloat(formatUnits(duel.initialUsdsoPerFighter * BigInt(2), 18)) : 0;
 
   const tickerItems = [
-    'DEGEN > "Send it. 78% on WBTC."',
+    'DEGEN > "Send it."',
     'WHALE > "I\'ll wait for it."',
-    'WBTC/USDso 67,425.10 +0.34%',
-    'VOLUME 24H $12.4M',
-    'AUTONOMOUS · 24/7 · NEW DUEL EVERY ~12 MIN',
-    'TOTAL VOLUME · TESTNET USDso',
+    'AUTONOMOUS · 24/7 · ONE LIVE DUEL AT A TIME',
+    'SOMNIA SHANNON TESTNET · CHAIN 50312 · DREAMDEX',
   ];
 
   return (
@@ -50,17 +54,24 @@ export default function LandingPage() {
           }}
         >
           <div className="flex items-center gap-4">
-            <span className="chip chip-live">
-              <span className="dot dot-a pulse" /> NEXT BOUT
-            </span>
-            <span className="t-mono text-[11px] text-[var(--text-dim)]" style={{ letterSpacing: '0.18em' }}>
-              DUEL #342 · MAIN EVENT
-            </span>
+            {activeDuelId !== null ? (
+              <>
+                <span className="chip chip-live">
+                  <span className="dot dot-a pulse" /> LIVE NOW
+                </span>
+                <span className="t-mono text-[11px] text-[var(--text-dim)]" style={{ letterSpacing: '0.18em' }}>
+                  DUEL #{liveIdStr} · MAIN EVENT
+                </span>
+              </>
+            ) : (
+              <span className="t-mono text-[11px] text-[var(--text-dim)]" style={{ letterSpacing: '0.18em' }}>
+                ARENA DARK · NO LIVE DUEL
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-6">
             <span className="t-mono text-[11px] text-[var(--text-dim)]">
-              SOMNIA TESTNET · BLOCK{' '}
-              <span className="t-num" style={{ color: 'var(--text)' }}>0x4f2a8…3b1c</span>
+              SOMNIA SHANNON TESTNET · CHAIN 50312
             </span>
           </div>
         </div>
@@ -210,7 +221,7 @@ export default function LandingPage() {
             </div>
 
             <span className="t-mono text-[11px] text-[var(--text-faint)]" style={{ marginTop: 8 }}>
-              NEXT BOUT BELL · {fmtTime(countdown)} · SOMNIA TESTNET · CHAIN 50312
+              {activeDuelId !== null ? `DUEL #${liveIdStr} LIVE NOW` : 'ARENA DARK'} · SOMNIA TESTNET · CHAIN 50312
             </span>
           </div>
         </div>
@@ -382,40 +393,14 @@ export default function LandingPage() {
           ))}
         </div>
 
-        {/* H2H history */}
+        {/* H2H history — Arena keeps per-duel state only, so there is no
+            cross-duel head-to-head record to show. */}
         <div className="row gap-32 ai-c jc-sb" style={{ marginTop: 32 }}>
           <div className="col gap-4">
             <span className="eyebrow">HEAD TO HEAD</span>
             <span className="t-mono t-sm">
               No head-to-head history across duels — Arena stores per-duel state only.
             </span>
-          </div>
-          <div className="row gap-8">
-            {[
-              { r: 337, w: 'whale' },
-              { r: 312, w: 'degen' },
-              { r: 298, w: 'whale' },
-            ].map((p) => {
-              const hex = p.w === 'degen' ? 'var(--fighter-a)' : 'var(--fighter-b)';
-              return (
-                <div
-                  key={p.r}
-                  className="panel"
-                  style={{
-                    padding: '10px 16px',
-                    borderColor: hex,
-                    borderTop: `2px solid ${hex}`,
-                  }}
-                >
-                  <div className="col gap-2">
-                    <span className="t-mono t-xs t-dim">#{p.r}</span>
-                    <span className="t-mono t-xs" style={{ color: hex }}>
-                      {p.w.toUpperCase()} WON
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
       </section>
@@ -445,7 +430,8 @@ export default function LandingPage() {
             <p className="t-mono t-sm" style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.7 }}>
               Every round is ~600 blocks on Somnia — about one minute. Agents reason, commit, the market reacts,
               the bookmaker repositions, the crowd repositions, and the bell rings again.
-              What you see below is real protocol traffic — the same events the Arena renders live.
+              Below is an illustrative round — the same kinds of events the Arena emits on-chain
+              (BlockTick, FighterMove, OddsUpdated, DuelResolved).
             </p>
           </div>
 
@@ -613,13 +599,23 @@ export default function LandingPage() {
                     {styles[f.id]}
                   </span>
                   <div className="row gap-12 ai-c" style={{ marginTop: 8 }}>
-                    <span className="t-num t-xs">{f.record}</span>
-                    <span
-                      className="t-num t-xs"
-                      style={{ color: f.pnl >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                    >
-                      {fmtUsd(f.pnl)}
-                    </span>
+                    {(() => {
+                      // Real on-chain record/PnL for this fighter (roster idx === registry index).
+                      const lb = leaderboardRows.find((r) => r.index === idx);
+                      const realRecord = lb ? `${lb.wins}W-${lb.losses}L` : '0W-0L';
+                      const realPnl = lb ? parseFloat(formatUnits(lb.pnl, 18)) : 0;
+                      return (
+                        <>
+                          <span className="t-num t-xs">{realRecord}</span>
+                          <span
+                            className="t-num t-xs"
+                            style={{ color: realPnl >= 0 ? 'var(--win)' : 'var(--loss)' }}
+                          >
+                            {lb && lb.duels > 0 ? fmtUsd(realPnl) : '—'}
+                          </span>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -646,67 +642,43 @@ export default function LandingPage() {
         </div>
 
         <div className="col gap-16">
-          {[
-            { tag: 'LIVE NOW', rounds: 'BEST OF 15', a: 'degen',   b: 'whale',      oddsA: 58, oddsB: 42, pot: 142, when: 'LIVE' },
-          ].map((b, i) => {
-            const af = FIGHTERS[b.a];
-            const wf = FIGHTERS[b.b];
-            const isMain = i === 0;
+          {activeDuelId !== null && duel && liveAId && liveBId ? (() => {
+            const af = FIGHTERS[liveAId];
+            const wf = FIGHTERS[liveBId];
             return (
               <div
-                key={b.tag}
                 className="card"
-                style={{
-                  padding: isMain ? 32 : 24,
-                  borderColor: isMain ? 'var(--gold)' : 'var(--border)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
+                style={{ padding: 32, borderColor: 'var(--gold)', position: 'relative', overflow: 'hidden' }}
               >
                 <div className="row ai-c jc-sb stack-sm" style={{ position: 'relative', gap: 24 }}>
                   <div className="col gap-4" style={{ width: 140 }}>
                     <span
                       className="chip"
-                      style={{
-                        color: isMain ? 'var(--gold)' : 'var(--text-dim)',
-                        borderColor: isMain ? 'var(--gold)' : 'var(--border)',
-                        alignSelf: 'flex-start',
-                      }}
+                      style={{ color: 'var(--gold)', borderColor: 'var(--gold)', alignSelf: 'flex-start' }}
                     >
-                      {isMain ? '★ ' : ''}{b.tag}
+                      ★ LIVE NOW
                     </span>
-                    <span className="t-mono t-xs t-faint" style={{ marginTop: 4 }}>{b.rounds}</span>
-                    <span className="t-num t-sm">{b.when}</span>
+                    <span className="t-mono t-xs t-faint" style={{ marginTop: 4 }}>BEST OF {duel.turns}</span>
+                    <span className="t-num t-sm">DUEL #{liveIdStr}</span>
                   </div>
 
                   <div className="row ai-c gap-16 flex-1" style={{ justifyContent: 'center' }}>
                     <div className="row ai-c gap-12">
-                      <FighterAvatar fighter={b.a} context="card" size={isMain ? 96 : 72} state="idle" />
+                      <FighterAvatar fighter={liveAId} context="card" size={96} state="idle" />
                       <div className="col ai-e gap-4" style={{ minWidth: 0 }}>
                         <span
                           className="t-display t-up"
-                          style={{
-                            fontSize: isMain ? 22 : 16,
-                            color: af.hex,
-                            letterSpacing: '0.1em',
-                            whiteSpace: 'nowrap',
-                            lineHeight: 1,
-                          }}
+                          style={{ fontSize: 22, color: af.hex, letterSpacing: '0.1em', whiteSpace: 'nowrap', lineHeight: 1 }}
                         >
                           {af.name}
                         </span>
-                        <span className="t-num t-sm" style={{ color: af.hex }}>{b.oddsA}%</span>
+                        <span className="t-num t-sm" style={{ color: af.hex }}>{liveOddsAPct}%</span>
                       </div>
                     </div>
 
                     <span
                       className="t-display"
-                      style={{
-                        fontSize: isMain ? 36 : 24,
-                        color: 'var(--text-faint)',
-                        margin: '0 8px',
-                        lineHeight: 1,
-                      }}
+                      style={{ fontSize: 36, color: 'var(--text-faint)', margin: '0 8px', lineHeight: 1 }}
                     >
                       VS
                     </span>
@@ -715,35 +687,43 @@ export default function LandingPage() {
                       <div className="col ai-s gap-4" style={{ minWidth: 0 }}>
                         <span
                           className="t-display t-up"
-                          style={{
-                            fontSize: isMain ? 22 : 16,
-                            color: wf.hex,
-                            letterSpacing: '0.1em',
-                            whiteSpace: 'nowrap',
-                            lineHeight: 1,
-                          }}
+                          style={{ fontSize: 22, color: wf.hex, letterSpacing: '0.1em', whiteSpace: 'nowrap', lineHeight: 1 }}
                         >
                           {wf.name}
                         </span>
-                        <span className="t-num t-sm" style={{ color: wf.hex }}>{b.oddsB}%</span>
+                        <span className="t-num t-sm" style={{ color: wf.hex }}>{100 - liveOddsAPct}%</span>
                       </div>
-                      <FighterAvatar fighter={b.b} context="card" size={isMain ? 96 : 72} state="idle" />
+                      <FighterAvatar fighter={liveBId} context="card" size={96} state="idle" />
                     </div>
                   </div>
 
                   <div className="col gap-4 ai-e" style={{ width: 200 }}>
-                    <span className="eyebrow">POT</span>
-                    <span className="t-num text-gold" style={{ fontSize: isMain ? 32 : 22 }}>${b.pot}</span>
-                    <Link href="/duel">
-                      <BracketButton variant={isMain ? 'primary' : undefined}>
-                        {isMain ? 'ENTER ARENA →' : 'PLACE BET →'}
-                      </BracketButton>
+                    <span className="eyebrow">PURSE</span>
+                    <span className="t-num text-gold" style={{ fontSize: 32 }}>${livePot.toFixed(2)}</span>
+                    <Link href={`/duel/${liveIdStr}`}>
+                      <BracketButton variant="primary">ENTER ARENA →</BracketButton>
                     </Link>
                   </div>
                 </div>
               </div>
             );
-          })}
+          })() : (
+            <div
+              className="card pad-24 col ai-c gap-16"
+              style={{ borderStyle: 'dashed', borderColor: 'var(--text-faint)' }}
+            >
+              <span className="t-display" style={{ fontSize: 48, color: 'var(--text-faint)', lineHeight: 1 }}>◌</span>
+              <div className="col ai-c gap-4">
+                <span className="t-mono t-sm" style={{ color: 'var(--text-dim)' }}>ARENA IS DARK</span>
+                <span className="t-xs t-dim" style={{ textAlign: 'center' }}>
+                  No live duel right now — be the first to start one.
+                </span>
+              </div>
+              <Link href="/duel">
+                <BracketButton variant="primary">ENTER THE ARENA →</BracketButton>
+              </Link>
+            </div>
+          )}
         </div>
       </section>
 
@@ -765,7 +745,7 @@ export default function LandingPage() {
               margin: 0,
             }}
           >
-            341 duels settled. <span className="text-gold">All on-chain on Somnia testnet.</span>
+            {ledgerTotal.toString()} duels settled. <span className="text-gold">All on-chain on Somnia testnet.</span>
           </p>
           <div className="col gap-12" style={{ width: 240, paddingTop: 12 }}>
             <p className="t-mono t-sm t-dim" style={{ margin: 0, lineHeight: 1.7 }}>
@@ -777,29 +757,31 @@ export default function LandingPage() {
         <div className="card" style={{ padding: '0 24px' }}>
           {/* Header row */}
           <div className="tape-row tape-head" style={{ borderBottom: '1px solid var(--text-faint)' }}>
-            <span className="label-tiny">ROUND</span>
+            <span className="label-tiny">DUEL</span>
             <span className="label-tiny">BOUT</span>
             <span className="label-tiny" style={{ textAlign: 'center' }}>PNL Δ</span>
-            <span className="label-tiny" style={{ textAlign: 'right' }}>PAYOUT</span>
-            <span className="label-tiny" style={{ textAlign: 'right' }}>WHEN</span>
+            <span className="label-tiny" style={{ textAlign: 'right' }}>WINNER</span>
+            <span className="label-tiny" style={{ textAlign: 'right' }}>BLOCK</span>
           </div>
 
-          {[
-            { round: 341, winner: 'degen',      loser: 'whale',      pnlW: 24.18, pnlL: -10.4, mult: 1.54, when: '12m ago' },
-            { round: 340, winner: 'whale',      loser: 'scalper',    pnlW: 18.5,  pnlL: -8.5,  mult: 1.78, when: '1h ago' },
-            { round: 339, winner: 'degen',      loser: 'contrarian', pnlW: 31.0,  pnlL: -22.7, mult: 2.12, when: '2h ago' },
-            { round: 338, winner: 'quant',      loser: 'diamond',    pnlW: 12.4,  pnlL: -6.1,  mult: 1.45, when: '3h ago' },
-            { round: 337, winner: 'whale',      loser: 'degen',      pnlW: 9.7,   pnlL: -4.2,  mult: 2.05, when: '4h ago' },
-            { round: 336, winner: 'scalper',    loser: 'quant',      pnlW: 14.2,  pnlL: -7.8,  mult: 1.62, when: '6h ago' },
-            { round: 335, winner: 'contrarian', loser: 'diamond',    pnlW: 21.5,  pnlL: -11.0, mult: 1.88, when: '8h ago' },
-          ].map((b) => {
-            const wf = FIGHTERS[b.winner];
-            const lf = FIGHTERS[b.loser];
+          {ledgerEntries.length === 0 ? (
+            <div className="row ai-c jc-c" style={{ padding: '28px 0', color: 'var(--text-faint)' }}>
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.2em', textAlign: 'center' }}>
+                No settled duels yet — the ledger fills as fights resolve on-chain.
+              </span>
+            </div>
+          ) : ledgerEntries.map((e) => {
+            const winnerId = fighterIndexToId(e.winnerFighter);
+            const loserId  = fighterIndexToId(e.winnerSlot === 0 ? e.fighterB : e.fighterA);
+            const wf = FIGHTERS[winnerId];
+            const lf = FIGHTERS[loserId];
+            const pnlW = parseFloat(formatUnits(e.winnerSlot === 0 ? e.pnlA : e.pnlB, 18));
+            const pnlL = parseFloat(formatUnits(e.winnerSlot === 0 ? e.pnlB : e.pnlA, 18));
             return (
-              <div key={b.round} className="tape-row">
-                <span className="t-num t-sm t-dim" style={{ whiteSpace: 'nowrap' }}>#{b.round}</span>
+              <div key={e.duelId.toString()} className="tape-row">
+                <span className="t-num t-sm t-dim" style={{ whiteSpace: 'nowrap' }}>#{e.duelId.toString()}</span>
                 <div className="row ai-c gap-12">
-                  <FighterAvatar fighter={b.winner} context="mini" size={32} />
+                  <FighterAvatar fighter={winnerId} context="mini" size={32} />
                   <span
                     className="t-display t-up"
                     style={{ fontSize: 13, color: wf.hex, letterSpacing: '0.08em' }}
@@ -814,11 +796,11 @@ export default function LandingPage() {
                   >
                     {lf.name}
                   </span>
-                  <FighterAvatar fighter={b.loser} context="mini" size={32} />
+                  <FighterAvatar fighter={loserId} context="mini" size={32} />
                 </div>
                 {/* mini delta bar */}
                 <div className="row ai-c gap-8" style={{ justifyContent: 'center' }}>
-                  <span className="t-num t-xs text-win">{fmtUsd(b.pnlW)}</span>
+                  <span className="t-num t-xs text-win">{fmtUsd(pnlW)}</span>
                   <div style={{ width: 60, height: 4, background: 'var(--bg-card-2)', position: 'relative' }}>
                     <div
                       style={{
@@ -829,17 +811,17 @@ export default function LandingPage() {
                       }}
                     />
                   </div>
-                  <span className="t-num t-xs text-loss">{fmtUsd(b.pnlL)}</span>
+                  <span className="t-num t-xs text-loss">{fmtUsd(pnlL)}</span>
                 </div>
-                <span className="t-num t-sm text-gold" style={{ textAlign: 'right' }}>{b.mult}×</span>
-                <span className="t-mono t-xs t-faint" style={{ textAlign: 'right' }}>{b.when}</span>
+                <span className="t-num t-sm text-gold" style={{ textAlign: 'right' }}>{wf.name}</span>
+                <span className="t-mono t-xs t-faint" style={{ textAlign: 'right' }}>{e.blockNumber.toString()}</span>
               </div>
             );
           })}
         </div>
 
         <div className="row jc-sb ai-c" style={{ marginTop: 24 }}>
-          <span className="t-mono t-xs t-dim">Showing 7 of 341 settled duels</span>
+          <span className="t-mono t-xs t-dim">Showing {ledgerEntries.length} of {ledgerTotal.toString()} settled duels</span>
           <Link href="/duel">
             <BracketButton variant="ghost">FULL LEDGER →</BracketButton>
           </Link>
