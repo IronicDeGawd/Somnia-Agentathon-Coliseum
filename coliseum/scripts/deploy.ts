@@ -172,6 +172,20 @@ async function main() {
     external: addresses,
   });
 
+  // 2b. DuelHistory — append-only settled-duel ledger. Its `arena` is immutable,
+  //     so each new Arena needs a fresh DuelHistory wired via setDuelHistory;
+  //     without it, resolved duels never reach the frontend's settled ledger.
+  console.log("Deploying DuelHistory...");
+  const history = await hre.viem.deployContract("DuelHistory", [arena.address]);
+  console.log(`  DuelHistory:     ${history.address}`);
+  const setHistTx = await arena.write.setDuelHistory([history.address]);
+  await publicClient.waitForTransactionReceipt({ hash: setHistTx });
+  const wiredHist = (await arena.read.duelHistory()) as `0x${string}`;
+  if (wiredHist.toLowerCase() !== history.address.toLowerCase()) {
+    throw new Error(`setDuelHistory failed: arena.duelHistory=${wiredHist}, expected ${history.address}`);
+  }
+  console.log(`  setDuelHistory wired OK`);
+
   // 3. Matchmaker — PvP matchmaking layer; pairs human players into Arena duels.
   //    Deployed before the Bookmaker so the Bookmaker can hold its address and
   //    block a duel's two players from betting on their own fight.
@@ -235,20 +249,27 @@ async function main() {
     // Initial mark prices (18-decimal USDso-quoted). The injector will update
     // these continuously; these are just sane starting points.
     const SIM_PRICE_WETH = parseEther("3000");   // ~$3000
-    const SIM_PRICE_WBTC = parseEther("65000");  // ~$65000
+    const SIM_PRICE_WBTC = parseEther("6000");   // lowered from 65000 so a min
+                                                 // order is affordable at the
+                                                 // demo seed (see MIN_QTY note)
     const SIM_PRICE_SOMI = parseEther("1");      // ~$1
 
     // Book quantity — large enough that fighter orders of minQuantity always fill.
     const BOOK_QTY = parseEther("1000"); // 1e21
 
-    // minQuantity = 1e15 (0.001 base token, 18-dec). At these prices the cost is:
-    //   WETH: 0.001 * 3000 = 3 USDso   WBTC: 0.001 * 65000 = 65 USDso (will need larger seed)
-    //   SOMI: 0.001 * 1    = 0.001 USDso
+    // Each fighter BUY trades exactly minQuantity (Arena does not scale order
+    // size by capacity), costing minQuantity * price / 1e18 USDso, and that cost
+    // is withdrawn from the pool seed — so seed / minCost = how many buys a pool
+    // supports before drying up. minQuantity = 1e14 (0.0001 base, 18-dec) keeps
+    // each buy cheap so the demo seed lasts many turns:
+    //   WETH: 0.0001 * 3000 = 0.30 USDso   WBTC: 0.0001 * 6000 = 0.60 USDso
+    //   SOMI: 0.0001 * 1    = 0.0001 USDso
+    // At an 8-USDso sim seed that's ~13-26 buys per pool — lively across all three.
     // Use address(0) as nominal base — MockSpotPool never pulls base tokens; Arena
     // only transfers USDso (the quote). So base identity doesn't matter for fills.
     const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as const;
     const TICK_SIZE   = 1_000_000_000_000_000n;  // 1e15
-    const MIN_QTY    = 1_000_000_000_000_000n;  // 1e15
+    const MIN_QTY    = 100_000_000_000_000n;     // 1e14
     const LOT_SIZE   = 1n;
 
     async function initSimPool(
@@ -329,6 +350,7 @@ async function main() {
         subscriptionId: subId.toString(),
         turnIntervalBlocks: turnIntervalBlocks.toString(),
       },
+      DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },
       Matchmaker: { address: matchmaker.address },
     },
@@ -344,6 +366,7 @@ async function main() {
   console.log("├────────────────────┼────────────────────────────────────────────┤");
   console.log(`│ FighterRegistry    │ ${registry.address} │`);
   console.log(`│ Arena              │ ${arena.address} │`);
+  console.log(`│ DuelHistory        │ ${history.address} │`);
   console.log(`│ Bookmaker          │ ${bookmaker.address} │`);
   console.log(`│ Matchmaker         │ ${matchmaker.address} │`);
   if (simAddresses) {
