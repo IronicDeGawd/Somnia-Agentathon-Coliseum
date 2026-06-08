@@ -134,11 +134,25 @@ async function main() {
     }
   }
 
-  // 1. FighterRegistry
-  console.log("\nDeploying FighterRegistry...");
-  const registry = await hre.viem.deployContract("FighterRegistry");
-  console.log(`  FighterRegistry: ${registry.address}`);
-  writeManifest({ network, deployer, contracts: { FighterRegistry: { address: registry.address } }, external: addresses });
+  // 1. FighterRegistry — reused on testnet (immutable persona data; a redeploy
+  //    would churn the frontend address and drop any live-tuned prompts). Fresh
+  //    only on local dry-runs.
+  let registryAddress: `0x${string}`;
+  if (IS_LOCAL) {
+    console.log("\nDeploying FighterRegistry...");
+    const reg = await hre.viem.deployContract("FighterRegistry");
+    registryAddress = reg.address;
+    console.log(`  FighterRegistry: ${registryAddress}`);
+  } else {
+    let priorManifest: any = {};
+    try { priorManifest = JSON.parse(fs.readFileSync(outFile, "utf8")); } catch { /* none */ }
+    if (!priorManifest?.contracts?.FighterRegistry?.address) {
+      throw new Error("No existing FighterRegistry in manifest to reuse — run on local or deploy one first.");
+    }
+    registryAddress = priorManifest.contracts.FighterRegistry.address as `0x${string}`;
+    console.log(`\nReusing FighterRegistry: ${registryAddress}`);
+  }
+  writeManifest({ network, deployer, contracts: { FighterRegistry: { address: registryAddress } }, external: addresses });
 
   // 2. Arena
   // Per-pool base-token decimals (verified via scripts/inspect-pools.ts):
@@ -148,7 +162,7 @@ async function main() {
   const arena = await hre.viem.deployContract(
     "Arena",
     [
-      registry.address,
+      registryAddress,
       addresses.usdso,
       addresses.poolWeth,
       addresses.poolWbtc,
@@ -166,7 +180,7 @@ async function main() {
     network,
     deployer,
     contracts: {
-      FighterRegistry: { address: registry.address },
+      FighterRegistry: { address: registryAddress },
       Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString() },
     },
     external: addresses,
@@ -192,7 +206,7 @@ async function main() {
   console.log("Deploying Matchmaker...");
   const matchmaker = await hre.viem.deployContract(
     "Matchmaker",
-    [arena.address, addresses.usdso, registry.address]
+    [arena.address, addresses.usdso, registryAddress]
   );
   console.log(`  Matchmaker:      ${matchmaker.address}`);
 
@@ -202,7 +216,7 @@ async function main() {
   console.log("Deploying Bookmaker...");
   const bookmaker = await hre.viem.deployContract(
     "Bookmaker",
-    [arena.address, addresses.usdso, registry.address, matchmaker.address, addresses.platform, turnIntervalBlocks],
+    [arena.address, addresses.usdso, registryAddress, matchmaker.address, addresses.platform, turnIntervalBlocks],
     { value: reactivityFund }
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);
@@ -344,7 +358,7 @@ async function main() {
     block: block.toString(),
     deployer,
     contracts: {
-      FighterRegistry: { address: registry.address },
+      FighterRegistry: { address: registryAddress },
       Arena: {
         address: arena.address,
         subscriptionId: subId.toString(),
@@ -364,7 +378,7 @@ async function main() {
   console.log("\n┌────────────────────┬────────────────────────────────────────────┐");
   console.log("│ Contract           │ Address                                    │");
   console.log("├────────────────────┼────────────────────────────────────────────┤");
-  console.log(`│ FighterRegistry    │ ${registry.address} │`);
+  console.log(`│ FighterRegistry    │ ${registryAddress} │`);
   console.log(`│ Arena              │ ${arena.address} │`);
   console.log(`│ DuelHistory        │ ${history.address} │`);
   console.log(`│ Bookmaker          │ ${bookmaker.address} │`);
