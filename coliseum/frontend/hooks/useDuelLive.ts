@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient, useReadContracts } from 'wagmi';
 import { parseAbiItem, formatUnits } from 'viem';
-import { ABIS, CONTRACT_ADDRESSES, POOLS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { ABIS, CONTRACT_ADDRESSES, POOLS_FOR, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { getWsClient } from '@/lib/wsClient';
 import type { DuelData } from '@/hooks/useDuelState';
@@ -312,7 +312,8 @@ export function useDuelLive(
   }, [enabled, duelId, ingestMarkPriceLogs, ingestMoveLogs, ingestRequestLogs]);
 
   // ── Active pools (from duel.poolMask) ─────────────────────────────────────
-  const activePools = !duel ? [] : POOLS.filter((p) => (duel.poolMask & p.bit) !== 0);
+  // Resolve pool addresses based on whether this is a simulated-market duel.
+  const activePools = !duel ? [] : POOLS_FOR(duel.simulated ?? false).filter((p) => (duel.poolMask & p.bit) !== 0);
 
   // ── Read fighterBalances for each active pool × 2 fighters ────────────────
   // Build batched contract reads: [poolA×fighterA, poolA×fighterB, poolB×fighterA, …]

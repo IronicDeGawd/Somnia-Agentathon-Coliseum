@@ -7,7 +7,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
 import { useQueueState } from '@/hooks/useQueueState';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
-import { CONTRACT_ADDRESSES } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, SIM_MARKET_ENABLED } from '@/lib/contracts';
 import { getWsClient } from '@/lib/wsClient';
 import { somniaTestnet } from '@/lib/chain';
 
@@ -36,17 +36,21 @@ interface DuelCreatorProps {
 function QueueInner({
   fighter,
   turns,
+  simulated,
   locked,
   onMatchFound,
   onFighterChange,
   onTurnsChange,
+  onSimulatedChange,
 }: {
   fighter: number;
   turns: TurnOption;
+  simulated: boolean;
   locked: boolean;
   onMatchFound?: (duelId: bigint) => void;
   onFighterChange: (idx: number) => void;
   onTurnsChange: (t: TurnOption) => void;
+  onSimulatedChange: (s: boolean) => void;
 }) {
   const {
     halfDeposit,
@@ -57,7 +61,7 @@ function QueueInner({
     isPending,
     isSuccess,
     error,
-  } = useQueue(fighter, turns);
+  } = useQueue(fighter, turns, simulated);
 
   const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
 
@@ -250,6 +254,51 @@ function QueueInner({
           {locked ? `JOIN ${turns}-ROUND DUEL` : 'ENTER THE ARENA'}
         </span>
       </div>
+
+      {/* Market toggle — only shown when SIM_MARKET_ENABLED is true */}
+      {SIM_MARKET_ENABLED && (
+        <div className="col gap-12">
+          <div className="eyebrow">MARKET</div>
+          <div className="row gap-8">
+            <button
+              onClick={() => onSimulatedChange(false)}
+              style={{
+                flex: 1,
+                padding: '10px',
+                border: `1px solid ${!simulated ? 'var(--gold)' : 'var(--border)'}`,
+                background: !simulated ? 'var(--gold-soft, rgba(200,168,107,0.12))' : 'transparent',
+                borderRadius: '2px',
+                cursor: 'pointer',
+                color: !simulated ? 'var(--gold)' : 'var(--text-dim)',
+                fontSize: '12px',
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                transition: 'border-color 0.15s, background 0.15s, color 0.15s',
+              }}
+            >
+              ⚡ dreamDEX
+            </button>
+            <button
+              onClick={() => onSimulatedChange(true)}
+              style={{
+                flex: 1,
+                padding: '10px',
+                border: `1px solid ${simulated ? '#a78bfa' : 'var(--border)'}`,
+                background: simulated ? 'rgba(167,139,250,0.1)' : 'transparent',
+                borderRadius: '2px',
+                cursor: 'pointer',
+                color: simulated ? '#a78bfa' : 'var(--text-dim)',
+                fontSize: '12px',
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                transition: 'border-color 0.15s, background 0.15s, color 0.15s',
+              }}
+            >
+              🧪 Simulated
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Fighter picker */}
       <div className="col gap-12">
@@ -503,6 +552,9 @@ function QueueInner({
 export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
   const [fighter, setFighter] = useState(0);
   const [turns, setTurns] = useState<TurnOption>(lockedTurns ?? 6);
+  // simulated is forced false when SIM_MARKET_ENABLED is false, so today's
+  // behavior is unchanged. It becomes user-selectable after the flag is flipped.
+  const [simulated, setSimulated] = useState(false);
 
   // Sync the tier when the user opens a different locked tier while the
   // creator is already mounted (e.g. clicking JOIN on another card).
@@ -510,15 +562,23 @@ export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
     if (lockedTurns != null) setTurns(lockedTurns);
   }, [lockedTurns]);
 
+  const handleSimulatedChange = (s: boolean) => {
+    // Guard: only allow switching to simulated when the feature is enabled.
+    if (s && !SIM_MARKET_ENABLED) return;
+    setSimulated(s);
+  };
+
   return (
     <div className="card pad-24">
       <QueueInner
         fighter={fighter}
         turns={turns}
+        simulated={SIM_MARKET_ENABLED ? simulated : false}
         locked={lockedTurns != null}
         onMatchFound={onMatchFound}
         onFighterChange={setFighter}
         onTurnsChange={setTurns}
+        onSimulatedChange={handleSimulatedChange}
       />
     </div>
   );

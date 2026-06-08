@@ -38,6 +38,25 @@ export const POOLS = [
   { key: 'SOMI', address: '0x259fD6559214dd5aD3752322426eA9F9fABEFff4' as `0x${string}`, bit: 0x04, decimals: 18 },
 ] as const;
 
+/**
+ * Placeholder pool addresses for the simulated market.
+ * Same bit/decimals layout as POOLS; addresses are zero until the simulated
+ * pools are deployed — flip SIM_MARKET_ENABLED and fill addresses at that time.
+ */
+export const SIM_POOLS = [
+  { key: 'WETH', address: '0x0000000000000000000000000000000000000000' as `0x${string}`, bit: 0x01, decimals: 18 },
+  { key: 'WBTC', address: '0x0000000000000000000000000000000000000000' as `0x${string}`, bit: 0x02, decimals: 8 },
+  { key: 'SOMI', address: '0x0000000000000000000000000000000000000000' as `0x${string}`, bit: 0x04, decimals: 18 },
+] as const;
+
+/** Flip to true after the simulated pools are deployed and addresses filled in SIM_POOLS. */
+export const SIM_MARKET_ENABLED = false;
+
+/** Returns the correct pool list for a given duel: real market or simulated. */
+export function POOLS_FOR(simulated: boolean): typeof POOLS | typeof SIM_POOLS {
+  return simulated ? SIM_POOLS : POOLS;
+}
+
 /** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
 export const FIGHTER_ACTIONS = [
   'HOLD', 'BUY WBTC', 'SELL WBTC', 'BUY WETH', 'SELL WETH', 'BUY SOMI', 'SELL SOMI',
@@ -63,6 +82,8 @@ export interface DuelData {
   initialUsdsoPerFighter: bigint;
   fundsRecovered: boolean;
   winnerSlot: number;
+  /** True when the duel runs on the simulated market (index 12 in duels() tuple). */
+  simulated: boolean;
 }
 
 export interface FighterData {
@@ -90,15 +111,16 @@ export interface OddsData {
 export const ABIS = {
   Arena: parseAbi([
     // Solidity OMITS the uint8[2] lastAction array from the struct getter, so the
-    // tuple is 12 fields: ...initialUsdsoPerFighter[9], fundsRecovered[10], winnerSlot[11].
-    'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, bool fundsRecovered, uint8 winnerSlot)',
+    // tuple is 13 fields: ...initialUsdsoPerFighter[9], fundsRecovered[10], winnerSlot[11], simulated[12].
+    'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, bool fundsRecovered, uint8 winnerSlot, bool simulated)',
     'function fighterBalances(address pool, uint256 duelId, uint8 fighterId) view returns (uint256 baseTokenAmount, uint256 quoteTokenAmount)',
     'function activeDuelId() view returns (uint256)',
     'function minDepositFor(uint16 turns) view returns (uint256)',
+    'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
     'function nextDuelId() view returns (uint256)',
     'function platformFee(uint16 turns) view returns (uint256)',
     'function TURN_INTERVAL_BLOCKS() view returns (uint256)',
-    'function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns) external returns (uint256)',
+    'function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated) external returns (uint256)',
     'function finalizeDuel(uint256 duelId) external',
     'function recoverFunds(uint256 duelId) external',
     'event DuelStarted(uint256 indexed duelId, uint8 indexed fighterA, uint8 indexed fighterB, address creator, uint16 turns, uint8 poolMask, uint256 startBlock)',
@@ -158,12 +180,12 @@ export const ABIS = {
   ]),
 
   Matchmaker: parseAbi([
-    'function queue(uint8 fighter, uint16 turns) external',
-    'function cancelQueue(uint16 turns) external',
-    'function triggerPendingMatch() external',
+    'function queue(uint8 fighter, uint16 turns, bool simulated) external',
+    'function cancelQueue(uint16 turns, bool simulated) external',
+    'function triggerPendingMatch(uint16 turns, bool simulated) external',
     'function claimWinnings(uint256 duelId) external',
-    'function halfDeposit(uint16 turns) view returns (uint256)',
-    'function getSlot(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
+    'function halfDeposit(uint16 turns, bool simulated) view returns (uint256)',
+    'function getSlot(uint16 turns, bool simulated) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
     'function arenaFree() view returns (bool)',
     'function slots(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
     'function pending() view returns (address playerA, address playerB, uint8 fighterA, uint8 fighterB, uint16 turns, uint256 totalPot, bool exists)',

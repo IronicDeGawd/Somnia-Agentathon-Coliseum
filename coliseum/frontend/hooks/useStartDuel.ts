@@ -9,7 +9,7 @@ const DUEL_STARTED_EVENT = parseAbiItem(
   'event DuelStarted(uint256 indexed duelId, uint8 fighterA, uint8 fighterB, address indexed creator, uint16 turns, uint8 poolMask, uint256 startBlock)'
 );
 
-export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 9 | 15) {
+export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 9 | 15, simulated = false) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
@@ -86,7 +86,7 @@ export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 
         address: CONTRACT_ADDRESSES.Arena,
         abi: ABIS.Arena,
         functionName: 'startDuel',
-        args: [fighterA, fighterB, turns as unknown as number],
+        args: [fighterA, fighterB, turns as unknown as number, simulated],
         gasPrice,
       });
 
@@ -118,7 +118,7 @@ export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 
     } finally {
       setIsPending(false);
     }
-  }, [address, allowance, fighterA, fighterB, turns, totalRequired, publicClient, writeContractAsync, refetchAllowance]);
+  }, [address, allowance, fighterA, fighterB, turns, simulated, totalRequired, publicClient, writeContractAsync, refetchAllowance]);
 
   return {
     startDuel,
