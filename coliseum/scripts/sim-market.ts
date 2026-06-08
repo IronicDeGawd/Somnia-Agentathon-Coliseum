@@ -26,7 +26,8 @@
 import hre from "hardhat";
 import fs from "fs";
 import path from "path";
-import { parseEther, formatEther } from "viem";
+import { parseEther, formatEther, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 // ── ABI (only the three write functions + getMarkPrice we need) ──────────────
 
@@ -84,7 +85,7 @@ function nextPrice(current: bigint): bigint {
 /** Update one pool: setMarkPrice + setBookLevel(bid) + setBookLevel(ask). */
 async function updatePool(opts: {
   pub:    Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
-  wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
+  wallet: { account: { address: `0x${string}` }; writeContract: (args: any) => Promise<`0x${string}`> };
   addr:   `0x${string}`;
   label:  string;
   price:  bigint;
@@ -162,17 +163,28 @@ async function main() {
   const tickMs = parseInt(process.env.SIM_TICK_MS ?? "5000", 10);
   log(`  tick interval: ${tickMs}ms`);
 
-  // Chain + wallet setup (same pattern as seeder-bot / watcher-bot)
+  // Chain + wallet setup. Prefer a dedicated injector key (SIM_MARKET_PRIVATE_KEY)
+  // so this price feed — which fires ~9 txs every tick — never contends with the
+  // watcher (which referees duels via turn() on the deployer key) for nonces.
+  // Falls back to the deployer wallet when the injector key is unset.
   const pub = await hre.viem.getPublicClient();
-  const walletClients = await hre.viem.getWalletClients();
-  if (!walletClients.length) {
-    log("ERROR: No wallet clients — set PRIVATE_KEY in .env");
-    process.exitCode = 1;
-    return;
+  let wallet: { account: { address: `0x${string}` }; writeContract: (args: any) => Promise<`0x${string}`> };
+  const injectorPk = process.env.SIM_MARKET_PRIVATE_KEY;
+  if (injectorPk) {
+    const rpcUrl = (hre.network.config as { url?: string }).url ?? "https://api.infra.testnet.somnia.network";
+    const account = privateKeyToAccount(injectorPk as `0x${string}`);
+    wallet = createWalletClient({ account, chain: pub.chain, transport: http(rpcUrl) }) as typeof wallet;
+  } else {
+    const walletClients = await hre.viem.getWalletClients();
+    if (!walletClients.length) {
+      log("ERROR: No wallet clients — set SIM_MARKET_PRIVATE_KEY or PRIVATE_KEY in .env");
+      process.exitCode = 1;
+      return;
+    }
+    wallet = walletClients[0];
   }
-  const wallet = walletClients[0];
-  const deployer = wallet.account.address;
-  log(`  deployer: ${deployer}`);
+  const injector = wallet.account.address;
+  log(`  injector: ${injector}${injectorPk ? " (dedicated key)" : " (deployer fallback)"}`);
 
   // Seed current prices from the chain so we continue where we left off
   const readMark = async (addr: `0x${string}`): Promise<bigint> =>
