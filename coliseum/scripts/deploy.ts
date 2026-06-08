@@ -215,8 +215,109 @@ async function main() {
     console.log("  Pools funded.");
   }
 
-  // 6. Write final deployment manifest
+  // 6. Optional simulated-market deployment (SIM_MARKET=1)
+  let simAddresses: {
+    simPoolWeth: `0x${string}`;
+    simPoolWbtc: `0x${string}`;
+    simPoolSomi: `0x${string}`;
+  } | undefined;
+
+  if (process.env.SIM_MARKET === "1") {
+    console.log("\nSIM_MARKET=1 — deploying simulated pool set...");
+
+    const simWeth = await hre.viem.deployContract("MockSpotPool");
+    const simWbtc = await hre.viem.deployContract("MockSpotPool");
+    const simSomi = await hre.viem.deployContract("MockSpotPool");
+    console.log(`  sim WETH pool: ${simWeth.address}`);
+    console.log(`  sim WBTC pool: ${simWbtc.address}`);
+    console.log(`  sim SOMI pool: ${simSomi.address}`);
+
+    // Initial mark prices (18-decimal USDso-quoted). The injector will update
+    // these continuously; these are just sane starting points.
+    const SIM_PRICE_WETH = parseEther("3000");   // ~$3000
+    const SIM_PRICE_WBTC = parseEther("65000");  // ~$65000
+    const SIM_PRICE_SOMI = parseEther("1");      // ~$1
+
+    // Book quantity — large enough that fighter orders of minQuantity always fill.
+    const BOOK_QTY = parseEther("1000"); // 1e21
+
+    // minQuantity = 1e15 (0.001 base token, 18-dec). At these prices the cost is:
+    //   WETH: 0.001 * 3000 = 3 USDso   WBTC: 0.001 * 65000 = 65 USDso (will need larger seed)
+    //   SOMI: 0.001 * 1    = 0.001 USDso
+    // Use address(0) as nominal base — MockSpotPool never pulls base tokens; Arena
+    // only transfers USDso (the quote). So base identity doesn't matter for fills.
+    const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as const;
+    const TICK_SIZE   = 1_000_000_000_000_000n;  // 1e15
+    const MIN_QTY    = 1_000_000_000_000_000n;  // 1e15
+    const LOT_SIZE   = 1n;
+
+    async function initSimPool(
+      pool: typeof simWeth,
+      price: bigint,
+      label: string,
+    ) {
+      // setPoolParams(base, quote=USDso, tickSize, minQuantity, lotSize)
+      let tx = await pool.write.setPoolParams([
+        ZERO_ADDR,
+        addresses.usdso,
+        TICK_SIZE,
+        MIN_QTY,
+        LOT_SIZE,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash: tx });
+
+      tx = await pool.write.setMarkPrice([price]);
+      await publicClient.waitForTransactionReceipt({ hash: tx });
+
+      // Bid: price * 0.999, Ask: price * 1.001 (0.1% spread each side)
+      const bid = (price * 999n) / 1000n;
+      const ask = (price * 1001n) / 1000n;
+      tx = await pool.write.setBookLevel([true, bid, BOOK_QTY]);
+      await publicClient.waitForTransactionReceipt({ hash: tx });
+      tx = await pool.write.setBookLevel([false, ask, BOOK_QTY]);
+      await publicClient.waitForTransactionReceipt({ hash: tx });
+
+      console.log(`  ${label}: mark=${formatEther(price)} bid=${formatEther(bid)} ask=${formatEther(ask)}`);
+    }
+
+    await initSimPool(simWeth, SIM_PRICE_WETH, "WETH");
+    await initSimPool(simWbtc, SIM_PRICE_WBTC, "WBTC");
+    await initSimPool(simSomi, SIM_PRICE_SOMI, "SOMI");
+
+    // Register the sim pool set with the Arena
+    const simDecimalsTx = await arena.write.setSimPools([
+      simWeth.address,
+      simWbtc.address,
+      simSomi.address,
+      [18, 18, 18],
+    ]);
+    await publicClient.waitForTransactionReceipt({ hash: simDecimalsTx });
+    console.log("  setSimPools done.");
+
+    // Fund the sim pools with USDso
+    const simPerPool = parseEther(process.env.SIM_USDSO_PER_POOL ?? "7");
+    const simTotal = simPerPool * 3n;
+    const usdsoContract = await hre.viem.getContractAt("MockERC20", addresses.usdso);
+    const simApproveTx = await usdsoContract.write.approve([arena.address, simTotal]);
+    await publicClient.waitForTransactionReceipt({ hash: simApproveTx });
+    const simFundTx = await arena.write.fundSimPools([simPerPool]);
+    await publicClient.waitForTransactionReceipt({ hash: simFundTx });
+    console.log(`  fundSimPools: ${formatEther(simPerPool)} USDso each (${formatEther(simTotal)} total).`);
+
+    simAddresses = {
+      simPoolWeth: simWeth.address as `0x${string}`,
+      simPoolWbtc: simWbtc.address as `0x${string}`,
+      simPoolSomi: simSomi.address as `0x${string}`,
+    };
+  }
+
+  // 7. Write final deployment manifest
   const block = await publicClient.getBlockNumber();
+
+  const externalWithSim = simAddresses
+    ? { ...addresses, ...simAddresses }
+    : addresses;
+
   const manifest = {
     network,
     block: block.toString(),
@@ -231,13 +332,13 @@ async function main() {
       Bookmaker: { address: bookmaker.address },
       Matchmaker: { address: matchmaker.address },
     },
-    external: addresses,
+    external: externalWithSim,
   };
 
   writeManifest(manifest);
   console.log(`\nDeployment manifest written to deployments/${network}.json`);
 
-  // 7. Summary table
+  // 8. Summary table
   console.log("\n┌────────────────────┬────────────────────────────────────────────┐");
   console.log("│ Contract           │ Address                                    │");
   console.log("├────────────────────┼────────────────────────────────────────────┤");
@@ -245,6 +346,12 @@ async function main() {
   console.log(`│ Arena              │ ${arena.address} │`);
   console.log(`│ Bookmaker          │ ${bookmaker.address} │`);
   console.log(`│ Matchmaker         │ ${matchmaker.address} │`);
+  if (simAddresses) {
+    console.log("├────────────────────┼────────────────────────────────────────────┤");
+    console.log(`│ sim WETH pool      │ ${simAddresses.simPoolWeth} │`);
+    console.log(`│ sim WBTC pool      │ ${simAddresses.simPoolWbtc} │`);
+    console.log(`│ sim SOMI pool      │ ${simAddresses.simPoolSomi} │`);
+  }
   console.log("└────────────────────┴────────────────────────────────────────────┘");
   console.log("\nDeploy complete.");
 }
