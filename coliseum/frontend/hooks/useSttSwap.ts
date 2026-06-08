@@ -190,7 +190,7 @@ export function useSttSwap() {
         functionName: 'fallbackSwap',
         value: sellAmount,
         gasPrice,
-        gas: BigInt(100000),
+        gas: BigInt(100000), // measured ~60K via eth_estimateGas
       });
       setResult((r) => ({ ...r, fallbackHash, path: 'fallback' }));
       setStage('fallback-swapping');
@@ -342,7 +342,7 @@ export function useSttSwap() {
             functionName: 'withdraw',
             args: [CONTRACT_ADDRESSES.USDso, vaultBal],
             gasPrice,
-            gas: BigInt(100000),
+            gas: BigInt(300000), // pool overhead + USDso transfer() ~95K measured; 300K gives safe headroom
           });
           setResult((r) => ({ ...r, withdrawHash }));
           setStage('withdrawing');

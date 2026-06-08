@@ -1,14 +1,19 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { formatUnits } from 'viem';
-import { useWatchContractEvent, useAccount, useChainId, useSwitchChain } from 'wagmi';
+import { formatUnits, parseAbiItem } from 'viem';
+import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
 import { useQueueState } from '@/hooks/useQueueState';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
-import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES } from '@/lib/contracts';
+import { getWsClient } from '@/lib/wsClient';
 import { somniaTestnet } from '@/lib/chain';
+
+const MATCH_STARTED_EVENT = parseAbiItem(
+  'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
+);
 
 const TIER_POOLS: Record<number, string[]> = {
   3:  ['SOMI'],
@@ -56,7 +61,7 @@ function QueueInner({
 
   const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
 
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
   const { openConnectModal } = useConnectModal();
   const chainId = useChainId();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
@@ -72,23 +77,42 @@ function QueueInner({
     }
   }, [isSuccess, isPending]);
 
-  // Watch MatchStarted on the Matchmaker contract
-  useWatchContractEvent({
-    address: CONTRACT_ADDRESSES.Matchmaker,
-    abi: ABIS.Matchmaker,
-    eventName: 'MatchStarted',
-    onLogs(logs) {
-      for (const log of logs) {
-        const args = (log as unknown as { args?: { duelId?: bigint } }).args;
-        if (args?.duelId !== undefined) {
-          setMatchedDuelId(args.duelId);
-          setQueued(false);
-          onMatchFound?.(args.duelId);
-          refetchSlots();
-        }
-      }
-    },
-  });
+  // Stream MatchStarted over the dedicated WS client (eth_subscribe). wagmi's
+  // useWatchContractEvent never fired here — the HTTP transport can't subscribe —
+  // so a matched player had to manually reload to leave the queue. Only redirect
+  // when *this* wallet is one of the two matched players.
+  useEffect(() => {
+    if (!queued || !address) return;
+    const client = getWsClient();
+    if (!client) return;
+    const me = address.toLowerCase();
+    let unwatch: (() => void) | undefined;
+    try {
+      unwatch = client.watchEvent({
+        address: CONTRACT_ADDRESSES.Matchmaker,
+        event: MATCH_STARTED_EVENT,
+        onLogs(logs) {
+          for (const log of logs) {
+            const args = (log as unknown as {
+              args?: { duelId?: bigint; playerA?: `0x${string}`; playerB?: `0x${string}` };
+            }).args;
+            if (args?.duelId === undefined) continue;
+            const isMine =
+              args.playerA?.toLowerCase() === me || args.playerB?.toLowerCase() === me;
+            if (!isMine) continue;
+            setMatchedDuelId(args.duelId);
+            setQueued(false);
+            onMatchFound?.(args.duelId);
+            refetchSlots();
+          }
+        },
+        onError: () => {},
+      });
+    } catch {
+      // WS unavailable — manual reload still surfaces the match.
+    }
+    return () => { try { unwatch?.(); } catch { /* already torn down */ } };
+  }, [queued, address, onMatchFound, refetchSlots]);
 
   const halfDepositFormatted = halfDeposit !== null
     ? Number(formatUnits(halfDeposit, 18)).toFixed(2)

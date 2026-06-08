@@ -33,6 +33,7 @@ export function useDuelTranscript(
   duelId: bigint,
   startBlock?: bigint,
   turns?: number,
+  lastTurnBlock?: bigint,
 ): { entries: TranscriptEntry[]; isLoading: boolean } {
   const publicClient = usePublicClient();
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -44,7 +45,7 @@ export function useDuelTranscript(
     setLoading(true);
     void (async () => {
       const fromBlock = startBlock ?? BOOKMAKER_DEPLOY_BLOCK;
-      const toBlock = duelToBlock(fromBlock, turns ?? 3);
+      const toBlock = duelToBlock(fromBlock, turns ?? 3, lastTurnBlock);
       const [moves, fails] = await Promise.all([
         getLogsChunked(publicClient, { address: CONTRACT_ADDRESSES.Arena, event: FIGHTER_MOVE_EVENT, args: { duelId }, fromBlock, toBlock }),
         getLogsChunked(publicClient, { address: CONTRACT_ADDRESSES.Arena, event: FIGHTER_MOVE_FAILED_EVENT, args: { duelId }, fromBlock, toBlock }),
@@ -84,7 +85,7 @@ export function useDuelTranscript(
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [publicClient, duelId, startBlock, turns]);
+  }, [publicClient, duelId, startBlock, turns, lastTurnBlock]);
 
   return { entries, isLoading };
 }

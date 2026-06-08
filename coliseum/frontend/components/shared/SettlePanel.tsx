@@ -37,7 +37,7 @@ function formatUsdso(raw: bigint, decimals = 2): string {
 
 // ─── Matchmaker Claim Section ─────────────────────────────────────────────────
 
-function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
+function MatchmakerClaimSection({ duelId, winnerSlot }: { duelId: bigint; winnerSlot: number | null }) {
   const { address, chainId } = useAccount();
 
   const { data: matchData, isLoading } = useReadContract({
@@ -54,13 +54,13 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
   if (isLoading || !matchData) {
     return (
       <div className="col gap-8">
-        <div className="eyebrow t-dim">Your Winnings</div>
+        <div className="eyebrow t-dim">Your Result</div>
         <div className="t-dim t-sm">Loading match data…</div>
       </div>
     );
   }
 
-  const [playerA, playerB, totalPot, recovered, settledA, settledB] = matchData as [
+  const [playerA, playerB, totalPot, , settledA, settledB] = matchData as [
     `0x${string}`,
     `0x${string}`,
     bigint,
@@ -76,30 +76,64 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
   if (!isParticipant) return null;
 
   const alreadyClaimed = isPlayerA ? settledA : settledB;
+  // This section only renders for a resolved duel (parent gates on isResolved).
+  const userIsWinner =
+    (winnerSlot === 0 && isPlayerA) || (winnerSlot === 1 && isPlayerB);
 
   async function handleClaim() {
-    if (!publicClient) return;
+    if (!publicClient || !address) return;
     if (chainId !== somniaTestnet.id) {
       await switchChainAsync({ chainId: somniaTestnet.id });
     }
     const gasPrice = await publicClient.getGasPrice();
+    // The first claimer triggers Arena.recoverFunds (heavy dreamDEX withdrawal) —
+    // a flat 300k cap out-of-gas reverts it. Estimate with headroom, floor 5M,
+    // fall back to 12M if Somnia's estimator is momentarily unavailable.
+    let gas = BigInt(12000000);
+    try {
+      const est = await publicClient.estimateContractGas({
+        address: CONTRACT_ADDRESSES.Matchmaker,
+        abi: ABIS.Matchmaker,
+        functionName: 'claimWinnings',
+        args: [duelId],
+        account: address,
+      });
+      const buffered = (est * BigInt(15)) / BigInt(10);
+      gas = buffered > BigInt(5000000) ? buffered : BigInt(5000000);
+    } catch { /* keep fallback */ }
     await writeContractAsync({
       address: CONTRACT_ADDRESSES.Matchmaker,
       abi: ABIS.Matchmaker,
       functionName: 'claimWinnings',
       args: [duelId],
       gasPrice,
-      gas: BigInt(300000),
+      gas,
     });
   }
 
   return (
     <div className="col gap-12">
-      <div className="eyebrow t-dim">Your Winnings</div>
+      <div className="eyebrow t-dim">Your Result</div>
 
-      <div className="panel pad-16 col gap-8">
+      <div
+        className="panel pad-16 col gap-8"
+        style={{
+          borderColor: userIsWinner ? 'var(--win)' : 'var(--loss)',
+          borderLeftWidth: 3,
+          borderLeftStyle: 'solid',
+        }}
+      >
         <div className="row jc-sb ai-c">
-          <span className="t-sm t-dim">Your role</span>
+          <span
+            className="t-display t-up"
+            style={{
+              color: userIsWinner ? 'var(--win)' : 'var(--loss)',
+              letterSpacing: '0.12em',
+              fontSize: 16,
+            }}
+          >
+            {userIsWinner ? '★ YOU WON' : 'YOU LOST'}
+          </span>
           <span
             className="t-sm t-mono"
             style={{ color: isPlayerA ? 'var(--fighter-a)' : 'var(--fighter-b)' }}
@@ -108,37 +142,39 @@ function MatchmakerClaimSection({ duelId }: { duelId: bigint }) {
           </span>
         </div>
         <div className="row jc-sb ai-c">
-          <span className="t-sm t-dim">Total pot</span>
+          <span className="t-sm t-dim">{userIsWinner ? 'Pot to claim' : 'Total pot'}</span>
           <span className="t-sm t-mono t-num">{formatUsdso(totalPot)} USDso</span>
         </div>
-        {!recovered && (
-          <p className="t-xs t-faint" style={{ margin: 0 }}>
-            Winnings will be claimable once the Arena resolves the duel.
-          </p>
-        )}
       </div>
 
-      {recovered && !alreadyClaimed && (
-        <button
-          className="bk bk-primary"
-          onClick={handleClaim}
-          disabled={isPending}
-          style={{ width: '100%' }}
-        >
-          {isPending ? 'Claiming…' : 'CLAIM WINNINGS'}
-        </button>
+      {/* Winner: claim triggers fund recovery + payout. */}
+      {userIsWinner && !alreadyClaimed && (
+        <>
+          <button
+            className="bk bk-primary"
+            onClick={handleClaim}
+            disabled={isPending}
+            style={{ width: '100%' }}
+          >
+            {isPending ? 'Claiming…' : 'CLAIM WINNINGS'}
+          </button>
+          <p className="t-xs t-faint" style={{ margin: 0 }}>
+            Claiming pulls the pot from the Arena and sends it to your wallet.
+          </p>
+        </>
       )}
 
-      {alreadyClaimed && (
+      {userIsWinner && alreadyClaimed && (
         <div className="panel pad-16 row ai-c gap-8" style={{ borderColor: 'var(--win)' }}>
           <span className="dot dot-win" />
-          <span className="t-sm text-win">Already claimed</span>
+          <span className="t-sm text-win">Winnings claimed — pot sent to your wallet</span>
         </div>
       )}
 
-      {recovered && !alreadyClaimed && (
+      {/* Loser: nothing to claim. */}
+      {!userIsWinner && (
         <p className="t-xs t-faint" style={{ margin: 0 }}>
-          Winner takes the full pot minus platform fee.
+          The pot goes to the winner. Better luck in the next bout.
         </p>
       )}
     </div>
@@ -168,7 +204,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false,
           event: DUEL_RESOLVED_EVENT,
           args: { duelId },
           fromBlock,
-          toBlock: duelToBlock(fromBlock, dTurns),
+          toBlock: duelToBlock(fromBlock, dTurns, duel?.lastTurnBlock),
         }) as { args: { valueA?: bigint; valueB?: bigint } }[];
         if (cancelled || logs.length === 0) return;
         const last = logs[logs.length - 1];
@@ -180,7 +216,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false,
       }
     })();
     return () => { cancelled = true; };
-  }, [publicClient, duelId, duel?.startBlock]);
+  }, [publicClient, duelId, duel?.startBlock, duel?.lastTurnBlock]);
 
   const {
     settleBets,
@@ -306,7 +342,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false,
       </div>
 
       {/* ── Matchmaker PvP Claim Section ───────────────────────────────────────── */}
-      {matchmakerDuel && <MatchmakerClaimSection duelId={duelId} />}
+      {matchmakerDuel && <MatchmakerClaimSection duelId={duelId} winnerSlot={winnerSlotNum} />}
 
       {/* ── User Bet Section ───────────────────────────────────────────────────── */}
       {userBet && (

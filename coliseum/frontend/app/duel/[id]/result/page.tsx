@@ -56,7 +56,8 @@ export default function ResultPage() {
   // ── Move-by-move transcript (FighterMove / FighterMoveFailed events) ───────
   const duelStartBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : undefined;
   const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
-  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns);
+  const duelLastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
+  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock);
 
   const fighterNameOf = (fid: number): string => {
     const v = FIGHTER_VISUAL_MAP[fid];
@@ -89,12 +90,13 @@ export default function ResultPage() {
       try {
         const fromBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : BOOKMAKER_DEPLOY_BLOCK;
         const turns = duelRaw ? Number(duelRaw[6]) : 3;
+        const lastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
         const logs = await getLogsChunked(publicClient, {
           address: CONTRACT_ADDRESSES.Arena,
           event: DUEL_RESOLVED_EVENT,
           args: { duelId },
           fromBlock,
-          toBlock: duelToBlock(fromBlock, turns),
+          toBlock: duelToBlock(fromBlock, turns, lastTurnBlock),
         }) as { args: { valueA?: bigint; valueB?: bigint } }[];
         if (cancelled || logs.length === 0) return;
         // Take the latest DuelResolved log for this duel

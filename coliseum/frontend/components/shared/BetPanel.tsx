@@ -18,6 +18,9 @@ interface BetPanelProps {
   totalBetsB: bigint;
   isActive: boolean;
   isLoading: boolean;
+  // True when the connected wallet is one of the two fighters' players — they
+  // can't bet on their own duel.
+  isParticipant?: boolean;
 }
 
 type FighterSlot = 0 | 1;
@@ -72,6 +75,7 @@ export default function BetPanel({
   totalBetsB,
   isActive,
   isLoading: duelLoading,
+  isParticipant = false,
 }: BetPanelProps) {
   const { address } = useAccount();
 
@@ -125,7 +129,7 @@ export default function BetPanel({
 
   // ── Guard flags ─────────────────────────────────────────────────────────────
   const walletConnected = !!address;
-  const betsOpen        = isActive && walletConnected && !existingBet;
+  const betsOpen        = isActive && walletConnected && !existingBet && !isParticipant;
   const canPlaceBet     = betsOpen && selectedSlot !== null && pendingAmount > BigInt(0) && !isPending;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -208,6 +212,17 @@ export default function BetPanel({
         </div>
       )}
 
+      {/* ── Duelist can't bet on their own fight ────────────────────────────── */}
+      {walletConnected && isParticipant && (
+        <div
+          className="panel pad-16 col gap-4"
+          style={{ textAlign: 'center', borderColor: 'var(--gold)' }}
+        >
+          <span className="t-sm text-gold">You're a fighter in this duel</span>
+          <span className="t-xs t-dim">Players can't bet on their own fight.</span>
+        </div>
+      )}
+
       {/* ── Existing bet receipt ────────────────────────────────────────────── */}
       {walletConnected && existingBet && (
         <div
@@ -231,7 +246,7 @@ export default function BetPanel({
       )}
 
       {/* ── Betting form ────────────────────────────────────────────────────── */}
-      {walletConnected && !existingBet && (
+      {walletConnected && !existingBet && !isParticipant && (
         <div className="col gap-16">
 
           {/* Fighter selection */}

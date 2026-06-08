@@ -1,12 +1,26 @@
 'use client';
 
-import { useCallback } from 'react';
-import { useReadContracts, useWatchContractEvent } from 'wagmi';
-import { zeroAddress, type Address } from 'viem';
+import { useCallback, useEffect } from 'react';
+import { useReadContracts } from 'wagmi';
+import { zeroAddress, parseAbiItem, type Address } from 'viem';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 import { config } from '@/lib/chain';
+import { getWsClient } from '@/lib/wsClient';
 
 const MATCHMAKER_ADDRESS = CONTRACT_ADDRESSES.Matchmaker as Address;
+
+// Queue lifecycle events streamed over the dedicated WebSocket (eth_subscribe).
+// wagmi's useWatchContractEvent is silent here because the app's HTTP transport
+// can't subscribe — so the queue board only refreshed on manual reload.
+const QUEUED_EVENT = parseAbiItem(
+  'event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit)',
+);
+const QUEUE_CANCELLED_EVENT = parseAbiItem(
+  'event QueueCancelled(address indexed player, uint16 turns, uint256 refund)',
+);
+const MATCH_STARTED_EVENT = parseAbiItem(
+  'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
+);
 
 export type QueueTier = 3 | 6 | 9 | 15;
 
@@ -62,30 +76,29 @@ export function useQueueState(): QueueState {
     wagmiRefetch();
   }, [wagmiRefetch]);
 
-  // Watch all three events and refetch on any of them
-  useWatchContractEvent({
-    address: MATCHMAKER_ADDRESS,
-    abi: ABIS.Matchmaker,
-    eventName: 'Queued',
-    onLogs: refetch,
-    config,
-  });
-
-  useWatchContractEvent({
-    address: MATCHMAKER_ADDRESS,
-    abi: ABIS.Matchmaker,
-    eventName: 'QueueCancelled',
-    onLogs: refetch,
-    config,
-  });
-
-  useWatchContractEvent({
-    address: MATCHMAKER_ADDRESS,
-    abi: ABIS.Matchmaker,
-    eventName: 'MatchStarted',
-    onLogs: refetch,
-    config,
-  });
+  // Stream all three queue events over the WS client and refetch on any of them.
+  useEffect(() => {
+    const client = getWsClient();
+    if (!client) return;
+    const unwatchers: (() => void)[] = [];
+    try {
+      for (const event of [QUEUED_EVENT, QUEUE_CANCELLED_EVENT, MATCH_STARTED_EVENT]) {
+        unwatchers.push(
+          client.watchEvent({
+            address: MATCHMAKER_ADDRESS,
+            event,
+            onLogs: () => refetch(),
+            onError: () => {},
+          }),
+        );
+      }
+    } catch {
+      // WS unavailable — manual refetch / reload still works.
+    }
+    return () => {
+      for (const u of unwatchers) { try { u(); } catch { /* already torn down */ } }
+    };
+  }, [refetch]);
 
   // Parse slot results (indices 0-3)
   const slots = {} as Record<QueueTier, QueueSlot | null>;

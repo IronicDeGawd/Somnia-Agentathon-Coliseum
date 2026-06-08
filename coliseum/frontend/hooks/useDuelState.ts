@@ -20,6 +20,7 @@ export interface DuelData {
   fighterB: number;
   creator: `0x${string}`;
   startBlock: bigint;
+  lastTurnBlock: bigint;
   turns: number;
   poolMask: number;
   currentTurn: number;
@@ -215,6 +216,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
         fighterB:       Number(duelRaw[1]),
         creator:        duelRaw[2] as unknown as `0x${string}`,
         startBlock:     duelRaw[3] as unknown as bigint,
+        lastTurnBlock:  duelRaw[4] as unknown as bigint,
         turns:          Number(duelRaw[6]),
         poolMask:       Number(duelRaw[7]),
         currentTurn:    Number(duelRaw[5]),   // completedCallbacks

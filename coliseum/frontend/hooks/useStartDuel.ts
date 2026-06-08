@@ -66,12 +66,17 @@ export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 
 
     try {
       const currentAllowance = (allowance as bigint | undefined) ?? BigInt(0);
+      // Somnia Shannon testnet only accepts legacy (type-0) transactions.
+      const gasPrice = publicClient ? await publicClient.getGasPrice() : undefined;
+
       if (currentAllowance < totalRequired) {
         const approveTxHash = await writeContractAsync({
           address: CONTRACT_ADDRESSES.USDso,
           abi: ABIS.USDso,
           functionName: 'approve',
           args: [CONTRACT_ADDRESSES.Arena, totalRequired],
+          gasPrice,
+          gas: BigInt(1500000),
         });
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
         await refetchAllowance();
@@ -82,6 +87,7 @@ export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 
         abi: ABIS.Arena,
         functionName: 'startDuel',
         args: [fighterA, fighterB, turns as unknown as number],
+        gasPrice,
       });
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
