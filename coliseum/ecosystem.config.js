@@ -113,5 +113,26 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: "coliseum-housematch",
+      cwd: "./",
+      script: "pnpm",
+      args: "exec hardhat run scripts/house-match-bot.ts --network somnia",
+      // Fallback "house" opponent: when a player is waiting alone in the
+      // Matchmaker queue, fills the opposing slot so the duel starts. Runs on
+      // HOUSE_PRIVATE_KEY (from coliseum/.env) — its own wallet, so it never
+      // contends with the deployer-key watcher for nonces. Covers tier 3 + 6
+      // (real tiers 9/15 cost 91/151 USDso/side — beyond a demo bankroll, so
+      // they're skipped). Tuning: HOUSE_MARKETS, HOUSE_TIERS, HOUSE_GRACE_S.
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 5000,
+      min_uptime: "60s",
+      kill_timeout: 10000,
+      out_file: "./logs/housematch.out.log",
+      error_file: "./logs/housematch.err.log",
+      merge_logs: true,
+      time: true,
+    },
   ],
 };
