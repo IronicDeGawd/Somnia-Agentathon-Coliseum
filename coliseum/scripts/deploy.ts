@@ -114,8 +114,18 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   const outFile = path.join(outDir, `${network}.json`);
 
-  function writeManifest(partial: object) {
-    const json = JSON.stringify(partial, null, 2);
+  // Merge over any existing manifest so contracts deployed by SEPARATE scripts
+  // (SwapFallback, DuelHistory) are preserved across a core redeploy — the
+  // watcher reads SwapFallback from here and crashes if it goes missing.
+  function writeManifest(partial: Record<string, any>) {
+    let existing: Record<string, any> = {};
+    try { existing = JSON.parse(fs.readFileSync(outFile, "utf8")); } catch { /* fresh */ }
+    const merged = {
+      ...existing,
+      ...partial,
+      contracts: { ...(existing.contracts ?? {}), ...((partial as any).contracts ?? {}) },
+    };
+    const json = JSON.stringify(merged, null, 2);
     try {
       fs.writeFileSync(outFile, json);
     } catch (err) {
