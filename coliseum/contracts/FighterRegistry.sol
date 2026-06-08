@@ -16,6 +16,7 @@ contract FighterRegistry {
     error FighterOutOfBounds(uint8 id);
     error StatOutOfRange(uint8 id, string stat, uint8 value);
     error NotOwner();
+    error ZeroAddress();
 
     mapping(uint8 => Fighter) public fighters;
     uint8 public constant FIGHTER_COUNT = 6;
@@ -64,6 +65,7 @@ contract FighterRegistry {
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
         owner = newOwner;
     }
 

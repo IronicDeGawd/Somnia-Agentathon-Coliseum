@@ -204,6 +204,12 @@ library ArenaUtils {
         } else {
             trend = " (flat)";
         }
-        return string.concat(" price ", uint256ToString(cur / 1e18), trend);
+        // Show whole.fraction (4 dp) so sub-1-USDso pools (e.g. SOMI ~0.17) are
+        // not truncated to "price 0".
+        return string.concat(
+            " price ",
+            uint256ToString(cur / 1e18), ".", uint256ToString((cur % 1e18) * 10000 / 1e18),
+            trend
+        );
     }
 }

@@ -168,7 +168,7 @@ async function main() {
   console.log("Deploying Matchmaker...");
   const matchmaker = await hre.viem.deployContract(
     "Matchmaker",
-    [arena.address, addresses.usdso]
+    [arena.address, addresses.usdso, registry.address]
   );
   console.log(`  Matchmaker:      ${matchmaker.address}`);
 
