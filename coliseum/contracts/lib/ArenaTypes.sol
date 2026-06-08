@@ -48,6 +48,9 @@ library ArenaTypes {
         uint8[2]    lastAction;       // last FighterAction per fighter (0=Hold initially)
         bool        fundsRecovered;   // true once creator has called recoverFunds
         uint8       winnerSlot;       // 0=fighterA slot won, 1=fighterB slot won, 255=unset
+        // Appended LAST so the duels() auto-getter only GAINS a trailing field
+        // (index 12) — every existing 0..11 tuple reader keeps working untouched.
+        bool        simulated;        // true = duel runs on the simulated mock pools
     }
 
     struct PoolBalance {

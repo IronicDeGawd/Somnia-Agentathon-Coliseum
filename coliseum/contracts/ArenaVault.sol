@@ -39,6 +39,12 @@ abstract contract ArenaVault {
     address public immutable POOL_WETH;
     address public immutable POOL_WBTC;
     address public immutable POOL_SOMI;
+    // Simulated market pool set — owner-set post-deploy (address(0) until then).
+    // Duels created with simulated == true route here instead of the real pools.
+    address public SIM_POOL_WETH;
+    address public SIM_POOL_WBTC;
+    address public SIM_POOL_SOMI;
+    bool    public simPoolsSet;
     address public owner;
     uint256 public subscriptionId;
     uint256 public accruedFees;
@@ -110,8 +116,14 @@ abstract contract ArenaVault {
     /// @notice Seed all three pool vaults with equal USDso amounts.
     ///         Call before the first duel. Caller must have approved usdsoPerPool × 3.
     function fundPools(uint256 usdsoPerPool) external onlyOwner {
+        _fundPoolSet([POOL_WETH, POOL_WBTC, POOL_SOMI], usdsoPerPool);
+    }
+
+    /// @dev Shared seeding loop for both real and simulated pool sets. Pulls
+    ///      usdsoPerPool from the owner into each of the three pools' vaults and
+    ///      tracks the total as owner seed liquidity.
+    function _fundPoolSet(address[3] memory pools, uint256 usdsoPerPool) internal {
         if (usdsoPerPool == 0) revert ArenaTypes.ZeroAmount();
-        address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
         uint256 totalDeposited = usdsoPerPool * 3;
         for (uint256 i = 0; i < 3; i++) {
             address pool = pools[i];
@@ -124,6 +136,37 @@ abstract contract ArenaVault {
         // Track owner seed so it can be withdrawn later via ownerWithdrawSeed.
         seedLiquidity += totalDeposited;
         emit ArenaTypes.PoolsFunded(usdsoPerPool, totalDeposited);
+    }
+
+    // ─── Simulated market pools (owner-only) ──────────────────────────────────
+
+    /// @notice Register the simulated (mock) pool set the Arena routes to when a
+    ///         duel is created with simulated == true. Caches each pool's ABI meta.
+    ///         Owner-only; mock base decimals are passed explicitly ([WETH,WBTC,SOMI]).
+    function setSimPools(
+        address weth,
+        address wbtc,
+        address somi,
+        uint8[3] memory baseDecimals
+    ) external onlyOwner {
+        if (weth == address(0)) revert ArenaTypes.InvalidPool(weth);
+        if (wbtc == address(0)) revert ArenaTypes.InvalidPool(wbtc);
+        if (somi == address(0)) revert ArenaTypes.InvalidPool(somi);
+        SIM_POOL_WETH = weth;
+        SIM_POOL_WBTC = wbtc;
+        SIM_POOL_SOMI = somi;
+        _cachePoolMeta(weth, baseDecimals[0]);
+        _cachePoolMeta(wbtc, baseDecimals[1]);
+        _cachePoolMeta(somi, baseDecimals[2]);
+        simPoolsSet = true;
+    }
+
+    /// @notice Seed the three simulated pool vaults with equal USDso amounts, so
+    ///         simulated-duel fighter buys have quote liquidity to draw on. Mirrors
+    ///         fundPools(); caller must have approved usdsoPerPool × 3.
+    function fundSimPools(uint256 usdsoPerPool) external onlyOwner {
+        if (!simPoolsSet) revert ArenaTypes.InvalidPool(address(0));
+        _fundPoolSet([SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI], usdsoPerPool);
     }
 
     /// @notice Withdraw owner-seeded USDso (vault liquidity) back to a recipient.
@@ -247,7 +290,8 @@ abstract contract ArenaVault {
     // ─── Internal helpers ─────────────────────────────────────────────────────
 
     function _requireValidPool(address pool) internal view {
-        if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI)
+        if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI
+            && pool != SIM_POOL_WETH && pool != SIM_POOL_WBTC && pool != SIM_POOL_SOMI)
             revert ArenaTypes.InvalidPool(pool);
     }
 }
