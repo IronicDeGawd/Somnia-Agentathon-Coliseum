@@ -5,6 +5,7 @@ import "./interfaces/IArena.sol";
 import "./interfaces/IBookmaker.sol";
 import "./interfaces/IERC20Minimal.sol";
 import "./interfaces/IFighterRegistry.sol";
+import "./interfaces/IMatchmaker.sol";
 import "./interfaces/ISomniaAgents.sol";
 import "./interfaces/ISomniaReactivityPrecompile.sol";
 
@@ -24,6 +25,8 @@ contract Bookmaker is IBookmaker {
     error OnlyPlatform();
     error PendingRequest();
     error InsufficientStt();
+    error DuelistCannotBet();
+    error BadMatchmaker();
 
     address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
     uint256 public constant REACTIVITY_FUND_MIN = 33 ether;
@@ -42,6 +45,7 @@ contract Bookmaker is IBookmaker {
     IArena public immutable arena;
     IERC20Minimal public immutable usdso;
     IFighterRegistry public immutable registry;
+    IMatchmaker public immutable matchmaker;
     address public immutable PLATFORM_ADDR;
     address public owner;
 
@@ -98,13 +102,17 @@ contract Bookmaker is IBookmaker {
         address _arena,
         address _usdso,
         address _registry,
+        address _matchmaker,
         address _platform,
         uint256 _turnIntervalBlocks
     ) payable {
         if (msg.value < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
+        // Must be a contract — an EOA/typo would silently disable the duelist guard.
+        if (_matchmaker.code.length == 0) revert BadMatchmaker();
         arena         = IArena(_arena);
         usdso         = IERC20Minimal(_usdso);
         registry      = IFighterRegistry(_registry);
+        matchmaker    = IMatchmaker(_matchmaker);
         PLATFORM_ADDR = _platform;
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner         = msg.sender;
@@ -359,6 +367,17 @@ contract Bookmaker is IBookmaker {
         // are stale but bets would still be accepted. Reads one slot from Arena.
         (, , , , , , , , uint8 arenaStatus, , , ) = arena.duels(duelId);
         if (arenaStatus != ARENA_STATUS_ACTIVE) revert DuelInactive();
+
+        // A duel's two players cannot bet on their own fight. For non-matchmaker
+        // duels (no human players) matches() returns zero addresses, so this never
+        // blocks a legitimate spectator. Wrapped in try/catch so a future Matchmaker
+        // that is replaced/bricked degrades to "guard skipped" (the UI also blocks
+        // duelists) rather than freezing all betting.
+        try matchmaker.matches(duelId) returns (
+            address pA, address pB, uint256, bool, bool, bool
+        ) {
+            if (msg.sender == pA || msg.sender == pB) revert DuelistCannotBet();
+        } catch {}
 
         // CEI: state update before external call
         uint256 betIndex = bets[duelId].length;

@@ -162,23 +162,26 @@ async function main() {
     external: addresses,
   });
 
-  // 3. Bookmaker — gets the same registry + platform as the Arena so its
-  //    LLM Bookmaker agent can read fighter prompts and fire inferNumber requests.
-  console.log("Deploying Bookmaker...");
-  const bookmaker = await hre.viem.deployContract(
-    "Bookmaker",
-    [arena.address, addresses.usdso, registry.address, addresses.platform, turnIntervalBlocks],
-    { value: reactivityFund }
-  );
-  console.log(`  Bookmaker:       ${bookmaker.address}`);
-
-  // 4. Matchmaker — PvP matchmaking layer; pairs human players into Arena duels.
+  // 3. Matchmaker — PvP matchmaking layer; pairs human players into Arena duels.
+  //    Deployed before the Bookmaker so the Bookmaker can hold its address and
+  //    block a duel's two players from betting on their own fight.
   console.log("Deploying Matchmaker...");
   const matchmaker = await hre.viem.deployContract(
     "Matchmaker",
-    [arena.address, addresses.usdso]
+    [arena.address, addresses.usdso, registry.address]
   );
   console.log(`  Matchmaker:      ${matchmaker.address}`);
+
+  // 4. Bookmaker — gets the same registry + platform as the Arena so its
+  //    LLM Bookmaker agent can read fighter prompts and fire inferNumber requests.
+  //    Also gets the Matchmaker so placeBet can reject the duel's own players.
+  console.log("Deploying Bookmaker...");
+  const bookmaker = await hre.viem.deployContract(
+    "Bookmaker",
+    [arena.address, addresses.usdso, registry.address, matchmaker.address, addresses.platform, turnIntervalBlocks],
+    { value: reactivityFund }
+  );
+  console.log(`  Bookmaker:       ${bookmaker.address}`);
 
   // 5. Fund pools (testnet only, deployer must hold USDso and approve arena first)
   if (!IS_LOCAL) {

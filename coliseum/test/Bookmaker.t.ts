@@ -12,15 +12,17 @@ async function deploy() {
 
   const mockArena = await hre.viem.deployContract("MockArena");
   const usdso = await hre.viem.deployContract("MockERC20", ["USDso", "USDso"]);
+  const mockMatchmaker = await hre.viem.deployContract("MockMatchmaker");
 
-  // Bookmaker now needs registry + platform for the LLM odds updater.
-  // The tests don't exercise the on-chain LLM path (it requires the Somnia Agents
-  // precompile), so we pass the deployer address as a stand-in. The active-duel
-  // guard does call arena.duels() which is implemented on MockArena.
+  // Bookmaker now needs registry + matchmaker + platform. The tests don't exercise
+  // the on-chain LLM path (needs the Somnia Agents precompile), so registry/platform
+  // are deployer stand-ins. The matchmaker is a real mock so placeBet can read
+  // matches() to block a duel's own players; by default it returns zero addresses.
   const bookmaker = await hre.viem.deployContract("Bookmaker", [
     mockArena.address,
     usdso.address,
     owner.account.address,  // _registry stand-in (only read inside _onBlockTick which tests don't trigger)
+    mockMatchmaker.address, // _matchmaker — read in placeBet to reject duelists
     owner.account.address,  // _platform stand-in (only used for callback auth, tests don't fire callbacks)
     1n,
   ], { value: parseEther("33") });
@@ -31,7 +33,7 @@ async function deploy() {
     await usdso.write.approve([bookmaker.address, mintAmount], { account: acc.account });
   }
 
-  return { bookmaker, mockArena, usdso, owner, bettor1, bettor2, bettor3, rakeRecipient };
+  return { bookmaker, mockArena, mockMatchmaker, usdso, owner, bettor1, bettor2, bettor3, rakeRecipient };
 }
 
 describe("Bookmaker", function () {
@@ -96,6 +98,35 @@ describe("Bookmaker", function () {
       const bet = (await bookmaker.read.bets([1n, 0n])) as unknown[];
       const oddsAtPlacement = bet[3];
       expect(Number(oddsAtPlacement)).to.equal(6000);
+    });
+
+    it("reverts DuelistCannotBet when a duel's own player tries to bet", async function () {
+      const { bookmaker, mockArena, mockMatchmaker, bettor1, bettor2 } = await deploy();
+      await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
+      // Mark bettor1 + bettor2 as the duel's two fighters.
+      await mockMatchmaker.write.setPlayers([1n, bettor1.account.address, bettor2.account.address]);
+
+      for (const p of [bettor1, bettor2]) {
+        let caught: unknown;
+        await bookmaker.write
+          .placeBet([1n, 0, parseEther("10")], { account: p.account })
+          .catch((e: unknown) => { caught = e; });
+        expect(caught, "expected revert").to.not.be.undefined;
+        expect(String(caught)).to.include("DuelistCannotBet");
+      }
+    });
+
+    it("allows a non-participant to bet on a matchmaker duel", async function () {
+      const { bookmaker, mockArena, mockMatchmaker, bettor1, bettor2, bettor3 } = await deploy();
+      await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
+      await mockMatchmaker.write.setPlayers([1n, bettor1.account.address, bettor2.account.address]);
+
+      // bettor3 is a spectator, not a duelist — bet must succeed.
+      await bookmaker.write.placeBet([1n, 0, parseEther("10")], { account: bettor3.account });
+      const bet = (await bookmaker.read.bets([1n, 0n])) as unknown[];
+      expect(String(bet[0]).toLowerCase()).to.equal(bettor3.account.address.toLowerCase());
     });
 
     it("reverts DuelAlreadySettled when placing bet on settled duel", async function () {
