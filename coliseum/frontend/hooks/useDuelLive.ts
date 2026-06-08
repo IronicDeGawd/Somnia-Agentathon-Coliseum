@@ -78,6 +78,23 @@ function bigintToNum(v: bigint, decimals: number): number {
   return Number(formatUnits(v, decimals));
 }
 
+// ── localStorage cache ────────────────────────────────────────────────────────
+// The live feed lives in React state, so a refresh blanks it until the getLogs
+// backfill returns — and that backfill intermittently errors on the public RPC.
+// We snapshot the accumulated state (and the dedup keys) per duel so a refresh
+// repaints instantly; the backfill + live WS then reconcile, deduping against the
+// restored seen-keys so nothing is double-counted. Bump the version on shape change.
+interface LiveCache {
+  markPrices: [string, { price: string; history: number[] }][];
+  lastActions: [number, string][];
+  thinking: [number, boolean][];
+  seenMarkPrices: string[];
+  seenMoves: string[];
+  seenRequests: string[];
+}
+
+const liveCacheKey = (duelId: bigint) => `coliseum:duellive:v1:${duelId.toString()}`;
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useDuelLive(
@@ -103,15 +120,57 @@ export function useDuelLive(
   const seenMoves      = useRef<Set<string>>(new Set());
   const seenRequests   = useRef<Set<string>>(new Set());
 
-  // ── Reset all state when duelId changes ───────────────────────────────────
+  // ── Hydrate from cache on duelId change (else reset) ──────────────────────
+  // Restores the feed instantly on refresh; seeds the seen-refs so the backfill
+  // and live WS below reconcile without double-counting already-ingested logs.
   useEffect(() => {
-    setMarkPrices(new Map());
-    setLastActions(new Map());
-    setThinking(new Map());
-    seenMarkPrices.current = new Set();
-    seenMoves.current      = new Set();
-    seenRequests.current   = new Set();
+    const reset = () => {
+      setMarkPrices(new Map());
+      setLastActions(new Map());
+      setThinking(new Map());
+      seenMarkPrices.current = new Set();
+      seenMoves.current      = new Set();
+      seenRequests.current   = new Set();
+    };
+    if (typeof window === 'undefined' || duelId <= BigInt(0)) { reset(); return; }
+    try {
+      const raw = window.localStorage.getItem(liveCacheKey(duelId));
+      if (!raw) { reset(); return; }
+      const c = JSON.parse(raw) as LiveCache;
+      const mp = new Map<string, { price: bigint; history: number[] }>();
+      for (const [addr, v] of c.markPrices) mp.set(addr, { price: BigInt(v.price), history: v.history });
+      setMarkPrices(mp);
+      setLastActions(new Map(c.lastActions));
+      setThinking(new Map(c.thinking));
+      seenMarkPrices.current = new Set(c.seenMarkPrices);
+      seenMoves.current      = new Set(c.seenMoves);
+      seenRequests.current   = new Set(c.seenRequests);
+    } catch {
+      reset();
+    }
   }, [duelId]);
+
+  // ── Persist live state to cache (skip the initial empty state so the hydrate
+  //    above is never clobbered before it applies) ───────────────────────────
+  useEffect(() => {
+    if (typeof window === 'undefined' || duelId <= BigInt(0)) return;
+    if (markPrices.size === 0 && lastActions.size === 0) return;
+    try {
+      const payload: LiveCache = {
+        markPrices: Array.from(markPrices.entries()).map(
+          ([addr, v]) => [addr, { price: v.price.toString(), history: v.history }],
+        ),
+        lastActions: Array.from(lastActions.entries()),
+        thinking: Array.from(thinking.entries()),
+        seenMarkPrices: Array.from(seenMarkPrices.current),
+        seenMoves: Array.from(seenMoves.current),
+        seenRequests: Array.from(seenRequests.current),
+      };
+      window.localStorage.setItem(liveCacheKey(duelId), JSON.stringify(payload));
+    } catch {
+      // Quota exceeded / unavailable — non-fatal, state still lives in memory.
+    }
+  }, [duelId, markPrices, lastActions, thinking]);
 
   // ── Ingest MarkPriceSnapshot logs ─────────────────────────────────────────
   const ingestMarkPriceLogs = useCallback(
