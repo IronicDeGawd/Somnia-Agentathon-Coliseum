@@ -1,11 +1,35 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { usePublicClient, useWatchContractEvent, useReadContracts } from 'wagmi';
-import { parseAbiItem, formatUnits } from 'viem';
+import { usePublicClient, useReadContracts } from 'wagmi';
+import { parseAbiItem, formatUnits, createPublicClient, webSocket, type PublicClient } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES, POOLS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
+import { somniaTestnet } from '@/lib/chain';
 import type { DuelData } from '@/hooks/useDuelState';
+
+// Somnia testnet has a working WebSocket RPC at api.infra.testnet (NOT the
+// dream-rpc host, which 502s on WS upgrade). We use a dedicated WS client just
+// for the live event feed, so eth_subscribe streams FighterMove/MarkPrice in
+// real time without routing the rest of the app's reads/writes over WS.
+const WS_RPC_URL =
+  process.env.NEXT_PUBLIC_SOMNIA_WSS ?? 'wss://api.infra.testnet.somnia.network/ws';
+
+let sharedWsClient: PublicClient | null = null;
+function getWsClient(): PublicClient | null {
+  if (typeof window === 'undefined') return null; // no WS during SSR
+  if (!sharedWsClient) {
+    try {
+      sharedWsClient = createPublicClient({
+        chain: somniaTestnet,
+        transport: webSocket(WS_RPC_URL, { reconnect: true }),
+      });
+    } catch {
+      return null;
+    }
+  }
+  return sharedWsClient;
+}
 
 type RawLog = { transactionHash: `0x${string}` | null; logIndex: number | null; args: unknown };
 
@@ -178,11 +202,14 @@ export function useDuelLive(
   // chunks, so the public RPC's log-range limit can't blank older duels.
   const fromBlock = duel?.startBlock ?? BOOKMAKER_DEPLOY_BLOCK;
   const turns = duel?.turns ?? 3;
+  const lastTurnBlock = duel?.lastTurnBlock;
   useEffect(() => {
     if (!enabled || !publicClient) return;
     let cancelled = false;
     void (async () => {
-      const toBlock = duelToBlock(fromBlock, turns);
+      // Bound by the duel's actual lastTurnBlock so a delayed in-progress duel's
+      // already-emitted events aren't dropped before the live WS feed takes over.
+      const toBlock = duelToBlock(fromBlock, turns, lastTurnBlock);
       try {
         const [markLogs, moveLogs, reqLogs] = await Promise.all([
           getLogsChunked(publicClient, { address: CONTRACT_ADDRESSES.Arena, event: MARK_PRICE_EVENT, args: { duelId }, fromBlock, toBlock }),
@@ -196,40 +223,57 @@ export function useDuelLive(
         ingestMoveLogs(moveLogs as RawLog[]);
         ingestRequestLogs(reqLogs as RawLog[]);
       } catch {
-        // Non-fatal: live watchers below pick up new events
+        // Non-fatal: the live WS feed below picks up new events
       }
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, publicClient, duelId, fromBlock, turns]);
+  }, [enabled, publicClient, duelId, fromBlock, turns, lastTurnBlock]);
 
-  // ── Live watchers ─────────────────────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACT_ADDRESSES.Arena,
-    abi: ABIS.Arena,
-    eventName: 'MarkPriceSnapshot',
-    args: { duelId },
-    onLogs(logs) { ingestMarkPriceLogs(logs); },
-    enabled,
-  });
-
-  useWatchContractEvent({
-    address: CONTRACT_ADDRESSES.Arena,
-    abi: ABIS.Arena,
-    eventName: 'FighterMove',
-    args: { duelId },
-    onLogs(logs) { ingestMoveLogs(logs); },
-    enabled,
-  });
-
-  useWatchContractEvent({
-    address: CONTRACT_ADDRESSES.Arena,
-    abi: ABIS.Arena,
-    eventName: 'FighterMoveRequested',
-    args: { duelId },
-    onLogs(logs) { ingestRequestLogs(logs); },
-    enabled,
-  });
+  // ── Live feed: stream events over the dedicated WebSocket (eth_subscribe) ───
+  // Replaces wagmi useWatchContractEvent, which was silent because the app's
+  // HTTP transport can't do eth_subscribe. watchEvent over the WS client pushes
+  // FighterMove/MarkPriceSnapshot/FighterMoveRequested in real time.
+  useEffect(() => {
+    if (!enabled) return;
+    const client = getWsClient();
+    if (!client) return;
+    const unwatchers: (() => void)[] = [];
+    try {
+      unwatchers.push(
+        client.watchEvent({
+          address: CONTRACT_ADDRESSES.Arena,
+          event: MARK_PRICE_EVENT,
+          args: { duelId },
+          onLogs: (logs) => ingestMarkPriceLogs(logs as RawLog[]),
+          onError: () => {},
+        }),
+      );
+      unwatchers.push(
+        client.watchEvent({
+          address: CONTRACT_ADDRESSES.Arena,
+          event: FIGHTER_MOVE_EVENT,
+          args: { duelId },
+          onLogs: (logs) => ingestMoveLogs(logs as RawLog[]),
+          onError: () => {},
+        }),
+      );
+      unwatchers.push(
+        client.watchEvent({
+          address: CONTRACT_ADDRESSES.Arena,
+          event: FIGHTER_MOVE_REQUESTED_EVENT,
+          args: { duelId },
+          onLogs: (logs) => ingestRequestLogs(logs as RawLog[]),
+          onError: () => {},
+        }),
+      );
+    } catch {
+      // WS unavailable — backfill + 10s balance poll still render the duel.
+    }
+    return () => {
+      for (const u of unwatchers) { try { u(); } catch { /* already torn down */ } }
+    };
+  }, [enabled, duelId, ingestMarkPriceLogs, ingestMoveLogs, ingestRequestLogs]);
 
   // ── Active pools (from duel.poolMask) ─────────────────────────────────────
   const activePools = !duel ? [] : POOLS.filter((p) => (duel.poolMask & p.bit) !== 0);
