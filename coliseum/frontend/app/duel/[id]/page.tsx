@@ -490,7 +490,7 @@ export default function ArenaPage() {
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
                 {liveA.thinking ? (
-                  <ThinkingTicker startIndex={0} />
+                  <ThinkingTicker fighterId={degenF.id} startIndex={0} />
                 ) : liveA.lastAction ? (
                   <span><span className="t-dim">{'> '}</span>{liveA.lastAction}</span>
                 ) : (
@@ -513,7 +513,7 @@ export default function ArenaPage() {
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
                 {liveB.thinking ? (
-                  <ThinkingTicker startIndex={3} />
+                  <ThinkingTicker fighterId={whaleF.id} startIndex={2} />
                 ) : liveB.lastAction ? (
                   <span><span className="t-dim">{'> '}</span>{liveB.lastAction}</span>
                 ) : (
