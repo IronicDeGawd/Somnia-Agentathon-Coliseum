@@ -48,13 +48,14 @@ contract MockArenaMatchmaker {
 
     function FIGHTER_COUNT() external pure returns (uint8) { return 6; }
     function minDepositFor(uint16) external pure returns (uint256) { return 2e18; }
+    function minDepositForMarket(uint16, bool) external pure returns (uint256) { return 2e18; }
 
     // Mirrors ArenaVault.platformFee: hybrid base + perTurn × turns.
     function platformFee(uint16 turns) public pure returns (uint256) {
         return 0.5e18 + 0.1e18 * uint256(turns);
     }
 
-    function startDuel(uint8 fA, uint8 fB, uint16 turns) external returns (uint256 duelId) {
+    function startDuel(uint8 fA, uint8 fB, uint16 turns, bool /* simulated */) external returns (uint256 duelId) {
         require(!busy, "arena busy");
         uint256 fee = platformFee(turns);
         uint256 required = 2e18 + fee;

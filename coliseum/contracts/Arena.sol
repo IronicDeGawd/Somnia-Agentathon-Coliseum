@@ -149,7 +149,7 @@ contract Arena is ArenaVault {
     }
 
     function _snapshotMarkPrices(uint256 duelId, ArenaTypes.Duel storage duel) internal {
-        address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        address[3] memory pools = _pools(duel.simulated);
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
         uint16 turnNum = duel.completedCallbacks / 2 + 1;
         for (uint256 i = 0; i < 3; i++) {
@@ -174,20 +174,27 @@ contract Arena is ArenaVault {
     function startDuel(
         uint8  fighterA,
         uint8  fighterB,
-        uint16 turns
+        uint16 turns,
+        bool   simulated
     ) external returns (uint256 duelId) {
         if (activeDuelId != 0 && duels[activeDuelId].status != ArenaTypes.DuelStatus.Resolved)
             revert ArenaTypes.DuelAlreadyActive();
 
         if (!ArenaUtils.isValidTurnCount(turns)) revert ArenaTypes.InvalidTurnCount();
 
+        // Simulated duels can only start once the mock pool set is registered.
+        if (simulated && !simPoolsSet) revert ArenaTypes.InvalidPool(address(0));
+
         uint8 count = registry.FIGHTER_COUNT();
         if (fighterA == fighterB || fighterA >= count || fighterB >= count)
             revert ArenaTypes.InvalidFighterPair();
 
+        // Resolve which pool set this duel trades on (real vs simulated).
+        address[3] memory mPools = _pools(simulated);
+
         // Compute minimum deposit for this tier and pull from caller.
         uint256 minDeposit = ArenaUtils.minDepositFor(
-            turns, POOL_WETH, POOL_WBTC, POOL_SOMI, poolMeta
+            turns, mPools[0], mPools[1], mPools[2], poolMeta
         );
         // If no book data (local hardhat), minDeposit is 0. Use a floor of 2 USDso per fighter
         // so the duel pot is non-zero even without live price feeds.
@@ -224,7 +231,8 @@ contract Arena is ArenaVault {
             initialUsdsoPerFighter:  initialUsdsoPerFighter,
             lastAction:              [uint8(0), uint8(0)],
             fundsRecovered:          false,
-            winnerSlot:              type(uint8).max  // 255 = unset until resolved
+            winnerSlot:              type(uint8).max, // 255 = unset until resolved
+            simulated:               simulated
         });
         activeDuelId = duelId;
 
@@ -235,12 +243,11 @@ contract Arena is ArenaVault {
         escrowedPot    += pot;
 
         // Seed virtual quote balance only on active pools for this tier.
-        address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
         for (uint256 i = 0; i < 3; i++) {
             if (mask & bits[i] == 0) continue;
-            fighterBalances[pools[i]][duelId][fighterA].quoteTokenAmount = initialUsdsoPerFighter;
-            fighterBalances[pools[i]][duelId][fighterB].quoteTokenAmount = initialUsdsoPerFighter;
+            fighterBalances[mPools[i]][duelId][fighterA].quoteTokenAmount = initialUsdsoPerFighter;
+            fighterBalances[mPools[i]][duelId][fighterB].quoteTokenAmount = initialUsdsoPerFighter;
         }
 
         emit ArenaTypes.DuelStarted(duelId, fighterA, fighterB, msg.sender, turns, mask, block.number);
@@ -270,7 +277,7 @@ contract Arena is ArenaVault {
     function _resolveDuel(uint256 duelId, ArenaTypes.Duel storage duel, bool useSnapshot) internal {
         duel.status = ArenaTypes.DuelStatus.Finalizing;
 
-        address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        address[3] memory pools = _pools(duel.simulated);
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
         uint256 valueA = 0;
         uint256 valueB = 0;
@@ -336,7 +343,7 @@ contract Arena is ArenaVault {
         if (duel.creator != msg.sender) revert ArenaTypes.NotDuelCreator();
         if (duel.fundsRecovered) revert ArenaTypes.AlreadyRecovered();
 
-        address[3] memory pools = [POOL_WETH, POOL_WBTC, POOL_SOMI];
+        address[3] memory pools = _pools(duel.simulated);
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
 
         // Per-duel entitlement = sum of both fighters' tracked quote balances across
@@ -376,9 +383,10 @@ contract Arena is ArenaVault {
     ///      failure from atomically reverting the whole turn and stalling the duel.
     function _requestFighterMove(uint256 duelId, uint8 fighterId) internal {
         IFighterRegistry.Fighter memory f = registry.getFighter(fighterId);
+        address[3] memory mPools = _pools(duels[duelId].simulated);
         string memory marketSummary = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
-            POOL_WETH, POOL_WBTC, POOL_SOMI,
+            mPools[0], mPools[1], mPools[2],
             fighterBalances, poolMeta,
             duelMarkSnapshots, duelPrevMarkSnapshots
         );
@@ -487,19 +495,23 @@ contract Arena is ArenaVault {
         address pool;
         bool isBid;
 
-        if      (action == ArenaTypes.FighterAction.BuyWBTC)  { pool = POOL_WBTC; isBid = true;  }
-        else if (action == ArenaTypes.FighterAction.SellWBTC) { pool = POOL_WBTC; isBid = false; }
-        else if (action == ArenaTypes.FighterAction.BuyWETH)  { pool = POOL_WETH; isBid = true;  }
-        else if (action == ArenaTypes.FighterAction.SellWETH) { pool = POOL_WETH; isBid = false; }
-        else if (action == ArenaTypes.FighterAction.BuySOMI)  { pool = POOL_SOMI; isBid = true;  }
-        else if (action == ArenaTypes.FighterAction.SellSOMI) { pool = POOL_SOMI; isBid = false; }
+        // Resolve the action to a pool in this duel's set (real or simulated).
+        // mp[0]=WETH, mp[1]=WBTC, mp[2]=SOMI.
+        ArenaTypes.Duel storage duel = duels[duelId];
+        address[3] memory mp = _pools(duel.simulated);
+
+        if      (action == ArenaTypes.FighterAction.BuyWBTC)  { pool = mp[1]; isBid = true;  }
+        else if (action == ArenaTypes.FighterAction.SellWBTC) { pool = mp[1]; isBid = false; }
+        else if (action == ArenaTypes.FighterAction.BuyWETH)  { pool = mp[0]; isBid = true;  }
+        else if (action == ArenaTypes.FighterAction.SellWETH) { pool = mp[0]; isBid = false; }
+        else if (action == ArenaTypes.FighterAction.BuySOMI)  { pool = mp[2]; isBid = true;  }
+        else if (action == ArenaTypes.FighterAction.SellSOMI) { pool = mp[2]; isBid = false; }
         else return (false, 0);
 
         // Reject trades on pools not active for this duel's tier.
-        ArenaTypes.Duel storage duel = duels[duelId];
         uint8 bit = _poolBit(pool);
         if (bit == 0 || duel.poolMask & bit == 0) {
-            emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, 0, 0, 1, "pool not in tier");
+            _reject(pool, fighterId, duelId, isBid, 0, 0, 1, "pool not in tier");
             return (false, 0);
         }
 
@@ -507,11 +519,11 @@ contract Arena is ArenaVault {
         try ISpotPool(pool).getBookLevels(!isBid, 1) returns (OrderBookLevel[] memory l) {
             levels = l;
         } catch {
-            emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, 0, 0, 1, "book read failed");
+            _reject(pool, fighterId, duelId, isBid, 0, 0, 1, "book read failed");
             return (false, 0);
         }
         if (levels.length == 0 || levels[0].quantity == 0) {
-            emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, 0, 0, 1, "empty book");
+            _reject(pool, fighterId, duelId, isBid, 0, 0, 1, "empty book");
             return (false, 0);
         }
 
@@ -525,19 +537,19 @@ contract Arena is ArenaVault {
 
         if (isBid) {
             if (bal.quoteTokenAmount == 0) {
-                emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
+                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
             }
             uint256 minCost = (meta.minQuantity * price) / baseUnit;
             uint256 vaultQuote = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO);
             if (vaultQuote < minCost) {
-                emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "vault below min cost");
+                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "vault below min cost");
                 return (false, 0);
             }
             desired = meta.minQuantity;
         } else {
             if (bal.baseTokenAmount == 0) {
-                emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "no base balance");
+                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "no base balance");
                 return (false, 0);
             }
             desired = bal.baseTokenAmount;
@@ -546,11 +558,11 @@ contract Arena is ArenaVault {
         uint256 quantity = desired < available ? desired : available;
         if (meta.lotSize > 0)    quantity = (quantity / meta.lotSize) * meta.lotSize;
         if (quantity == 0) {
-            emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, 0, 1, "zero quantity");
+            _reject(pool, fighterId, duelId, isBid, price, 0, 1, "zero quantity");
             return (false, 0);
         }
         if (quantity < meta.minQuantity) {
-            emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, quantity, 1, "below minQuantity");
+            _reject(pool, fighterId, duelId, isBid, price, quantity, 1, "below minQuantity");
             return (false, 0);
         }
         if (meta.tickSize > 0) {
@@ -593,65 +605,64 @@ contract Arena is ArenaVault {
             returns (bool success, uint128 returnedId)
         {
             if (!success) {
-                emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, "silent reject");
+                _reject(pool, fighterId, duelId, isBid, price, quantity, orderType, "silent reject");
                 return (false, 0);
             }
             ok = true;
             orderId = returnedId;
         } catch {
-            emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, "pool reverted");
+            _reject(pool, fighterId, duelId, isBid, price, quantity, orderType, "pool reverted");
             return (false, 0);
         }
 
         emit ArenaTypes.OrderPlaced(pool, fighterId, duelId, orderId, isBid, price, quantity, orderType);
-
-        // PostOnly (orderType=3) balance update lives here because PostOnly is only ever
-        // reached via debugPlaceOrder (owner-only, test-only). FOK orders (orderType=1) from
-        // _executeFighterAction update balance at the call site — never both, no double-credit.
-        if (orderType == 3) {
-            if (isBid) {
-                fighterBalances[pool][duelId][fighterId].quoteTokenAmount += price * quantity / 1e18;
-            } else {
-                fighterBalances[pool][duelId][fighterId].baseTokenAmount += quantity;
-            }
-        }
+        // FOK orders (orderType=1) from _executeFighterAction update fighter balances
+        // at the call site — this function only places the order and emits.
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     function _poolBit(address pool) internal view returns (uint8) {
-        if (pool == POOL_WETH) return ArenaTypes.POOL_BIT_WETH;
-        if (pool == POOL_WBTC) return ArenaTypes.POOL_BIT_WBTC;
-        if (pool == POOL_SOMI) return ArenaTypes.POOL_BIT_SOMI;
+        if (pool == POOL_WETH || pool == SIM_POOL_WETH) return ArenaTypes.POOL_BIT_WETH;
+        if (pool == POOL_WBTC || pool == SIM_POOL_WBTC) return ArenaTypes.POOL_BIT_WBTC;
+        if (pool == POOL_SOMI || pool == SIM_POOL_SOMI) return ArenaTypes.POOL_BIT_SOMI;
         return 0;
     }
 
-    /// @notice Returns the minimum USDso deposit (excluding platform fee) for a turn tier.
+    /// @notice Resolve the active pool set for a duel: the real pools, or the
+    ///         simulated mock set when the duel was created with simulated == true.
+    ///         Returned order is [WETH, WBTC, SOMI] to match the bit ordering.
+    function _pools(bool simulated) internal view returns (address[3] memory) {
+        if (simulated) return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
+        return [POOL_WETH, POOL_WBTC, POOL_SOMI];
+    }
+
+    /// @dev Single OrderRejected emit site. Folding the ~10 rejection paths through
+    ///      one helper keeps the event ABI encoded once in bytecode instead of at
+    ///      every call site (meaningful contract-size saving).
+    function _reject(
+        address pool, uint8 fighterId, uint256 duelId, bool isBid,
+        uint256 price, uint256 quantity, uint8 orderType, string memory reason
+    ) internal {
+        emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, reason);
+    }
+
+    /// @notice Returns the minimum USDso deposit (excluding platform fee) for a turn
+    ///         tier on the REAL pool set. Kept for backward compatibility.
     function minDepositFor(uint16 turns) external view returns (uint256) {
         return ArenaUtils.minDepositFor(turns, POOL_WETH, POOL_WBTC, POOL_SOMI, poolMeta);
+    }
+
+    /// @notice Minimum USDso deposit for a turn tier on the chosen market (real or
+    ///         simulated). Matchmaker uses this so simulated queues price correctly.
+    function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256) {
+        address[3] memory mp = _pools(simulated);
+        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
     }
 
     // ─── Debug / test helpers (testnet only) ─────────────────────────────────
 
     function testRequestFighterMove(uint256 duelId, uint8 fighterId) external onlyOwner {
         _requestFighterMove(duelId, fighterId);
-    }
-
-    function debugPlaceOrder(
-        uint256 duelId,
-        uint8   fighterId,
-        address pool,
-        bool    isBid,
-        uint256 price,
-        uint256 quantity,
-        uint8   orderType,
-        uint64  expireOffsetSec
-    ) external onlyOwner returns (bool ok, uint128 orderId) {
-        return _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, orderType, expireOffsetSec);
-    }
-
-    function cancelOrder(address pool, uint128 orderId) external onlyOwner {
-        _requireValidPool(pool);
-        ISpotPool(pool).cancelOrder(orderId);
     }
 }

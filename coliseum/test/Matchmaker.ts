@@ -36,36 +36,36 @@ describe("Matchmaker", () => {
   describe("queue()", () => {
     it("opens a slot when first player queues", async () => {
       const { mm, mockUsdso, alice } = await deploy();
-      const half = await mm.read.halfDeposit([6]);
+      const half = await mm.read.halfDeposit([6, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([1, 6], { account: alice.account }); // fighter 1, 6 rounds
+      await mm.write.queue([1, 6, false], { account: alice.account }); // fighter 1, 6 rounds
 
-      const [player, fighter] = await mm.read.getSlot([6]);
+      const [player, fighter] = await mm.read.getSlot([6, false]);
       expect(player.toLowerCase()).to.equal(alice.account.address.toLowerCase());
       expect(fighter).to.equal(1);
     });
 
     it("matches two players with different fighters and starts a duel", async () => {
       const { mm, mockUsdso, mockArena, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([6]);
+      const half = await mm.read.halfDeposit([6, false]);
 
       // Alice queues as fighter 0
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 6], { account: alice.account });
+      await mm.write.queue([0, 6, false], { account: alice.account });
 
       // Bob queues as fighter 1 → should trigger match
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
-      await mm.write.queue([1, 6], { account: bob.account });
+      await mm.write.queue([1, 6, false], { account: bob.account });
 
       // Slot should be cleared
-      const [player] = await mm.read.getSlot([6]);
+      const [player] = await mm.read.getSlot([6, false]);
       expect(player).to.equal(zeroAddress);
 
       // MockArenaMatchmaker should have recorded a startDuel call
@@ -75,32 +75,32 @@ describe("Matchmaker", () => {
 
     it("reverts when player tries to match themselves", async () => {
       const { mm, mockUsdso, alice } = await deploy();
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half * 2n], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await expect(
-        mm.write.queue([1, 3], { account: alice.account })
+        mm.write.queue([1, 3, false], { account: alice.account })
       ).to.be.rejectedWith("MatchYourself");
     });
 
     it("reverts when second player picks the same fighter", async () => {
       const { mm, mockUsdso, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([2, 3], { account: alice.account });
+      await mm.write.queue([2, 3, false], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
       await expect(
-        mm.write.queue([2, 3], { account: bob.account })
+        mm.write.queue([2, 3, false], { account: bob.account })
       ).to.be.rejectedWith("SameFighter");
     });
 
@@ -110,7 +110,7 @@ describe("Matchmaker", () => {
         account: alice.account,
       });
       await expect(
-        mm.write.queue([0, 7], { account: alice.account })
+        mm.write.queue([0, 7, false], { account: alice.account })
       ).to.be.rejectedWith("InvalidTier");
     });
 
@@ -120,22 +120,22 @@ describe("Matchmaker", () => {
       // Make Arena report itself as busy
       await mockArena.write.setBusy([true]);
 
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
-      await mm.write.queue([1, 3], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
 
       // Slot cleared, match pending
-      const [player] = await mm.read.getSlot([3]);
+      const [player] = await mm.read.getSlot([3, false]);
       expect(player).to.equal(zeroAddress);
 
-      const p = await mm.read.pendingByTier([3]);
+      const p = await mm.read.pendingByTier([3, false]);
       expect(p[6]).to.equal(true);
       expect(p[0].toLowerCase()).to.equal(
         alice.account.address.toLowerCase()
@@ -146,33 +146,33 @@ describe("Matchmaker", () => {
   describe("cancelQueue()", () => {
     it("refunds deposit and clears slot", async () => {
       const { mm, mockUsdso, alice } = await deploy();
-      const half = await mm.read.halfDeposit([9]);
+      const half = await mm.read.halfDeposit([9, false]);
       const balBefore = await mockUsdso.read.balanceOf([alice.account.address]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([3, 9], { account: alice.account });
-      await mm.write.cancelQueue([9], { account: alice.account });
+      await mm.write.queue([3, 9, false], { account: alice.account });
+      await mm.write.cancelQueue([9, false], { account: alice.account });
 
       const balAfter = await mockUsdso.read.balanceOf([alice.account.address]);
       expect(balAfter).to.equal(balBefore); // full refund
 
-      const [player] = await mm.read.getSlot([9]);
+      const [player] = await mm.read.getSlot([9, false]);
       expect(player).to.equal(zeroAddress);
     });
 
     it("reverts if caller is not in the slot", async () => {
       const { mm, mockUsdso, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await expect(
-        mm.write.cancelQueue([3], { account: bob.account })
+        mm.write.cancelQueue([3, false], { account: bob.account })
       ).to.be.rejectedWith("NotQueued");
     });
   });
@@ -182,26 +182,26 @@ describe("Matchmaker", () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
 
       await mockArena.write.setBusy([true]);
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
-      await mm.write.queue([1, 3], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
 
       // Arena frees up
       await mockArena.write.setBusy([false]);
-      await mm.write.triggerPendingMatch([3]);
+      await mm.write.triggerPendingMatch([3, false]);
 
       const lastDuelId = await mockArena.read.lastDuelId();
       expect(lastDuelId).to.equal(1n);
 
-      const p = await mm.read.pendingByTier([3]);
+      const p = await mm.read.pendingByTier([3, false]);
       expect(p[6]).to.equal(false);
     });
 
@@ -209,19 +209,19 @@ describe("Matchmaker", () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
 
       await mockArena.write.setBusy([true]);
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
-      await mm.write.queue([1, 3], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
 
-      await expect(mm.write.triggerPendingMatch([3])).to.be.rejectedWith(
+      await expect(mm.write.triggerPendingMatch([3, false])).to.be.rejectedWith(
         "ArenaStillBusy"
       );
     });
@@ -230,17 +230,17 @@ describe("Matchmaker", () => {
   describe("claimWinnings()", () => {
     it("pays winner and emits event, records 0 for loser", async () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
-      await mm.write.queue([1, 3], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
 
       const duelId = await mockArena.read.lastDuelId();
 
@@ -260,17 +260,17 @@ describe("Matchmaker", () => {
 
     it("reverts if duel not resolved", async () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], {
         account: alice.account,
       });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], {
         account: bob.account,
       });
-      await mm.write.queue([1, 3], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
 
       const duelId = await mockArena.read.lastDuelId();
       await expect(
@@ -280,12 +280,12 @@ describe("Matchmaker", () => {
 
     it("reverts on double claim", async () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([3]);
+      const half = await mm.read.halfDeposit([3, false]);
 
       await mockUsdso.write.approve([mm.address, half], { account: alice.account });
-      await mm.write.queue([0, 3], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
       await mockUsdso.write.approve([mm.address, half], { account: bob.account });
-      await mm.write.queue([1, 3], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
 
       const duelId = await mockArena.read.lastDuelId();
       await mockArena.write.resolveDuel([duelId, 0]);

@@ -22,11 +22,12 @@ pragma solidity ^0.8.24;
 ///   - Owner emergency rescue for stuck funds (zero-value recovery path only).
 
 interface IArena {
-    function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns)
+    function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated)
         external returns (uint256 duelId);
 
     function activeDuelId() external view returns (uint256);
     function minDepositFor(uint16 turns) external view returns (uint256);
+    function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256);
     function recoverFunds(uint256 duelId) external;
     function platformFee(uint16 turns) external view returns (uint256);
 
@@ -91,8 +92,9 @@ contract Matchmaker {
         uint64  queuedBlock; // block.number when player queued (cancel rate-limit)
     }
 
-    // turns ∈ {3, 6, 9, 15} → open queue slot
-    mapping(uint16 => Slot) public slots;
+    // (turns ∈ {3,6,9,15}, simulated) → open queue slot. Keying by market as well
+    // means a real-market player only ever matches another real-market player.
+    mapping(uint16 => mapping(bool => Slot)) public slots;
 
     // ─── Pending matches (one per tier) ──────────────────────────────────────
     //
@@ -108,10 +110,11 @@ contract Matchmaker {
         uint16  turns;
         uint256 totalPot;  // combined deposit held; may be refunded if price drift
         bool    exists;
+        bool    simulated; // which market this pending match will start on
     }
 
-    // turns → pending match waiting for Arena to free up
-    mapping(uint16 => PendingMatch) public pendingByTier;
+    // (turns, simulated) → pending match waiting for Arena to free up
+    mapping(uint16 => mapping(bool => PendingMatch)) public pendingByTier;
 
     // ─── Match records ────────────────────────────────────────────────────────
 
@@ -175,7 +178,7 @@ contract Matchmaker {
     /// @param turns    Tier: 3, 6, 9, or 15 rounds.
     ///
     /// Approve this contract for halfDeposit(turns) USDso before calling.
-    function queue(uint8 fighter, uint16 turns) external {
+    function queue(uint8 fighter, uint16 turns, bool simulated) external {
         if (turns != 3 && turns != 6 && turns != 9 && turns != 15)
             revert InvalidTier();
 
@@ -183,13 +186,13 @@ contract Matchmaker {
         // NOTE: FIGHTER_COUNT lives on the registry, not on Arena.
         if (fighter >= registry.FIGHTER_COUNT()) revert InvalidFighter();
 
-        uint256 half = halfDeposit(turns);
+        uint256 half = halfDeposit(turns, simulated);
 
         // Pull deposit before touching state (CEI: funds in first)
         if (!usdso.transferFrom(msg.sender, address(this), half))
             revert TransferFailed();
 
-        Slot storage slot = slots[turns];
+        Slot storage slot = slots[turns][simulated];
 
         if (slot.player == address(0)) {
             // ── Slot empty: first player in ──────────────────────────────────
@@ -209,23 +212,24 @@ contract Matchmaker {
             uint256 dA  = slot.deposit;
 
             // CEI: clear slot before any external calls
-            delete slots[turns];
+            delete slots[turns][simulated];
 
             uint256 total = dA + half;
 
             if (_arenaFree()) {
-                _startOrRefund(pA, msg.sender, fA, fighter, turns, total);
+                _startOrRefund(pA, msg.sender, fA, fighter, turns, total, simulated);
             } else {
-                // Arena busy — store per-tier pending match (H-2 fix)
-                if (pendingByTier[turns].exists) revert ArenaStillBusy();
-                pendingByTier[turns] = PendingMatch({
+                // Arena busy — store per-(tier,market) pending match (H-2 fix)
+                if (pendingByTier[turns][simulated].exists) revert ArenaStillBusy();
+                pendingByTier[turns][simulated] = PendingMatch({
                     playerA:  pA,
                     playerB:  msg.sender,
                     fighterA: fA,
                     fighterB: fighter,
                     turns:    turns,
                     totalPot: total,
-                    exists:   true
+                    exists:   true,
+                    simulated: simulated
                 });
                 emit MatchPending(pA, msg.sender, turns);
             }
@@ -237,30 +241,30 @@ contract Matchmaker {
     /// @notice Trigger a pending match for a specific tier once Arena is free.
     ///         Permissionless — anyone can call this.
     /// @param turns  The tier whose pending match to trigger.
-    function triggerPendingMatch(uint16 turns) external {
-        PendingMatch storage pm = pendingByTier[turns];
+    function triggerPendingMatch(uint16 turns, bool simulated) external {
+        PendingMatch storage pm = pendingByTier[turns][simulated];
         if (!pm.exists)     revert NoPendingMatch();
         if (!_arenaFree())  revert ArenaStillBusy();
 
         // CEI: copy to memory and delete state before external calls
         PendingMatch memory m = pm;
-        delete pendingByTier[turns];
+        delete pendingByTier[turns][simulated];
 
-        _startOrRefund(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot);
+        _startOrRefund(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot, m.simulated);
     }
 
     // ─── Cancel queue entry ───────────────────────────────────────────────────
 
     /// @notice Leave the queue and reclaim your deposit.
     ///         Only callable ≥ CANCEL_DELAY_BLOCKS after queueing.
-    function cancelQueue(uint16 turns) external {
-        Slot storage slot = slots[turns];
+    function cancelQueue(uint16 turns, bool simulated) external {
+        Slot storage slot = slots[turns][simulated];
         if (slot.player != msg.sender) revert NotQueued();
         // Rate-limit cancels to prevent same-block queue-grief (M-3 fix)
         if (block.number < slot.queuedBlock + CANCEL_DELAY_BLOCKS) revert CancelTooSoon();
 
         uint256 refund = slot.deposit;
-        delete slots[turns]; // effect before transfer (CEI)
+        delete slots[turns][simulated]; // effect before transfer (CEI)
 
         if (!usdso.transfer(msg.sender, refund)) revert TransferFailed();
         emit QueueCancelled(msg.sender, turns, refund);
@@ -335,19 +339,19 @@ contract Matchmaker {
     // ─── Views ────────────────────────────────────────────────────────────────
 
     /// @notice USDso amount each player must approve before calling queue().
-    function halfDeposit(uint16 turns) public view returns (uint256) {
-        uint256 minDep = arena.minDepositFor(turns);
+    function halfDeposit(uint16 turns, bool simulated) public view returns (uint256) {
+        uint256 minDep = arena.minDepositForMarket(turns, simulated);
         if (minDep == 0) minDep = 2e18;
         uint256 total  = minDep + arena.platformFee(turns);
         total += (total * DEPOSIT_BUFFER_BPS) / 10_000; // headroom for price drift
         return (total + 1) / 2; // ceil — ensures combined >= required + buffer
     }
 
-    function getSlot(uint16 turns)
+    function getSlot(uint16 turns, bool simulated)
         external view
         returns (address player, uint8 fighter, uint256 deposit, uint64 queuedBlock)
     {
-        Slot storage s = slots[turns];
+        Slot storage s = slots[turns][simulated];
         return (s.player, s.fighter, s.deposit, s.queuedBlock);
     }
 
@@ -368,10 +372,10 @@ contract Matchmaker {
     function _startOrRefund(
         address pA, address pB,
         uint8 fA, uint8 fB,
-        uint16 turns, uint256 total
+        uint16 turns, uint256 total, bool simulated
     ) internal {
         // Re-query required amount at match time (market prices may have moved)
-        uint256 minDep = arena.minDepositFor(turns);
+        uint256 minDep = arena.minDepositForMarket(turns, simulated);
         if (minDep == 0) minDep = 2e18;
         uint256 required = minDep + arena.platformFee(turns);
 
@@ -393,7 +397,7 @@ contract Matchmaker {
         usdso.approve(address(arena), 0);
         if (!usdso.approve(address(arena), required)) revert ApproveFailed();
 
-        uint256 duelId = arena.startDuel(fA, fB, turns);
+        uint256 duelId = arena.startDuel(fA, fB, turns, simulated);
 
         // H-4 fix: reset approval to zero after startDuel consumed it
         usdso.approve(address(arena), 0);

@@ -51,12 +51,13 @@ const TIERS: QueueTier[] = [3, 6, 9, 15];
 
 export function useQueueState(): QueueState {
   const contracts = [
-    // getSlot for each tier — indices 0-3
+    // getSlot for each tier — indices 0-3; always read the real market (simulated=false)
+    // A dual-market queue board (simulated=true slots) is a follow-up.
     ...TIERS.map((turns) => ({
       address: MATCHMAKER_ADDRESS,
       abi: ABIS.Matchmaker,
       functionName: 'getSlot' as const,
-      args: [turns] as [number],
+      args: [turns, false] as [number, boolean],
     })),
     // pending() — index 4
     {
@@ -105,7 +106,7 @@ export function useQueueState(): QueueState {
   TIERS.forEach((tier, i) => {
     const result = data?.[i];
     if (result?.status === 'success' && result.result) {
-      const [player, fighter, deposit] = result.result as [Address, bigint | number, bigint];
+      const [player, fighter, deposit] = result.result as unknown as [Address, bigint | number, bigint];
       slots[tier] = player === zeroAddress
         ? null
         : { player, fighter: Number(fighter), deposit };

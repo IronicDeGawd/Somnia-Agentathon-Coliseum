@@ -105,7 +105,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena, mockPlatform, poolWeth } = await deploy();
     const publicClient = await hre.viem.getPublicClient();
 
-    const startTx = await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_15]);
+    const startTx = await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_15, false]);
     const startReceipt = await publicClient.getTransactionReceipt({ hash: startTx });
     expect(startReceipt.status).to.equal("success");
 
@@ -148,7 +148,7 @@ describe("Arena — Duel lifecycle", function () {
     const history = await hre.viem.deployContract("DuelHistory", [arena.address]);
     await arena.write.setDuelHistory([history.address]);
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
     const duelId = await arena.read.activeDuelId() as bigint;
     await mineBlock();
 
@@ -171,10 +171,10 @@ describe("Arena — Duel lifecycle", function () {
   it("DuelAlreadyActive reverts when starting second duel mid-flow", async function () {
     const { arena } = await deploy();
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
 
     let caught: unknown = undefined;
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3]).catch((e: unknown) => { caught = e; });
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]).catch((e: unknown) => { caught = e; });
 
     expect(caught, "expected DuelAlreadyActive revert").to.not.be.undefined;
     expect(String(caught)).to.include("DuelAlreadyActive");
@@ -183,7 +183,7 @@ describe("Arena — Duel lifecycle", function () {
   it("DuelNotReadyToFinalize reverts when finalizing with 0 callbacks", async function () {
     const { arena } = await deploy();
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
     const duelId = await arena.read.activeDuelId() as bigint;
 
     let caught: unknown = undefined;
@@ -197,7 +197,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena } = await deploy();
     const publicClient = await hre.viem.getPublicClient();
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
     await mineBlock();
 
     await hre.network.provider.send("evm_setAutomine", [false]);
@@ -222,7 +222,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena } = await deploy();
 
     let caught: unknown = undefined;
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_A, TURNS_3]).catch((e: unknown) => { caught = e; });
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_A, TURNS_3, false]).catch((e: unknown) => { caught = e; });
 
     expect(caught, "expected InvalidFighterPair revert").to.not.be.undefined;
     expect(String(caught)).to.include("InvalidFighterPair");
@@ -232,7 +232,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena } = await deploy();
 
     let caught: unknown = undefined;
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, 7]).catch((e: unknown) => { caught = e; });
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, 7, false]).catch((e: unknown) => { caught = e; });
 
     expect(caught, "expected InvalidTurnCount revert").to.not.be.undefined;
     expect(String(caught)).to.include("InvalidTurnCount");
@@ -242,7 +242,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena, mockPlatform, poolWeth } = await deploy();
     const publicClient = await hre.viem.getPublicClient();
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_15]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_15, false]);
     const duelId = await arena.read.activeDuelId() as bigint;
 
     await mineBlock();
@@ -300,7 +300,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena } = await deploy();
 
     let caught: unknown = undefined;
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, 0]).catch((e: unknown) => { caught = e; });
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, 0, false]).catch((e: unknown) => { caught = e; });
 
     expect(caught, "expected InvalidTurnCount revert").to.not.be.undefined;
     expect(String(caught)).to.include("InvalidTurnCount");
@@ -310,7 +310,7 @@ describe("Arena — Duel lifecycle", function () {
     const { arena, mockPlatform, poolWeth } = await deploy();
     const publicClient = await hre.viem.getPublicClient();
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_15]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_15, false]);
     const duelId = await arena.read.activeDuelId() as bigint;
 
     await mineBlock();

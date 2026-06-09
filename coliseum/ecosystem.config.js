@@ -92,5 +92,47 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: "coliseum-sim-market",
+      cwd: "./",
+      script: "pnpm",
+      args: "exec hardhat run scripts/sim-market.ts --network somnia",
+      // Drives the three MockSpotPool contracts for simulated duels. Updates
+      // mark prices and bid/ask book levels every ~5 seconds via a random walk
+      // so fighter trades fill at realistic, moving prices.
+      // Requires sim pools to have been deployed first (SIM_MARKET=1 deploy).
+      // Tuning: SIM_TICK_MS (tick interval in ms, default 5000).
+      // Uses PRIVATE_KEY (deployer/owner) from coliseum/.env.
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 5000,
+      min_uptime: "60s",
+      kill_timeout: 10000,
+      out_file: "./logs/sim-market.out.log",
+      error_file: "./logs/sim-market.err.log",
+      merge_logs: true,
+      time: true,
+    },
+    {
+      name: "coliseum-housematch",
+      cwd: "./",
+      script: "pnpm",
+      args: "exec hardhat run scripts/house-match-bot.ts --network somnia",
+      // Fallback "house" opponent: when a player is waiting alone in the
+      // Matchmaker queue, fills the opposing slot so the duel starts. Runs on
+      // HOUSE_PRIVATE_KEY (from coliseum/.env) — its own wallet, so it never
+      // contends with the deployer-key watcher for nonces. Covers tier 3 + 6
+      // (real tiers 9/15 cost 91/151 USDso/side — beyond a demo bankroll, so
+      // they're skipped). Tuning: HOUSE_MARKETS, HOUSE_TIERS, HOUSE_GRACE_S.
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 5000,
+      min_uptime: "60s",
+      kill_timeout: 10000,
+      out_file: "./logs/housematch.out.log",
+      error_file: "./logs/housematch.err.log",
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

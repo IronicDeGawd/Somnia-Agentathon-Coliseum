@@ -70,7 +70,7 @@ async function runDuelToResolved(
   fighterA: number,
   fighterB: number,
 ): Promise<bigint> {
-  await arena.write.startDuel([fighterA, fighterB, 3]);
+  await arena.write.startDuel([fighterA, fighterB, 3, false]);
   const duelId = await arena.read.activeDuelId() as bigint;
   await mineBlock();
   for (let i = 0; i < 3; i++) await runOneTurn(arena, mockPlatform);
@@ -129,7 +129,7 @@ describe("Arena — escrow fund custody (C-2 / H-2 / HIGH-2)", function () {
     const to = owner.account.address;
 
     // Start (don't resolve) a duel so its pot is escrowed in the Arena balance.
-    await arena.write.startDuel([0, 1, 3]);
+    await arena.write.startDuel([0, 1, 3, false]);
     const fee = await arena.read.platformFee([3]) as bigint;
     expect(await arena.read.escrowedPot()).to.equal(POT);
 

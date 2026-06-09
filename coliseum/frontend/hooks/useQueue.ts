@@ -6,7 +6,7 @@ import { maxUint256 } from 'viem';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
 import { config, somniaTestnet } from '@/lib/chain';
 
-export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
+export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = false) {
   const { address, chainId } = useAccount();
   const publicClient = usePublicClient({ config });
   const { writeContractAsync } = useWriteContract();
@@ -22,7 +22,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     address: CONTRACT_ADDRESSES.Matchmaker,
     abi: ABIS.Matchmaker,
     functionName: 'halfDeposit',
-    args: [turns],
+    args: [turns, simulated],
     query: { enabled: true },
   });
 
@@ -128,7 +128,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
           address: CONTRACT_ADDRESSES.Matchmaker,
           abi: ABIS.Matchmaker,
           functionName: 'queue',
-          args: [fighter, turns],
+          args: [fighter, turns, simulated],
           account: address,
         }),
       );
@@ -137,7 +137,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'queue',
-        args: [fighter, turns],
+        args: [fighter, turns, simulated],
         gasPrice,
         gas: queueGas,
       });
@@ -150,7 +150,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, chainId, fighter, turns, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
+  }, [address, chainId, fighter, turns, simulated, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
 
   const cancelQueue = useCallback(async (): Promise<void> => {
     if (!address) {
@@ -173,7 +173,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'cancelQueue',
-        args: [turns],
+        args: [turns, simulated],
         gasPrice,
         gas: BigInt(200000),
       });
@@ -187,7 +187,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15) {
     } finally {
       setIsPending(false);
     }
-  }, [address, chainId, turns, publicClient, writeContractAsync, switchChainAsync, refetchHalfDeposit]);
+  }, [address, chainId, turns, simulated, publicClient, writeContractAsync, switchChainAsync, refetchHalfDeposit]);
 
   const claimWinnings = useCallback(async (duelId: bigint): Promise<void> => {
     if (!address) {

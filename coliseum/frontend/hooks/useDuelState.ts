@@ -28,8 +28,10 @@ export interface DuelData {
   winnerSlot: number;
   quoteBalanceA: bigint;
   quoteBalanceB: bigint;
-  /** True once recoverFunds has been called on-chain (tuple index 11). */
+  /** True once recoverFunds has been called on-chain (tuple index 10). */
   fundsRecovered: boolean;
+  /** True when the duel runs on the simulated market (tuple index 12). */
+  simulated: boolean;
 }
 
 export interface UseDuelStateResult {
@@ -206,10 +208,10 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   });
 
   // ── Derived values ─────────────────────────────────────────────────────────
-  // duels() getter tuple (12 fields — Solidity OMITS the uint8[2] lastAction):
+  // duels() getter tuple (13 fields — Solidity OMITS the uint8[2] lastAction):
   //   0 fighterA, 1 fighterB, 2 creator, 3 startBlock, 4 lastTurnBlock,
   //   5 completedCallbacks, 6 turns, 7 poolMask, 8 status,
-  //   9 initialUsdsoPerFighter, 10 fundsRecovered, 11 winnerSlot
+  //   9 initialUsdsoPerFighter, 10 fundsRecovered, 11 winnerSlot, 12 simulated
   const duel: DuelData | null = duelRaw
     ? {
         fighterA:       Number(duelRaw[0]),
@@ -225,6 +227,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
         quoteBalanceA:  duelRaw[9] as unknown as bigint,   // initialUsdsoPerFighter as proxy
         quoteBalanceB:  duelRaw[9] as unknown as bigint,   // same; no live balance in this ABI
         fundsRecovered: duelRaw[10] as unknown as boolean, // bool at tuple index 10
+        simulated:      Boolean(duelRaw[12]),              // bool at tuple index 12
       }
     : null;
 

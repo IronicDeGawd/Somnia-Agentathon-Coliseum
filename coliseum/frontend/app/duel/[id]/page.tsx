@@ -359,6 +359,7 @@ export default function ArenaPage() {
             {duelActive && <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>}
             {duelResolved && <Chip variant="gold">★ SETTLED</Chip>}
             {!duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
+            {duel?.simulated && <Chip variant="loss">🧪 SIMULATED MARKET</Chip>}
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
               ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{displayRound}</span>
               <span className="t-faint"> / {displayTurns}</span>

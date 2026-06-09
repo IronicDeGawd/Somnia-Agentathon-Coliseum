@@ -46,6 +46,9 @@ export function useActiveDuel(): UseActiveDuelResult {
   });
 
   // Map the tuple to a named DuelData object.
+  // duels() tuple indices: 0 fighterA, 1 fighterB, 2 creator, 3 startBlock,
+  // 4 lastTurnBlock, 5 completedCallbacks, 6 turns, 7 poolMask, 8 status,
+  // 9 initialUsdsoPerFighter, 10 fundsRecovered, 11 winnerSlot, 12 simulated
   let duel: DuelData | null = null;
   if (rawDuel !== undefined && activeDuelId !== null) {
     const [
@@ -61,6 +64,7 @@ export function useActiveDuel(): UseActiveDuelResult {
       initialUsdsoPerFighter,
       fundsRecovered,
       winnerSlot,
+      simulated,
     ] = rawDuel as [
       number,
       number,
@@ -74,6 +78,7 @@ export function useActiveDuel(): UseActiveDuelResult {
       bigint,
       boolean,
       number,
+      boolean,
     ];
     duel = {
       fighterA,
@@ -88,6 +93,7 @@ export function useActiveDuel(): UseActiveDuelResult {
       initialUsdsoPerFighter,
       fundsRecovered,
       winnerSlot,
+      simulated: Boolean(simulated),
     };
   }
 
