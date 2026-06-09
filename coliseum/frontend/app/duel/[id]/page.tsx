@@ -13,6 +13,7 @@ import { AnimatedNumber } from '@/components/shared/AnimatedNumber';
 import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import BetPanel from '@/components/shared/BetPanel';
 import { RoundClock } from '@/components/shared/RoundClock';
+import { ThinkingTicker } from '@/components/shared/ThinkingTicker';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelLive } from '@/hooks/useDuelLive';
@@ -482,14 +483,14 @@ export default function ArenaPage() {
                 <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
                   <Dot variant="a" pulse={liveA.thinking} />
                   <span className="label-tiny" style={{ color: 'var(--fighter-a)', whiteSpace: 'nowrap' }}>
-                    {degenF.name} {liveA.thinking ? 'THINKING…' : liveA.lastAction ? 'ACTED' : 'WAITING'}
+                    {degenF.name} {liveA.thinking ? 'DECIDING…' : liveA.lastAction ? 'ACTED' : 'WAITING'}
                   </span>
                 </span>
                 <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>RED CORNER</span>
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
                 {liveA.thinking ? (
-                  <span className="t-dim">{'> '}<span style={{ color: 'var(--text-dim)' }}>THINKING…</span></span>
+                  <ThinkingTicker startIndex={0} />
                 ) : liveA.lastAction ? (
                   <span><span className="t-dim">{'> '}</span>{liveA.lastAction}</span>
                 ) : (
@@ -505,14 +506,14 @@ export default function ArenaPage() {
                 <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
                   <Dot variant="b" pulse={liveB.thinking} />
                   <span className="label-tiny" style={{ color: 'var(--fighter-b)', whiteSpace: 'nowrap' }}>
-                    {whaleF.name} {liveB.thinking ? 'THINKING…' : liveB.lastAction ? 'ACTED' : 'WAITING'}
+                    {whaleF.name} {liveB.thinking ? 'DECIDING…' : liveB.lastAction ? 'ACTED' : 'WAITING'}
                   </span>
                 </span>
                 <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>BLUE CORNER</span>
               </div>
               <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
                 {liveB.thinking ? (
-                  <span className="t-dim">{'> '}<span style={{ color: 'var(--text-dim)' }}>THINKING…</span></span>
+                  <ThinkingTicker startIndex={3} />
                 ) : liveB.lastAction ? (
                   <span><span className="t-dim">{'> '}</span>{liveB.lastAction}</span>
                 ) : (
