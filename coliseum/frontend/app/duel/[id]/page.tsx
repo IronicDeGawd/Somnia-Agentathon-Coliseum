@@ -301,7 +301,7 @@ export default function ArenaPage() {
   const toDisplayHoldings = (holdings: typeof liveA.holdings): Holding[] =>
     holdings.flatMap((h) => [
       { token: h.token, amount: Number(parseFloat(h.baseAmount).toFixed(6)) },
-      { token: 'USDso', amount: Number(parseFloat(h.quoteAmount).toFixed(2)) },
+      { token: 'USDso', amount: Number(parseFloat(h.quoteAmount).toFixed(4)) },
     ]).filter((h) => (h.amount as number) > 0);
 
   const degenHoldings = toDisplayHoldings(liveA.holdings);

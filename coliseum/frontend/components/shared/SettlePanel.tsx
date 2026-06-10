@@ -31,8 +31,13 @@ interface SettlePanelProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatUsdso(raw: bigint, decimals = 2): string {
-  return Number(formatUnits(raw, 18)).toFixed(decimals);
+function formatUsdso(raw: bigint, decimals?: number): string {
+  const n = Number(formatUnits(raw, 18));
+  // Default to adaptive precision: sub-cent (but non-zero) values get 4 decimals
+  // so small portfolios/pots don't all render as "0.00". An explicit decimals
+  // argument still overrides.
+  const d = decimals ?? (n > 0 && n < 0.01 ? 4 : 2);
+  return n.toFixed(d);
 }
 
 // ─── Matchmaker Claim Section ─────────────────────────────────────────────────
