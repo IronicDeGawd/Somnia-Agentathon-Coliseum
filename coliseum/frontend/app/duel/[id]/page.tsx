@@ -47,8 +47,10 @@ const FIGHTER_VISUAL_MAP: Record<number, {
 
 const DEFAULT_VISUAL = { hex: '#ffffff', side: 'a' as const, tier: 'FIGHTER', rank: 'A', fallbackId: 'degen' };
 
-const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | 'b'; tier: string; rank: string; winning: boolean }) => {
+const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | 'b'; tier: string; rank: string; winning: boolean | null }) => {
   const isRight = side === 'b';
+  // winning===null means tied — show no win/loss badge.
+  const chipVariant = winning === true ? 'win' : winning === false ? 'loss' : ('neutral' as 'win' | 'loss' | 'neutral');
   return (
     <div
       className="row ai-c jc-sb"
@@ -70,10 +72,17 @@ const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | '
           FIGHTER {isRight ? 'B' : 'A'}
         </span>
       </div>
-      <Chip variant={winning ? 'win' : 'loss'}>
-        <Dot variant={winning ? 'win' : 'loss'} pulse />
-        {winning ? 'WINNING' : 'LOSING'}
-      </Chip>
+      {winning === null ? (
+        <Chip variant="loss">
+          <Dot variant="loss" />
+          EVEN
+        </Chip>
+      ) : (
+        <Chip variant={chipVariant === 'neutral' ? 'loss' : chipVariant}>
+          <Dot variant={winning ? 'win' : 'loss'} pulse />
+          {winning ? 'WINNING' : 'LOSING'}
+        </Chip>
+      )}
     </div>
   );
 };
@@ -112,25 +121,30 @@ function FighterCardSplit({
   pnl,
   holdings,
   layout,
+  winningVsOpponent,
 }: {
   fighter: { id: string; name: string; hex: string; side: 'a' | 'b'; tier: string; tagline: string; rank: string };
   pnl: number;
   holdings: Holding[];
   layout: Layout;
+  winningVsOpponent: boolean | null;
 }) {
-  const winning = pnl >= 0;
+  const winning = winningVsOpponent;
   const { hex, side, name, tier, tagline, rank } = fighter;
   const portraitSize = layout === 'oneUp' ? 220 : layout === 'stacked' ? 100 : 160;
+
+  const avatarState = winning === true ? 'winning' : 'losing';
+  const pnlColor = winning === true ? 'var(--win)' : winning === false ? 'var(--loss)' : 'var(--text-dim)';
 
   if (layout === 'stacked') {
     return (
       <div
-        className={`card ${winning ? `glow-${side}` : ''}`}
+        className={`card ${winning === true ? `glow-${side}` : ''}`}
         style={{ border: `1px solid ${hex}`, overflow: 'hidden', transition: 'box-shadow 600ms ease' }}
       >
         <RIBBON hex={hex} side={side} tier={tier} rank={rank} winning={winning} />
         <div className="row gap-16 ai-s" style={{ padding: 16 }}>
-          <FighterAvatar fighter={fighter.id} context="arena" size={portraitSize} state={winning ? 'winning' : 'losing'} />
+          <FighterAvatar fighter={fighter.id} context="arena" size={portraitSize} state={avatarState} />
           <div className="col gap-8 grow" style={{ minWidth: 0 }}>
             <div className="row jc-sb ai-c">
               <span className="t-display t-up" style={{ fontSize: 18, color: hex, letterSpacing: '0.12em', whiteSpace: 'nowrap' }}>{name}</span>
@@ -139,7 +153,7 @@ function FighterCardSplit({
             <div className="row gap-16 ai-c">
               <div className="col gap-2">
                 <span className="label-tiny">PNL</span>
-                <span className="t-num" style={{ fontSize: 26, lineHeight: 1, color: winning ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
+                <span className="t-num" style={{ fontSize: 26, lineHeight: 1, color: pnlColor, whiteSpace: 'nowrap' }}>
                   <AnimatedNumber value={pnl} formatter={fmtUsd} duration={500} />
                 </span>
               </div>
@@ -153,14 +167,14 @@ function FighterCardSplit({
 
   return (
     <div
-      className={`card ${winning ? `glow-${side}` : ''}`}
+      className={`card ${winning === true ? `glow-${side}` : ''}`}
       style={{ border: `1px solid ${hex}`, overflow: 'hidden', transition: 'box-shadow 600ms ease' }}
     >
       <RIBBON hex={hex} side={side} tier={tier} rank={rank} winning={winning} />
       <div className="col" style={{ padding: 20, gap: 14 }}>
         <div className="row ai-s gap-16">
           <div style={{ flexShrink: 0 }}>
-            <FighterAvatar fighter={fighter.id} context="arena" size={portraitSize} state={winning ? 'winning' : 'losing'} />
+            <FighterAvatar fighter={fighter.id} context="arena" size={portraitSize} state={avatarState} />
           </div>
           <div className="col gap-8 grow" style={{ minWidth: 0 }}>
             <div className="col gap-2">
@@ -169,7 +183,7 @@ function FighterCardSplit({
             </div>
             <div className="col gap-2">
               <span className="label-tiny">ROUND PNL</span>
-              <span className="t-num" style={{ fontSize: layout === 'oneUp' ? 40 : 32, lineHeight: 1, color: winning ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
+              <span className="t-num" style={{ fontSize: layout === 'oneUp' ? 40 : 32, lineHeight: 1, color: pnlColor, whiteSpace: 'nowrap' }}>
                 <AnimatedNumber value={pnl} formatter={fmtUsd} duration={500} />
               </span>
             </div>
@@ -249,8 +263,9 @@ export default function ArenaPage() {
   // No duel (status=0 or not found)
   const noDuel = !isLoading && (!duel || duel.status === 0);
 
-  // Odds: chain BPS → percentage. Default to 50/50 if unavailable.
-  const oddsDegenPct = odds ? Math.round(odds.degenBps / 100) : 50;
+  // Odds: chain BPS → percentage. Default to 50/50 if unavailable or no bets.
+  const noBets = totalBetsA === BigInt(0) && totalBetsB === BigInt(0);
+  const oddsDegenPct = (!odds || noBets) ? 50 : Math.round(odds.degenBps / 100);
   const oddsWhalePct = 100 - oddsDegenPct;
 
   // Real fighter indexes from chain
@@ -315,11 +330,15 @@ export default function ArenaPage() {
 
   const [_layoutState, _setLayoutState] = useState(false); // keep for future use
 
+  // winning is strictly > opponent; null when tied (equal values at round 0 or actual tie)
+  const degenWinning = degenPnl > whalePnl ? true : degenPnl < whalePnl ? false : null;
+  const whaleWinning = whalePnl > degenPnl ? true : whalePnl < degenPnl ? false : null;
+
   const degenCard = (
-    <FighterCardSplit fighter={degenF} pnl={degenPnl} holdings={degenHoldings} layout={layout} />
+    <FighterCardSplit fighter={degenF} pnl={degenPnl} holdings={degenHoldings} layout={layout} winningVsOpponent={degenWinning} />
   );
   const whaleCard = (
-    <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} />
+    <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} winningVsOpponent={whaleWinning} />
   );
 
   // ── Empty state when no active duel ──────────────────────────────────────
@@ -442,7 +461,7 @@ export default function ArenaPage() {
           )}
 
           {layout === 'oneUp' && (() => {
-            const dWin = degenPnl >= whalePnl;
+            const dWin = degenPnl > whalePnl;
             const Hero = dWin ? degenCard : whaleCard;
             const Other = dWin ? whaleCard : degenCard;
             return (

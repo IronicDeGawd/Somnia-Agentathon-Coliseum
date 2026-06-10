@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePublicClient, useAccount } from 'wagmi';
 import { parseAbi } from 'viem';
 import { CONTRACT_ADDRESSES, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { getLogsChunked } from '@/lib/logs';
 
 export interface MyBet {
   duelId: bigint;
@@ -41,25 +42,39 @@ export function useMyBets(): {
       if (!publicClient || !address) return;
       setIsLoading(true);
       try {
-        const logs = await publicClient.getLogs({
+        let toBlock: bigint;
+        try {
+          toBlock = await publicClient.getBlockNumber();
+        } catch {
+          toBlock = BOOKMAKER_DEPLOY_BLOCK + BigInt(1_500_000);
+        }
+
+        const rawLogs = await getLogsChunked(publicClient, {
           address: CONTRACT_ADDRESSES.Bookmaker,
           event: BET_PLACED_ABI[0],
           args: { bettor: address },
           fromBlock: BOOKMAKER_DEPLOY_BLOCK,
-          toBlock: 'latest',
+          toBlock,
         });
+
+        // Filter client-side for bettor match in case the RPC ignores the arg filter.
+        const me = address.toLowerCase();
+        const logs = (rawLogs as { args?: { bettor?: `0x${string}` } }[]).filter(
+          (log) => log.args?.bettor?.toLowerCase() === me,
+        );
 
         if (cancelled) return;
 
+        type BetArgs = {
+          duelId?: bigint;
+          fighterId?: number;
+          bettor?: `0x${string}`;
+          stake?: bigint;
+          oddsAtPlacementBps?: number;
+          betIndex?: bigint;
+        };
         const parsed: MyBet[] = logs.map((log) => {
-          const args = log.args as {
-            duelId?: bigint;
-            fighterId?: number;
-            bettor?: `0x${string}`;
-            stake?: bigint;
-            oddsAtPlacementBps?: number;
-            betIndex?: bigint;
-          };
+          const args = (log as unknown as { args?: BetArgs }).args ?? {};
           return {
             duelId: args.duelId ?? BigInt(0),
             fighterId: args.fighterId !== undefined ? Number(args.fighterId) : 0,
