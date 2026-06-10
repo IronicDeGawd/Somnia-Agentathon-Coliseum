@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { formatUnits, parseAbiItem } from 'viem';
-import { useAccount, useChainId, useSwitchChain } from 'wagmi';
+import { useAccount, useChainId, useSwitchChain, usePublicClient } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
 import { useQueueState } from '@/hooks/useQueueState';
@@ -70,13 +70,17 @@ function QueueInner({
   const chainId = useChainId();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
   const wrongNetwork = isConnected && chainId !== somniaTestnet.id;
+  const publicClient = usePublicClient();
 
   const [matchedDuelId, setMatchedDuelId] = useState<bigint | null>(null);
   const [queued, setQueued] = useState(false);
+  // Guard against double-fire from WS + polling both catching the same match.
+  const matchHandledRef = useRef(false);
 
   // When enterQueue succeeds, flip into waiting state
   useEffect(() => {
     if (isSuccess && !isPending) {
+      matchHandledRef.current = false;
       setQueued(true);
     }
   }, [isSuccess, isPending]);
@@ -104,6 +108,8 @@ function QueueInner({
             const isMine =
               args.playerA?.toLowerCase() === me || args.playerB?.toLowerCase() === me;
             if (!isMine) continue;
+            if (matchHandledRef.current) return;
+            matchHandledRef.current = true;
             setMatchedDuelId(args.duelId);
             setQueued(false);
             onMatchFound?.(args.duelId);
@@ -113,10 +119,54 @@ function QueueInner({
         onError: () => {},
       });
     } catch {
-      // WS unavailable — manual reload still surfaces the match.
+      // WS unavailable — polling fallback below will catch it.
     }
     return () => { try { unwatch?.(); } catch { /* already torn down */ } };
   }, [queued, address, onMatchFound, refetchSlots]);
+
+  // Polling fallback: every 4s while queued, scan the last 200 blocks for a
+  // MatchStarted event that includes this wallet. This fires even when the WS
+  // log subscription doesn't deliver (common on public Somnia RPC).
+  useEffect(() => {
+    if (!queued || !address || !publicClient) return;
+    const me = address.toLowerCase();
+
+    const poll = async () => {
+      if (matchHandledRef.current) return;
+      try {
+        const head = await publicClient.getBlockNumber();
+        const fromBlock = head > BigInt(200) ? head - BigInt(200) : BigInt(0);
+        const logs = await publicClient.getLogs({
+          address: CONTRACT_ADDRESSES.Matchmaker,
+          event: MATCH_STARTED_EVENT,
+          fromBlock,
+          toBlock: 'latest',
+        });
+        for (const log of logs) {
+          const args = (log as unknown as {
+            args?: { duelId?: bigint; playerA?: `0x${string}`; playerB?: `0x${string}` };
+          }).args;
+          if (args?.duelId === undefined) continue;
+          const isMine =
+            args.playerA?.toLowerCase() === me || args.playerB?.toLowerCase() === me;
+          if (!isMine) continue;
+          if (matchHandledRef.current) return;
+          matchHandledRef.current = true;
+          setMatchedDuelId(args.duelId);
+          setQueued(false);
+          onMatchFound?.(args.duelId);
+          refetchSlots();
+          return;
+        }
+      } catch {
+        // Non-fatal — next tick will retry.
+      }
+    };
+
+    void poll();
+    const interval = setInterval(() => { void poll(); }, 4_000);
+    return () => clearInterval(interval);
+  }, [queued, address, publicClient, onMatchFound, refetchSlots]);
 
   const halfDepositFormatted = halfDeposit !== null
     ? Number(formatUnits(halfDeposit, 18)).toFixed(2)
