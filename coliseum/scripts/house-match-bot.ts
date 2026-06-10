@@ -61,7 +61,14 @@ const MM_ABI = [
   { name: "queue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "fighter", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
   { name: "cancelQueue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
   { name: "claimWinnings", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
+  { name: "pendingByTier", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ name: "playerA", type: "address" }, { name: "playerB", type: "address" }, { name: "fighterA", type: "uint8" }, { name: "fighterB", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "totalPot", type: "uint256" }, { name: "exists", type: "bool" }, { name: "simulated", type: "bool" }] },
+  { name: "triggerPendingMatch", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
 ] as const;
+
+// Every tier/market, regardless of HOUSE_TIERS/HOUSE_MARKETS — a pending match
+// is two REAL players already paired and waiting; we trigger it as a public good.
+const ALL_TIERS: (3 | 6 | 9 | 15)[] = [3, 6, 9, 15];
+const ALL_MARKETS: boolean[] = [true, false];
 
 const ARENA_ABI = [
   { name: "activeDuelId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
@@ -136,6 +143,28 @@ async function main() {
 
   while (running) {
     try {
+      // ── Pass 0: ring the bell for any waiting pair ──────────────────────────
+      // Two players who queued while a duel was already running are parked as a
+      // pendingByTier match (funds escrowed, safe) — but nothing auto-starts them
+      // once the arena frees. Trigger it here so they don't wait forever.
+      for (const turns of ALL_TIERS) {
+        for (const sim of ALL_MARKETS) {
+          if (!running) break;
+          const pend = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "pendingByTier", args: [turns, sim] }) as readonly unknown[];
+          if (!pend[6] /* exists */) continue;
+          if (!(await pub.readContract({ address: MM, abi: MM_ABI, functionName: "arenaFree" }))) continue; // ring still busy
+          const pkey = `${turns}:${sim ? "sim" : "real"}`;
+          log(`${pkey}: pending match (${String(pend[0]).slice(0, 8)}… vs ${String(pend[1]).slice(0, 8)}…) + arena free — triggering`);
+          try {
+            const h = await wallet.writeContract({ address: MM, abi: MM_ABI, functionName: "triggerPendingMatch", args: [turns, sim] });
+            await pub.waitForTransactionReceipt({ hash: h });
+            log(`${pkey}: pending match started`);
+          } catch (e) {
+            log(`${pkey}: triggerPendingMatch failed: ${(e as Error).message?.slice(0, 120)}`);
+          }
+        }
+      }
+
       for (const turns of tiers) {
         for (const sim of marketFlags) {
           if (!running) break;
