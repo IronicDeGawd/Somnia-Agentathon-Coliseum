@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
@@ -27,6 +28,7 @@ const FIGHTER_INDEX_TO_ID: Record<number, string> = {
 };
 
 export default function LobbyPage() {
+  const router = useRouter();
   const [creatorExpanded, setCreatorExpanded] = useState(false);
   // When set, the creator opens with the tier fixed (joining a specific tier);
   // null means the generic creator with a selectable tier.
@@ -377,7 +379,12 @@ export default function LobbyPage() {
           <div style={{ maxWidth: 520 }}>
             <DuelCreator
               lockedTurns={lockedTurns ?? undefined}
-              onMatchFound={() => setCreatorExpanded(false)}
+              onMatchFound={(duelId) => {
+                setCreatorExpanded(false);
+                // Auto-enter the arena the moment the match starts on-chain, so the
+                // queued player doesn't have to refresh/click to see their duel.
+                router.push(`/duel/${duelId.toString()}`);
+              }}
             />
           </div>
         )}

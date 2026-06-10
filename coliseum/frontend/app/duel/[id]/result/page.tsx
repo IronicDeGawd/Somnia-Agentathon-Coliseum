@@ -19,7 +19,10 @@ import { getLogsChunked, duelToBlock } from '@/lib/logs';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmtUsdso(raw: bigint): string {
-  return `$${Number(formatUnits(raw, 18)).toFixed(2)}`;
+  const n = Number(formatUnits(raw, 18));
+  // Sub-cent (but non-zero) values show 4 decimals so they don't read as "0.00".
+  const decimals = n > 0 && n < 0.01 ? 4 : 2;
+  return `$${n.toFixed(decimals)}`;
 }
 
 // DuelResolved event for backfill
