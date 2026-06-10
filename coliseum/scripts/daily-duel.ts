@@ -47,6 +47,9 @@ function fmtU(v: bigint, decimals = 18): string {
 // ---------------------------------------------------------------------------
 
 const TURNS = 3;
+// Run the daily duel on the simulated market (livelier book → visible PnL).
+// The Matchmaker/Arena key every queue/deposit by (turns, simulated).
+const SIMULATED = true;
 const TOTAL_CALLBACKS = TURNS * 2; // 6
 const TURN_INTERVAL_BLOCKS = 600;
 const EMERGENCY_FINALIZE_BLOCKS = 1000;
@@ -92,7 +95,7 @@ const MATCHMAKER_ABI = [
     name: "halfDeposit",
     type: "function",
     stateMutability: "view",
-    inputs: [{ name: "turns", type: "uint16" }],
+    inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }],
     outputs: [{ type: "uint256" }],
   },
   {
@@ -102,6 +105,7 @@ const MATCHMAKER_ABI = [
     inputs: [
       { name: "fighter", type: "uint8" },
       { name: "turns", type: "uint16" },
+      { name: "simulated", type: "bool" },
     ],
     outputs: [],
   },
@@ -109,7 +113,7 @@ const MATCHMAKER_ABI = [
     name: "triggerPendingMatch",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [{ name: "turns", type: "uint16" }],
+    inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }],
     outputs: [],
   },
   {
@@ -358,9 +362,9 @@ async function main() {
     address: matchmkAddr,
     abi: MATCHMAKER_ABI,
     functionName: "halfDeposit",
-    args: [TURNS],
+    args: [TURNS, SIMULATED],
   })) as bigint;
-  log(`halfDeposit(${TURNS}): ${fmtU(halfDeposit)} USDso`);
+  log(`halfDeposit(${TURNS}, sim=${SIMULATED}): ${fmtU(halfDeposit)} USDso`);
 
   const [p1UsdBal, p2UsdBal, p1SttBal, p2SttBal] = await Promise.all([
     publicClient.readContract({
@@ -461,12 +465,12 @@ async function main() {
     log(`P1 allowance sufficient (${fmtU(p1Allowance)})`);
   }
 
-  log(`P1 queue(fighter=${fighterA}, turns=${TURNS})...`);
+  log(`P1 queue(fighter=${fighterA}, turns=${TURNS}, sim=${SIMULATED})...`);
   const p1QueueTx = await p1Wallet.writeContract({
     address: matchmkAddr,
     abi: MATCHMAKER_ABI,
     functionName: "queue",
-    args: [fighterA, TURNS],
+    args: [fighterA, TURNS, SIMULATED],
   });
   const p1QueueReceipt = await publicClient.waitForTransactionReceipt({
     hash: p1QueueTx,
@@ -511,12 +515,12 @@ async function main() {
     log(`P2 allowance sufficient (${fmtU(p2Allowance)})`);
   }
 
-  log(`P2 queue(fighter=${fighterB}, turns=${TURNS})...`);
+  log(`P2 queue(fighter=${fighterB}, turns=${TURNS}, sim=${SIMULATED})...`);
   const p2QueueTx = await p2Wallet.writeContract({
     address: matchmkAddr,
     abi: MATCHMAKER_ABI,
     functionName: "queue",
-    args: [fighterB, TURNS],
+    args: [fighterB, TURNS, SIMULATED],
   });
   const p2QueueReceipt = await publicClient.waitForTransactionReceipt({
     hash: p2QueueTx,
@@ -546,7 +550,7 @@ async function main() {
         address: matchmkAddr,
         abi: MATCHMAKER_ABI,
         functionName: "triggerPendingMatch",
-        args: [TURNS],
+        args: [TURNS, SIMULATED],
       });
       const triggerReceipt = await publicClient.waitForTransactionReceipt({
         hash: triggerTx,
