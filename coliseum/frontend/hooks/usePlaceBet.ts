@@ -62,7 +62,11 @@ export function usePlaceBet(duelId: bigint, slot: 0 | 1, amount: bigint) {
         functionName: 'placeBet',
         args: [duelId, slot, amount],
         gasPrice,
-        gas: BigInt(200000),
+        // Measured on Shannon: 1,130,326 gas for the first bet on a duel (cold
+        // storage) and 730,326 after. USDso's transferFrom is unusually expensive
+        // and placeBet also reads Arena and Matchmaker. At the old 200,000 limit
+        // every bet died out-of-gas with gasUsed == gasLimit and no logs.
+        gas: BigInt(2000000),
       });
 
       setIsSuccess(true);

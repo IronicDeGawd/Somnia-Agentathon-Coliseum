@@ -69,10 +69,40 @@ const ARENA_DUEL_ABI = [
       { name: "fundsRecovered", type: "bool" }, { name: "winnerSlot", type: "uint8" },
     ],
   },
+  { name: "nextDuelId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "turn", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { name: "finalizeDuel", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
   { name: "emergencyFinalize", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
 ] as const;
+
+const BOOKMAKER_ABI = [
+  { name: "currentOdds", type: "function", stateMutability: "view",
+    inputs: [{ name: "duelId", type: "uint256" }, { name: "index", type: "uint256" }], outputs: [{ type: "uint16" }] },
+  { name: "duelSettled", type: "function", stateMutability: "view",
+    inputs: [{ name: "duelId", type: "uint256" }], outputs: [{ type: "bool" }] },
+  { name: "initializeOdds", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "duelId", type: "uint256" }, { name: "oddsA", type: "uint16" }, { name: "oddsB", type: "uint16" }], outputs: [] },
+  { name: "settleBets", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
+] as const;
+
+/** Opening line when a duel starts: even money until bets move it. */
+const OPENING_ODDS_BPS = 5000;
+
+/**
+ * Duels whose settlement attempt failed for a reason retrying will not fix, so the
+ * loop stops burning gas on them every tick.
+ */
+const settleGaveUp = new Set<string>();
+
+/** How many recent duel ids the settle sweep inspects each tick. */
+const SETTLE_LOOKBACK = 5;
+
+/**
+ * settleBets pays every winning bettor in one call, and each USDso transfer is
+ * ~95k gas on its own, so leave room rather than relying on estimation.
+ */
+const SETTLE_GAS_LIMIT = BigInt(3_000_000);
 
 // Turn pacing — must mirror Arena. turnIntervalBlocks is read from the manifest;
 // these are fallbacks / the force-resolve window if a duel stalls mid-flight.
@@ -103,6 +133,55 @@ function parseDuelTuple(raw: readonly unknown[]): DuelState {
 const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 const log = (...args: unknown[]) => console.log(`[${ts()}]`, ...args);
 
+/**
+ * Settle bets on any recently resolved duel.
+ *
+ * Arena clears activeDuelId the moment a duel resolves, so this cannot hang off
+ * the active-duel path — by the time a duel is settleable it is no longer active.
+ * Instead sweep the last few duel ids each tick. Nothing on-chain settles bets, so
+ * without this winning bettors stay unpaid until a spectator happens to press the
+ * result page's button. Safe with zero bets: the payout loop is empty and the duel
+ * is simply marked settled.
+ */
+async function settleResolvedDuels(opts: {
+  pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
+  wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
+  arena: `0x${string}`;
+  bookmaker: `0x${string}` | undefined;
+}) {
+  const { pub, wallet, arena, bookmaker } = opts;
+  if (!bookmaker) return;
+  const emsg = (e: unknown) =>
+    e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+
+  try {
+    const next = (await pub.readContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "nextDuelId" })) as bigint;
+    const from = next > BigInt(SETTLE_LOOKBACK + 1) ? next - BigInt(SETTLE_LOOKBACK) : BigInt(1);
+    for (let id = from; id < next; id++) {
+      if (settleGaveUp.has(String(id))) continue;
+      const raw = (await pub.readContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "duels", args: [id] })) as readonly unknown[];
+      if (Number(raw[8]) !== 3) continue;              // not resolved
+      if (Number(raw[11]) > 1) { settleGaveUp.add(String(id)); continue; }  // settleBets would revert InvalidWinner
+      const settled = (await pub.readContract({
+        address: bookmaker, abi: BOOKMAKER_ABI, functionName: "duelSettled", args: [id],
+      })) as boolean;
+      if (settled) { settleGaveUp.add(String(id)); continue; }
+      try {
+        const h = await wallet.writeContract({
+          address: bookmaker, abi: BOOKMAKER_ABI, functionName: "settleBets", args: [id], gas: SETTLE_GAS_LIMIT,
+        });
+        const r = await pub.waitForTransactionReceipt({ hash: h });
+        log(`  settleBets(${id}) tx=${h} status=${r.status}`);
+        if (r.status === "reverted") settleGaveUp.add(String(id));
+      } catch (e) {
+        const msg = emsg(e);
+        log(`  settleBets(${id}) failed: ${msg}`);
+        if (/AlreadySettled|InvalidWinner|DuelInactive/.test(msg)) settleGaveUp.add(String(id));
+      }
+    }
+  } catch (e) { log(`  settle sweep failed: ${emsg(e)}`); }
+}
+
 // Referee for player-started fights. The on-chain reactivity subscription is
 // left deactivated (it draws gas every block), and daily-duel.ts only drives
 // its own scheduled fight — so without this, a player-started duel never
@@ -110,6 +189,7 @@ const log = (...args: unknown[]) => console.log(`[${ts()}]`, ...args);
 // (turn()) when the block window opens, and finalize when all moves are in,
 // with a force-resolve fallback if a duel stalls.
 async function driveActiveDuel(opts: {
+  bookmaker: `0x${string}` | undefined;
   pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
   wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
   arena: `0x${string}`;
@@ -119,7 +199,7 @@ async function driveActiveDuel(opts: {
   arenaTopup: bigint;
   deployerMin: bigint;
 }) {
-  const { pub, wallet, arena, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin } = opts;
+  const { pub, wallet, arena, bookmaker, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin } = opts;
   const emsg = (e: unknown) =>
     e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
 
@@ -133,6 +213,28 @@ async function driveActiveDuel(opts: {
   log(`duel #${aid}: status=${d.status} callbacks=${d.completedCallbacks}/${total} lastTurnBlock=${d.lastTurnBlock} head=${cur}`);
 
   if (d.status === 3) { log("duel: already resolved — nothing to drive"); return; }
+
+  // Open the betting line as soon as the duel is live. placeBet reverts DuelInactive
+  // while currentOdds is zero, so without this no spectator can bet at all — and the
+  // window closes the moment the Arena leaves Active.
+  if (bookmaker && d.status === 1) {
+    try {
+      const oddsA = (await pub.readContract({
+        address: bookmaker, abi: BOOKMAKER_ABI, functionName: "currentOdds", args: [aid, BigInt(0)],
+      })) as number;
+      const oddsB = (await pub.readContract({
+        address: bookmaker, abi: BOOKMAKER_ABI, functionName: "currentOdds", args: [aid, BigInt(1)],
+      })) as number;
+      if (oddsA === 0 && oddsB === 0) {
+        const h = await wallet.writeContract({
+          address: bookmaker, abi: BOOKMAKER_ABI, functionName: "initializeOdds",
+          args: [aid, OPENING_ODDS_BPS, OPENING_ODDS_BPS],
+        });
+        const r = await pub.waitForTransactionReceipt({ hash: h });
+        log(`  initializeOdds(${aid}, 50/50) tx=${h} status=${r.status} — betting open`);
+      }
+    } catch (e) { log(`  initializeOdds(${aid}) failed: ${emsg(e)}`); }
+  }
 
   // Fuel the Arena for the remaining LLM-inference moves (~0.24 STT each) before
   // ringing the bell, so turn() doesn't stall on a dry Arena.
@@ -207,6 +309,7 @@ async function driveActiveDuel(opts: {
 }
 
 async function tick(opts: {
+  bookmaker: `0x${string}` | undefined;
   fallback: `0x${string}`;
   seeder: `0x${string}`;
   deployer: `0x${string}`;
@@ -222,7 +325,7 @@ async function tick(opts: {
 }) {
   const pub = await hre.viem.getPublicClient();
   const [wallet] = await hre.viem.getWalletClients();
-  const { fallback, seeder, deployer, arena, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin } = opts;
+  const { fallback, seeder, deployer, arena, bookmaker, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin } = opts;
 
   const [fbBal, seederBal, deployerBal, arenaBal] = await Promise.all([
     pub.getBalance({ address: fallback }),
@@ -302,7 +405,8 @@ async function tick(opts: {
 
   // 4. Referee any live player-started duel: fuel + ring the bell + finalize.
   try {
-    await driveActiveDuel({ pub, wallet, arena, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin });
+    await driveActiveDuel({ pub, wallet, arena, bookmaker, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin });
+    await settleResolvedDuels({ pub, wallet, arena, bookmaker });
   } catch (e: unknown) {
     const msg = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
     log(`duel: drive error: ${msg}`);
@@ -333,6 +437,9 @@ async function main() {
     throw new Error("Arena address missing from manifest.");
   }
   const turnInterval = BigInt(manifest?.contracts?.Arena?.turnIntervalBlocks ?? DEFAULT_TURN_INTERVAL_BLOCKS);
+  // Optional: without it the watcher still referees duels, it just cannot open or
+  // settle the betting line.
+  const bookmaker = manifest?.contracts?.Bookmaker?.address as `0x${string}` | undefined;
 
   const intervalS = parseInt(process.env.WATCHER_INTERVAL_S ?? "60", 10);
   const sweepThreshold = parseEther(process.env.SWEEP_THRESHOLD_STT ?? "5");
@@ -391,7 +498,7 @@ async function main() {
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
 
-  const ctx = { fallback, seeder, deployer, arena, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin };
+  const ctx = { fallback, seeder, deployer, arena, bookmaker, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin };
 
   if (intervalS === 0) {
     await tick(ctx);
