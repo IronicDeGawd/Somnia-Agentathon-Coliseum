@@ -12,7 +12,11 @@ const TICK = parseEther('0.0001');
 
 const POOL_ABI = [
   {
-    name: 'placeTakerOrderWithoutVault',
+    // dreamDEX removed `placeTakerOrderWithoutVault`. `placeOrder` is now the single
+    // placement entrypoint for every funding source: by default it auto-pulls the
+    // input (native SOMI from msg.value here) and auto-delivers proceeds straight to
+    // the wallet, so the vault withdraw below is only a fallback path.
+    name: 'placeOrder',
     type: 'function',
     stateMutability: 'payable',
     inputs: [
@@ -99,6 +103,15 @@ export interface SwapResult {
 
 const MAX_SIMULATE_ATTEMPTS = 3;
 const SIMULATE_RETRY_MS = 2500;
+
+/**
+ * Gas floor for any order on a native-base pool (SOMI/USDso). The pool checks it
+ * has enough headroom to forward up to ~2.1M gas to the SOMI recipient's
+ * `receive()` before transferring; under ~5M it reverts with
+ * `InsufficientGasForPayout(uint256)` / `0x782b2567`. Actual gasUsed stays far
+ * lower for EOAs — the limit only has to clear the guard.
+ */
+const NATIVE_PAYOUT_GAS = BigInt(5000000);
 
 const FALLBACK_ABI = [
   {
@@ -272,9 +285,14 @@ export function useSttSwap() {
               account: address,
               address: SOMI_POOL,
               abi: POOL_ABI,
-              functionName: 'placeTakerOrderWithoutVault',
+              functionName: 'placeOrder',
               value: sellAmount,
               args: candidate,
+              // Native-base pools enforce a gas-headroom guard before transferring
+              // SOMI; below ~5M the call reverts with InsufficientGasForPayout
+              // (0x782b2567). Simulate with the SAME limit we broadcast, otherwise
+              // the sim greenlights a tx that reverts on inclusion.
+              gas: NATIVE_PAYOUT_GAS,
             });
             const [ok] = sim.result as [boolean, bigint];
             if (ok) {
@@ -316,11 +334,11 @@ export function useSttSwap() {
         const swapHash = await walletClient.writeContract({
           address: SOMI_POOL,
           abi: POOL_ABI,
-          functionName: 'placeTakerOrderWithoutVault',
+          functionName: 'placeOrder',
           value: sellAmount,
           args,
           gasPrice,
-          gas: BigInt(2000000),
+          gas: NATIVE_PAYOUT_GAS,
         });
         setResult((r) => ({ ...r, swapHash, path: 'market' }));
         setStage('swapping');
