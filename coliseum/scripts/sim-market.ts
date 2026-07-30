@@ -67,19 +67,80 @@ const log = (...args: unknown[]) => console.log(`[${ts()}]`, ...args);
 const BOOK_QTY  = parseEther("1000");     // 1e21 — always fills minQuantity=1e15
 const PRICE_MIN = 1_000_000_000_000n;     // 1e12 — floor to prevent zero
 
-/** Advance price by one random-walk tick. */
-function nextPrice(current: bigint): bigint {
-  // 5% chance of a "regime" move (±2%), otherwise a normal tick (±0.3%).
+/**
+ * Anchor price per sim pool. An unbounded random walk has no memory of where it
+ * started: left running for weeks it wanders orders of magnitude away (SOMI once
+ * reached 0.0000859, ~1000x below anchor). That silently breaks the game, because
+ * a duel's trading capital is derived from `minQuantity x markPrice` — collapsed
+ * prices mean sub-cent portfolios that render as 0.00.
+ *
+ * Anchors are chosen so that (a) one lot costs well under a sim pool's USDso seed
+ * gate, and (b) tier-6 (SOMI+WETH) lands near 4 USDso per side — affordable for
+ * the house bot while still giving fighters visible dollars to move.
+ */
+const ANCHORS: Record<string, bigint> = {
+  WETH: parseEther("1920"),
+  WBTC: parseEther("64500"),
+  SOMI: parseEther("0.085"),
+};
+
+/** dreamDEX public ticker feed — the live marks the simulated market tracks. */
+const TICKER_URL = "https://api.dreamdex.io/v0/tickers";
+const TICKER_SYMBOL: Record<string, string> = {
+  WETH: "WETH:USDso",
+  WBTC: "WBTC:USDso",
+  SOMI: "SOMI:USDso",
+};
+
+/**
+ * Re-anchor the simulated market to real dreamDEX marks so the prices on screen
+ * are the ones a real trader would recognise, instead of invented numbers. Falls
+ * back to the compiled-in anchors when the feed is unreachable — the injector must
+ * never fail to start just because an external API is down.
+ */
+async function refreshAnchorsFromDreamDex(): Promise<void> {
+  try {
+    const res = await fetch(TICKER_URL, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { symbols?: { symbol: string; close: string }[] };
+    for (const [label, symbol] of Object.entries(TICKER_SYMBOL)) {
+      const row = body.symbols?.find((s) => s.symbol === symbol);
+      if (!row?.close) continue;
+      const live = parseEther(row.close as `${number}`);
+      if (live > BigInt(0)) {
+        log(`  anchor ${label}: ${formatEther(ANCHORS[label])} -> ${formatEther(live)} (dreamDEX ${symbol})`);
+        ANCHORS[label] = live;
+      }
+    }
+  } catch (err) {
+    log(`  anchor refresh failed (${err instanceof Error ? err.message : String(err)}) — using built-in anchors`);
+  }
+}
+
+/** Prices stay inside +/- this fraction of anchor, expressed in basis points. */
+const BAND_BPS = 3000n; // 30%
+
+/** Advance price by one random-walk tick, mean-reverting inside the anchor band. */
+function nextPrice(current: bigint, anchor: bigint): bigint {
+  // 5% chance of a "regime" move (+/-2%), otherwise a normal tick (+/-0.3%).
   const isRegime = Math.random() < 0.05;
-  const bpRange  = isRegime ? 200n : 3n;   // basis points (×10 for 0.1 bp precision)
+  const bpRange  = isRegime ? 200n : 3n;   // basis points (x10 for 0.1 bp precision)
 
   // Signed basis-point delta in [-bpRange, +bpRange].
   const bpAbs   = BigInt(Math.floor(Math.random() * Number(bpRange)));
-  const up      = Math.random() < 0.5;
-  const delta   = up ? (current * bpAbs) / 1000n : -(current * bpAbs) / 1000n;
+  const lo      = anchor - (anchor * BAND_BPS) / 10_000n;
+  const hi      = anchor + (anchor * BAND_BPS) / 10_000n;
+
+  // Bias the direction back toward the anchor once outside the band, so the walk
+  // can wander freely in the middle but can never escape.
+  const up = current < lo ? true : current > hi ? false : Math.random() < 0.5;
+  const delta = up ? (current * bpAbs) / 1000n : -(current * bpAbs) / 1000n;
 
   const next = current + delta;
-  return next < PRICE_MIN ? PRICE_MIN : next;
+  if (next < PRICE_MIN) return PRICE_MIN;
+  if (next < lo) return lo;
+  if (next > hi) return hi;
+  return next;
 }
 
 /** Update one pool: setMarkPrice + setBookLevel(bid) + setBookLevel(ask). */
@@ -194,10 +255,27 @@ async function main() {
       functionName: "getMarkPrice",
     })) as bigint;
 
+  await refreshAnchorsFromDreamDex();
+
+  // Resume from the on-chain price, but snap back to the anchor when the stored
+  // price has drifted outside the band — otherwise a restart would inherit a
+  // collapsed price and keep the game broken.
+  const seedPrice = async (label: string, addr: `0x${string}`): Promise<bigint> => {
+    const anchor = ANCHORS[label];
+    const onChain = (await readMark(addr)) || BigInt(0);
+    const lo = anchor - (anchor * BAND_BPS) / 10_000n;
+    const hi = anchor + (anchor * BAND_BPS) / 10_000n;
+    if (onChain < lo || onChain > hi) {
+      log(`  ${label}: on-chain mark ${formatEther(onChain)} outside band [${formatEther(lo)}, ${formatEther(hi)}] — resetting to anchor ${formatEther(anchor)}`);
+      return anchor;
+    }
+    return onChain;
+  };
+
   let prices: Record<string, bigint> = {
-    WETH: (await readMark(poolAddrs.WETH)) || parseEther("3000"),
-    WBTC: (await readMark(poolAddrs.WBTC)) || parseEther("65000"),
-    SOMI: (await readMark(poolAddrs.SOMI)) || parseEther("1"),
+    WETH: await seedPrice("WETH", poolAddrs.WETH),
+    WBTC: await seedPrice("WBTC", poolAddrs.WBTC),
+    SOMI: await seedPrice("SOMI", poolAddrs.SOMI),
   };
 
   log(`  initial prices — WETH: ${formatEther(prices.WETH)} WBTC: ${formatEther(prices.WBTC)} SOMI: ${formatEther(prices.SOMI)}`);
@@ -218,7 +296,7 @@ async function main() {
       ["SOMI", poolAddrs.SOMI],
     ] as const) {
       if (!running) break;
-      const newPrice = nextPrice(prices[label]);
+      const newPrice = nextPrice(prices[label], ANCHORS[label]);
       prices[label] = await updatePool({ pub, wallet, addr, label, price: newPrice });
     }
 
