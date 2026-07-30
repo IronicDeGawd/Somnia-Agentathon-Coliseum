@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { useAccount, useBalance } from 'wagmi';
-import { formatEther } from 'viem';
+import { formatEther, parseEther } from 'viem';
 import { useSttSwap, type SwapStage } from '@/hooks/useSttSwap';
 
 interface SwapModalProps {
   open: boolean;
   onClose: () => void;
 }
+
+/** Largest single order the SOMI/USDso book reliably fills — see setMax. */
+const MAX_FILLABLE_STT = parseEther('50');
 
 const STAGE_LABEL: Record<SwapStage, string> = {
   idle: 'READY',
@@ -44,7 +47,13 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
     if (!sttBal) return;
     // Leave 0.1 STT for gas.
     const reserve = BigInt(1e17);
-    const max = sttBal.value > reserve ? sttBal.value - reserve : BigInt(0);
+    let max = sttBal.value > reserve ? sttBal.value - reserve : BigInt(0);
+    // Cap at what a single order can actually fill. The book shows far more depth
+    // than the maker can deliver: 50 STT fills, 70 rejects regardless of gas. An
+    // uncapped MAX on a large balance therefore fails every simulate attempt and
+    // silently drops through to the one-shot SwapFallback, handing over 1 USDso
+    // instead of the ~34 the balance implies. Swap repeatedly for more.
+    if (max > MAX_FILLABLE_STT) max = MAX_FILLABLE_STT;
     setAmount(Number(formatEther(max)).toFixed(4));
   };
 

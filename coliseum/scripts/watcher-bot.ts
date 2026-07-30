@@ -99,10 +99,13 @@ const settleGaveUp = new Set<string>();
 const SETTLE_LOOKBACK = 5;
 
 /**
- * settleBets pays every winning bettor in one call, and each USDso transfer is
- * ~95k gas on its own, so leave room rather than relying on estimation.
+ * settleBets pays every winning bettor in one call. A USDso transfer costs ~95k to
+ * an address that already holds some, but a first-time recipient is far more
+ * expensive — a 300,000-gas transfer to a fresh wallet reverted out-of-gas where
+ * eth_estimateGas asked for 1,394,609. Spectators betting for the first time are
+ * exactly that case, so budget generously; unused gas is refunded.
  */
-const SETTLE_GAS_LIMIT = BigInt(3_000_000);
+const SETTLE_GAS_LIMIT = BigInt(10_000_000);
 
 // Turn pacing — must mirror Arena. turnIntervalBlocks is read from the manifest;
 // these are fallbacks / the force-resolve window if a duel stalls mid-flight.
