@@ -79,6 +79,9 @@ const ARENA_DUEL_ABI = [
 const DEFAULT_TURN_INTERVAL_BLOCKS = 600n;
 const EMERGENCY_FINALIZE_BLOCKS = 1000n;
 
+/** Gas floor for turn() — see the note at the call site. */
+const TURN_GAS_LIMIT = BigInt(9_000_000);
+
 interface DuelState {
   lastTurnBlock: bigint;
   completedCallbacks: number;
@@ -171,7 +174,13 @@ async function driveActiveDuel(opts: {
   if (cur >= d.lastTurnBlock + turnInterval) {
     log(`  turn window open (head ${cur} ≥ ${d.lastTurnBlock + turnInterval}) → turn()`);
     try {
-      const h = await wallet.writeContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "turn", args: [] });
+      // Explicit floor rather than estimation. A real-market turn can reach
+      // dreamDEX's native-payout guard, which needs ~5M gas of headroom to still
+      // be there when the pool transfers SOMI; because Somnia only forwards 63/64
+      // of remaining gas into each nested call, an estimated limit can leave the
+      // guard just short and the fighter's order reverts for no visible reason.
+      // Unused gas is refunded, so over-providing costs nothing.
+      const h = await wallet.writeContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "turn", args: [], gas: TURN_GAS_LIMIT });
       const r = await pub.waitForTransactionReceipt({ hash: h });
       log(`  turn() tx=${h} status=${r.status} block=${r.blockNumber}`);
       if (r.status === "reverted" && cur >= d.lastTurnBlock + EMERGENCY_FINALIZE_BLOCKS) {
