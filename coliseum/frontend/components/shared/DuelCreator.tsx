@@ -22,8 +22,16 @@ const TIER_POOLS: Record<number, string[]> = {
   15: ['SOMI', 'WETH', 'WBTC'],
 };
 
-const TURN_OPTIONS = [3, 6, 9, 15] as const;
-type TurnOption = typeof TURN_OPTIONS[number];
+// Tier 3 is deliberately not offered: it trades SOMI only, so both fighters have
+// the same single choice every turn and the duel converges to a near-tie with no
+// story. The contracts still accept turns == 3 for duels already on chain.
+const TURN_OPTIONS = [6, 9, 15] as const;
+/**
+ * Any tier a duel can have, which still includes 3 — duels already on chain use it
+ * and a locked join has to be able to name it. TURN_OPTIONS is the narrower set a
+ * user may pick from.
+ */
+type TurnOption = 3 | 6 | 9 | 15;
 
 interface DuelCreatorProps {
   onMatchFound?: (duelId: bigint) => void;

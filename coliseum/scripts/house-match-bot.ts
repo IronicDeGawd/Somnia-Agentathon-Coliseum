@@ -95,10 +95,12 @@ async function main() {
   const markets = (process.env.HOUSE_MARKETS ?? "sim,real").split(",").map((s) => s.trim().toLowerCase());
   const doSim = markets.includes("sim");
   const doReal = markets.includes("real");
-  // Default to tier 3 + 6 only: real tiers 9/15 require 91/151 USDso per side,
-  // beyond any demo house bankroll, so the house can't field them. Override with
+  // Default to tier 6 + 9. Tier 3 is dropped because it trades SOMI only, so both
+  // fighters face one choice per turn and the duel converges to a near-tie. Real
+  // tiers 9/15 need 91/151 USDso per side — beyond the demo bankroll, so the house
+  // logs and skips those; the sim market's 9 is affordable. Override with
   // HOUSE_TIERS if you ever fund a larger bankroll.
-  const tiers = (process.env.HOUSE_TIERS ?? "3,6").split(",").map((s) => Number(s.trim()) as 3 | 6 | 9 | 15);
+  const tiers = (process.env.HOUSE_TIERS ?? "6,9").split(",").map((s) => Number(s.trim()) as 3 | 6 | 9 | 15);
   const graceMs = Number(process.env.HOUSE_GRACE_S ?? "15") * 1000;
   const tickMs = Number(process.env.HOUSE_TICK_MS ?? "5000");
 
