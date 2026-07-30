@@ -10,9 +10,15 @@ import { parseEther, formatUnits } from "viem";
 const SOMI_POOL = "0x259fD6559214dd5aD3752322426eA9F9fABEFff4" as const;
 const USDSO = "0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171" as const;
 const TICK = parseEther("0.0001"); // SOMI/USDso tickSize
+/**
+ * Native-base pools guard for payout gas headroom and revert with
+ * InsufficientGasForPayout (0x782b2567) below ~5M. Simulate with the same limit
+ * that gets broadcast, or the simulation is dishonest.
+ */
+const NATIVE_PAYOUT_GAS = BigInt(5_000_000);
 
 const POOL_ABI = [
-  { name: "placeTakerOrderWithoutVault", type: "function", stateMutability: "payable",
+  { name: "placeOrder", type: "function", stateMutability: "payable",
     inputs: [
       { name: "isBid", type: "bool" }, { name: "userData", type: "uint64" }, { name: "price", type: "uint256" },
       { name: "quantity", type: "uint256" }, { name: "expireTimestampNs", type: "uint64" }, { name: "orderType", type: "uint8" },
@@ -45,15 +51,17 @@ async function main() {
   console.log(`USDso before: ${formatUnits(usdsoBefore, 18)}`);
 
   const sim = await pub.simulateContract({
-    account: wallet.account, address: SOMI_POOL, abi: POOL_ABI, functionName: "placeTakerOrderWithoutVault",
+    account: wallet.account, address: SOMI_POOL, abi: POOL_ABI, functionName: "placeOrder",
     value: sellAmount, args: [false, BigInt(0), floor, sellAmount, expireNs, 2, 0, "0x0000000000000000000000000000000000000000", BigInt(0)],
+    gas: NATIVE_PAYOUT_GAS,
   });
   const [ok] = sim.result as [boolean, bigint];
   if (!ok) { console.log("simulate success=false — would reject. Abort."); return; }
 
   const hash = await wallet.writeContract({
-    address: SOMI_POOL, abi: POOL_ABI, functionName: "placeTakerOrderWithoutVault",
+    address: SOMI_POOL, abi: POOL_ABI, functionName: "placeOrder",
     value: sellAmount, args: [false, BigInt(0), floor, sellAmount, expireNs, 2, 0, "0x0000000000000000000000000000000000000000", BigInt(0)],
+    gas: NATIVE_PAYOUT_GAS,
   });
   await pub.waitForTransactionReceipt({ hash });
   console.log("swap tx:", hash);

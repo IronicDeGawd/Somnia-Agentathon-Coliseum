@@ -34,9 +34,11 @@ const ERC20_ABI = [
   { name: "approve", type: "function", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
 ] as const;
 
+// Queue state is keyed by (turns, simulated), so every entrypoint carries the
+// market flag. Calls without it revert against the deployed Matchmaker.
 const MATCHMAKER_ABI = [
-  { name: "halfDeposit", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }], outputs: [{ type: "uint256" }] },
-  { name: "queue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "fighter", type: "uint8" }, { name: "turns", type: "uint16" }], outputs: [] },
+  { name: "halfDeposit", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ type: "uint256" }] },
+  { name: "queue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "fighter", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
 ] as const;
 
 const HISTORY_ABI = [
@@ -46,6 +48,8 @@ const HISTORY_ABI = [
 async function main() {
   const playerNum = process.env.PLAYER ?? "1";
   const turns = Number(process.env.TURNS ?? "3") as 3 | 6 | 9 | 15;
+  // SIMULATED=0 targets the real dreamDEX pools; default is the simulated market.
+  const simulated = (process.env.SIMULATED ?? "1") !== "0";
   const fighter = Number(process.env.FIGHTER ?? "-1");
 
   const keyEnv = playerNum === "2" ? process.env.PLAYER2_PRIVATE_KEY : process.env.PLAYER1_PRIVATE_KEY;
@@ -64,7 +68,7 @@ async function main() {
   const wallet = createWalletClient({ account, chain: somnia, transport: http() });
 
   log(`Player ${playerNum}: ${account.address}`);
-  log(`Matchmaker: ${matchmkAddr}  turns=${turns}`);
+  log(`Matchmaker: ${matchmkAddr}  turns=${turns}  simulated=${simulated}`);
 
   // Pick fighter index
   let fighterIndex = fighter >= 0 ? fighter : 0;
@@ -77,8 +81,8 @@ async function main() {
   }
   log(`Fighter index: ${fighterIndex}`);
 
-  const halfDeposit = (await publicClient.readContract({ address: matchmkAddr, abi: MATCHMAKER_ABI, functionName: "halfDeposit", args: [turns] })) as bigint;
-  log(`halfDeposit(${turns}): ${fmtU(halfDeposit)} USDso`);
+  const halfDeposit = (await publicClient.readContract({ address: matchmkAddr, abi: MATCHMAKER_ABI, functionName: "halfDeposit", args: [turns, simulated] })) as bigint;
+  log(`halfDeposit(${turns}, simulated=${simulated}): ${fmtU(halfDeposit)} USDso`);
 
   const usdBal = (await publicClient.readContract({ address: usdsoAddr, abi: ERC20_ABI, functionName: "balanceOf", args: [account.address] })) as bigint;
   const sttBal = await publicClient.getBalance({ address: account.address });
@@ -98,8 +102,8 @@ async function main() {
     log("Allowance sufficient — skipping approve");
   }
 
-  log(`Queuing player ${playerNum} (fighter=${fighterIndex}, turns=${turns})...`);
-  const queueTx = await wallet.writeContract({ address: matchmkAddr, abi: MATCHMAKER_ABI, functionName: "queue", args: [fighterIndex, turns] });
+  log(`Queuing player ${playerNum} (fighter=${fighterIndex}, turns=${turns}, simulated=${simulated})...`);
+  const queueTx = await wallet.writeContract({ address: matchmkAddr, abi: MATCHMAKER_ABI, functionName: "queue", args: [fighterIndex, turns, simulated] });
   await publicClient.waitForTransactionReceipt({ hash: queueTx });
   log(`  queue tx=${queueTx} ✓`);
   log(`Done — P${playerNum} is now in the queue.`);
