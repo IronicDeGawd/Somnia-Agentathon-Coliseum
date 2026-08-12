@@ -27,9 +27,11 @@
 import hre from "hardhat";
 import { formatEther, parseAbi, getAddress } from "viem";
 
-const OLD_ARENA = getAddress("0x8813fef83ae3faa8d700c6fbcb8cf92de08ea726");
-const OLD_BOOK  = getAddress("0x323cf312d93a5cbe575d30ef4d39a56ac362ece3");
-const OLD_MM    = getAddress("0xadfc07d9e36622476860f8d27ba0a08e33e592e0");
+// Defaults are the first superseded generation. Override per migration:
+//   OLD_ARENA=0x.. OLD_BOOK=0x.. OLD_MM=0x.. pnpm exec hardhat run ...
+const OLD_ARENA = getAddress(process.env.OLD_ARENA ?? "0x8813fef83ae3faa8d700c6fbcb8cf92de08ea726");
+const OLD_BOOK  = getAddress(process.env.OLD_BOOK  ?? "0x323cf312d93a5cbe575d30ef4d39a56ac362ece3");
+const OLD_MM    = getAddress(process.env.OLD_MM    ?? "0xadfc07d9e36622476860f8d27ba0a08e33e592e0");
 const USDSO     = getAddress("0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171");
 
 const ARENA_ABI = parseAbi([
