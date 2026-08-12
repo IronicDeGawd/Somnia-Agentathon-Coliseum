@@ -10,6 +10,11 @@
   --bg-card-2: #20143a;
   --border: #2d1f4f;
   --border-soft: #1f1538;
+  /* Form fields only. --border sits at 1.2:1 against the surfaces, which is
+     fine for a decorative card edge but not for an input, where the border is
+     the only thing showing the field's extent (WCAG 1.4.11 asks 3:1 for that).
+     Kept separate so card and divider styling is unchanged. */
+  --border-input: #7862a8;
 
   /* Three text tiers, same violet hue, each a clear step apart and each above
      4.5:1 on all four surfaces. Worst-case ratios: text 13.5, dim 6.5, faint

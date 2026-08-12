@@ -186,7 +186,7 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
             disabled={busy}
             style={{
               background: 'var(--bg-card-2)',
-              border: '1px solid var(--border)',
+              border: '1px solid var(--border-input)',
               color: 'var(--text)',
               fontFamily: 'var(--fnt-mono)',
               fontSize: 16,
