@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAccount, useBalance } from 'wagmi';
 import { formatEther, parseEther } from 'viem';
 import { useSttSwap, type SwapStage } from '@/hooks/useSttSwap';
@@ -13,6 +13,21 @@ interface SwapModalProps {
 
 /** Largest single order the SOMI/USDso book reliably fills — see setMax. */
 const MAX_FILLABLE_STT = parseEther('50');
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Focusable descendants in DOM order, skipping anything currently hidden. */
+function focusableWithin(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.offsetParent !== null || getComputedStyle(el).position === 'fixed',
+  );
+}
+
+function firstFocusable(root: HTMLElement | null): HTMLElement | undefined {
+  return focusableWithin(root)[0];
+}
 
 const STAGE_LABEL: Record<SwapStage, string> = {
   idle: 'READY',
@@ -36,9 +51,50 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
 
   const busy = stage !== 'idle' && stage !== 'done' && stage !== 'error';
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const restoreFocusTo = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (!open) reset();
   }, [open, reset]);
+
+  // Move focus into the dialog on open and hand it back on close. Split from the
+  // key handler below deliberately: this must depend on `open` alone, or every
+  // change of `busy` would tear down and re-run it, yanking focus mid-swap.
+  useEffect(() => {
+    if (!open) return;
+    restoreFocusTo.current = document.activeElement as HTMLElement | null;
+    (firstFocusable(dialogRef.current) ?? dialogRef.current)?.focus();
+    return () => restoreFocusTo.current?.focus?.();
+  }, [open]);
+
+  // Escape to dismiss, and Tab cycling kept inside the dialog. Without this,
+  // Tab walked straight out to the page behind while the modal still covered it.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Never close mid-transaction: the swap is already in flight and the
+        // dialog is the only place its progress is reported.
+        if (!busy) { e.preventDefault(); onClose(); }
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const els = focusableWithin(dialogRef.current);
+      if (els.length === 0) return;
+      const first = els[0];
+      const last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, busy, onClose]);
 
   if (!open) return null;
 
@@ -60,8 +116,11 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      aria-labelledby="swap-title"
+      tabIndex={-1}
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
@@ -87,7 +146,7 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
         }}
       >
         <div className="row jc-sb ai-c">
-          <span className="t-display t-up" style={{ fontSize: 16, letterSpacing: '0.18em' }}>
+          <span id="swap-title" className="t-display t-up" style={{ fontSize: 16, letterSpacing: '0.18em' }}>
             SWAP STT → USDso
           </span>
           <button
