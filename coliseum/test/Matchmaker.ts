@@ -135,7 +135,8 @@ describe("Matchmaker", () => {
       const [player] = await mm.read.getSlot([3, false]);
       expect(player).to.equal(zeroAddress);
 
-      const p = await mm.read.pendingByTier([3, false]);
+      expect(await mm.read.pendingCount([3, false])).to.equal(1n);
+      const p = await mm.read.pendingQueue([3, false, 0n]);
       expect(p[6]).to.equal(true);
       expect(p[0].toLowerCase()).to.equal(
         alice.account.address.toLowerCase()
@@ -201,8 +202,7 @@ describe("Matchmaker", () => {
       const lastDuelId = await mockArena.read.lastDuelId();
       expect(lastDuelId).to.equal(1n);
 
-      const p = await mm.read.pendingByTier([3, false]);
-      expect(p[6]).to.equal(false);
+      expect(await mm.read.pendingCount([3, false])).to.equal(0n);
     });
 
     it("reverts if Arena is still busy", async () => {
@@ -224,6 +224,117 @@ describe("Matchmaker", () => {
       await expect(mm.write.triggerPendingMatch([3, false])).to.be.rejectedWith(
         "ArenaStillBusy"
       );
+    });
+  });
+
+  describe("pending queue (FIFO)", () => {
+    // Queue `pairs` pairs into one tier. Returns the players in arrival order.
+    async function fillQueue(
+      d: Awaited<ReturnType<typeof deploy>>,
+      pairs: number,
+      turns = 3,
+    ) {
+      const { mm, mockUsdso } = d;
+      const wallets = await hre.viem.getWalletClients();
+      const half = await mm.read.halfDeposit([turns, false]);
+      const queued: `0x${string}`[][] = [];
+      for (let i = 0; i < pairs; i++) {
+        // Wallets 1..N; two fresh accounts per pair so nobody matches themselves.
+        const a = wallets[1 + i * 2]!;
+        const b = wallets[2 + i * 2]!;
+        for (const w of [a, b]) {
+          await mockUsdso.write.mint([w.account.address, half * 4n]);
+          await mockUsdso.write.approve([mm.address, half], { account: w.account });
+        }
+        await mm.write.queue([0, turns, false], { account: a.account });
+        await mm.write.queue([1, turns, false], { account: b.account });
+        queued.push([a.account.address, b.account.address]);
+      }
+      return queued;
+    }
+
+    it("queues a third pair instead of reverting ArenaStillBusy", async () => {
+      const d = await deploy();
+      await d.mockArena.write.setBusy([true]);
+
+      // Three pairs arrive into a full Arena. The old single pending slot took
+      // the first and turned the rest away after taking their deposits.
+      await fillQueue(d, 3);
+      expect(await d.mm.read.pendingCount([3, false])).to.equal(3n);
+    });
+
+    it("starts queued pairs in arrival order", async () => {
+      const d = await deploy();
+      await d.mockArena.write.setBusy([true]);
+      const queued = await fillQueue(d, 3);
+
+      await d.mockArena.write.setBusy([false]);
+      await d.mockArena.write.setMaxActive([3n]);
+
+      for (let i = 0; i < 3; i++) {
+        await d.mm.write.triggerPendingMatch([3, false]);
+        const duelId = BigInt(i + 1);
+        const m = await d.mm.read.matches([duelId]);
+        expect(m[0].toLowerCase()).to.equal(queued[i]![0]!.toLowerCase());
+      }
+      expect(await d.mm.read.pendingCount([3, false])).to.equal(0n);
+    });
+
+    it("stops starting duels once Arena is at capacity, and resumes after one resolves", async () => {
+      const d = await deploy();
+      await d.mockArena.write.setBusy([true]);
+      await fillQueue(d, 3);
+
+      await d.mockArena.write.setBusy([false]);
+      await d.mockArena.write.setMaxActive([2n]);
+
+      await d.mm.write.triggerPendingMatch([3, false]);
+      await d.mm.write.triggerPendingMatch([3, false]);
+      expect(await d.mockArena.read.hasCapacity()).to.equal(false);
+      await expect(d.mm.write.triggerPendingMatch([3, false]))
+        .to.be.rejectedWith("ArenaStillBusy");
+
+      await d.mockArena.write.resolveDuel([1n, 0]);
+      await d.mm.write.triggerPendingMatch([3, false]);
+      expect(await d.mm.read.pendingCount([3, false])).to.equal(0n);
+    });
+
+    it("cancelPending refunds both players and the queue skips the hole", async () => {
+      const d = await deploy();
+      await d.mockArena.write.setBusy([true]);
+      const queued = await fillQueue(d, 2);
+      const wallets = await hre.viem.getWalletClients();
+
+      const [pA, pB] = queued[0]!;
+      const beforeA = await d.mockUsdso.read.balanceOf([pA!]);
+      const beforeB = await d.mockUsdso.read.balanceOf([pB!]);
+
+      const positions = await d.mm.read.getPendingPositions([3, false]) as bigint[];
+      expect(positions).to.deep.equal([0n, 1n]);
+
+      // Either player of the pair may withdraw it; both get their half back.
+      await d.mm.write.cancelPending([3, false, positions[0]!], { account: wallets[1]!.account });
+      expect(await d.mockUsdso.read.balanceOf([pA!]) > beforeA).to.equal(true);
+      expect(await d.mockUsdso.read.balanceOf([pB!]) > beforeB).to.equal(true);
+      expect(await d.mm.read.pendingCount([3, false])).to.equal(1n);
+
+      // The cancelled entry is a tombstone — the next trigger must skip it and
+      // start pair two, not revert on the hole.
+      await d.mockArena.write.setBusy([false]);
+      await d.mm.write.triggerPendingMatch([3, false]);
+      const m = await d.mm.read.matches([1n]);
+      expect(m[0].toLowerCase()).to.equal(queued[1]![0]!.toLowerCase());
+    });
+
+    it("only a player of that pair may cancel it", async () => {
+      const d = await deploy();
+      await d.mockArena.write.setBusy([true]);
+      await fillQueue(d, 1);
+      const wallets = await hre.viem.getWalletClients();
+
+      await expect(
+        d.mm.write.cancelPending([3, false, 0n], { account: wallets[9]!.account }),
+      ).to.be.rejectedWith("NotYourMatch");
     });
   });
 

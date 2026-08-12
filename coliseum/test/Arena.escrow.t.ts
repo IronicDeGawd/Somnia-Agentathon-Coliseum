@@ -52,7 +52,8 @@ async function runOneTurn(
   mockPlatform: Awaited<ReturnType<typeof deploy>>["mockPlatform"],
 ) {
   const publicClient = await hre.viem.getPublicClient();
-  const tx = await arena.write.turn();
+  const activeId = (await arena.read.activeDuelId()) as bigint;
+  const tx = await arena.write.turn([activeId]);
   const receipt = await publicClient.getTransactionReceipt({ hash: tx });
   const requestIds: bigint[] = [];
   for (const log of receipt.logs) {

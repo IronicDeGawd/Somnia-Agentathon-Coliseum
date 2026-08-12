@@ -15,6 +15,11 @@ contract MockArenaMatchmaker {
     uint256 public activeDuelId;
     bool    public busy;
 
+    // Mirrors Arena's concurrency model: several duels may run at once, and
+    // Matchmaker gates on hasCapacity() rather than on a single busy flag.
+    uint256 public activeCount;
+    uint256 public maxActive = 3;
+
     struct DuelRecord {
         uint8   fighterA;
         uint8   fighterB;
@@ -27,8 +32,7 @@ contract MockArenaMatchmaker {
 
     constructor(address _usdso) { usdso = IERC20M(_usdso); }
 
-    // When busy=true, set a fake activeDuelId with status=Active so Matchmaker
-    // sees Arena as occupied via _arenaFree() → activeDuelId != 0 && status != Resolved
+    /// @dev Force the Arena to look full, whatever the real count is.
     function setBusy(bool _busy) external {
         busy = _busy;
         if (_busy && activeDuelId == 0) {
@@ -40,7 +44,14 @@ contract MockArenaMatchmaker {
         }
     }
 
+    function setMaxActive(uint256 n) external { maxActive = n; }
+
+    function hasCapacity() external view returns (bool) {
+        return !busy && activeCount < maxActive;
+    }
+
     function resolveDuel(uint256 duelId, uint8 winnerSlot) external {
+        if (_duels[duelId].status == 1 && activeCount > 0) activeCount--;
         _duels[duelId].status     = 3;
         _duels[duelId].winnerSlot = winnerSlot;
         if (activeDuelId == duelId) activeDuelId = 0;
@@ -56,12 +67,13 @@ contract MockArenaMatchmaker {
     }
 
     function startDuel(uint8 fA, uint8 fB, uint16 turns, bool /* simulated */) external returns (uint256 duelId) {
-        require(!busy, "arena busy");
+        require(!busy && activeCount < maxActive, "arena full");
         uint256 fee = platformFee(turns);
         uint256 required = 2e18 + fee;
         usdso.transferFrom(msg.sender, address(this), required);
         duelId = ++lastDuelId;
         activeDuelId = duelId;
+        activeCount++;
         _duels[duelId] = DuelRecord(fA, fB, msg.sender, 1, 255, required - fee);
     }
 

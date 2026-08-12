@@ -25,7 +25,8 @@ interface IArena {
     function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated)
         external returns (uint256 duelId);
 
-    function activeDuelId() external view returns (uint256);
+    /// True while Arena can accept another concurrent duel.
+    function hasCapacity() external view returns (bool);
     function minDepositFor(uint16 turns) external view returns (uint256);
     function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256);
     function recoverFunds(uint256 duelId) external;
@@ -100,11 +101,16 @@ contract Matchmaker {
     // means a real-market player only ever matches another real-market player.
     mapping(uint16 => mapping(bool => Slot)) public slots;
 
-    // ─── Pending matches (one per tier) ──────────────────────────────────────
+    // ─── Pending matches (FIFO queue per tier + market) ───────────────────────
     //
-    // A pending match forms when two players match but Arena is busy.
-    // Per-tier storage means up to 4 matches can be pending simultaneously
-    // (one per tier), rather than a global bottleneck that blocks all tiers.
+    // A pending match forms when two players pair up but Arena has no free slot.
+    // This used to be a single slot per (tier, market), so the third and fourth
+    // players to arrive were turned away with ArenaStillBusy — they had paired
+    // successfully and were rejected anyway. It is now a real queue: matches wait
+    // in arrival order and start as slots free up.
+    //
+    // Implemented as head/tail cursors over a mapping rather than an array, so
+    // enqueue and dequeue are both O(1) and nothing is ever shifted.
 
     struct PendingMatch {
         address playerA;
@@ -113,12 +119,14 @@ contract Matchmaker {
         uint8   fighterB;
         uint16  turns;
         uint256 totalPot;  // combined deposit held; may be refunded if price drift
-        bool    exists;
+        bool    exists;    // false once started or cancelled — a tombstone
         bool    simulated; // which market this pending match will start on
     }
 
-    // (turns, simulated) → pending match waiting for Arena to free up
-    mapping(uint16 => mapping(bool => PendingMatch)) public pendingByTier;
+    // (turns, simulated, position) → queued match. Positions run head..tail-1.
+    mapping(uint16 => mapping(bool => mapping(uint256 => PendingMatch))) public pendingQueue;
+    mapping(uint16 => mapping(bool => uint256)) public pendingHead;
+    mapping(uint16 => mapping(bool => uint256)) public pendingTail;
 
     // ─── Match records ────────────────────────────────────────────────────────
 
@@ -138,6 +146,8 @@ contract Matchmaker {
     event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit);
     event QueueCancelled(address indexed player, uint16 turns, uint256 refund);
     event MatchPending(address indexed playerA, address indexed playerB, uint16 turns);
+    /// @notice A queued pair was withdrawn by one of its players; both were refunded.
+    event PendingCancelled(uint256 indexed position, address playerA, address playerB, uint16 turns);
     event MatchStarted(
         uint256 indexed duelId,
         address indexed playerA, address indexed playerB,
@@ -158,6 +168,7 @@ contract Matchmaker {
     error SameFighter();
     error ArenaStillBusy();
     error NoPendingMatch();
+    error NotYourMatch();
     error NotQueued();
     error CancelTooSoon();
     error DuelNotResolved();
@@ -220,12 +231,14 @@ contract Matchmaker {
 
             uint256 total = dA + half;
 
-            if (_arenaFree()) {
+            // Only start immediately when there is a pre-existing queue to skip
+            // AND a free Arena slot. Otherwise take a ticket at the back, so a
+            // pair that arrives later can never overtake one already waiting.
+            if (_arenaFree() && pendingCount(turns, simulated) == 0) {
                 _startOrRefund(pA, msg.sender, fA, fighter, turns, total, simulated);
             } else {
-                // Arena busy — store per-(tier,market) pending match (H-2 fix)
-                if (pendingByTier[turns][simulated].exists) revert ArenaStillBusy();
-                pendingByTier[turns][simulated] = PendingMatch({
+                uint256 pos = pendingTail[turns][simulated];
+                pendingQueue[turns][simulated][pos] = PendingMatch({
                     playerA:  pA,
                     playerB:  msg.sender,
                     fighterA: fA,
@@ -235,6 +248,7 @@ contract Matchmaker {
                     exists:   true,
                     simulated: simulated
                 });
+                pendingTail[turns][simulated] = pos + 1;
                 emit MatchPending(pA, msg.sender, turns);
             }
         }
@@ -242,19 +256,49 @@ contract Matchmaker {
 
     // ─── Trigger pending match ────────────────────────────────────────────────
 
-    /// @notice Trigger a pending match for a specific tier once Arena is free.
-    ///         Permissionless — anyone can call this.
-    /// @param turns  The tier whose pending match to trigger.
+    /// @notice Start the pair at the head of a tier's queue, once Arena has a free
+    ///         slot. Permissionless — anyone can call this.
+    /// @param turns  The tier whose queue head to start.
     function triggerPendingMatch(uint16 turns, bool simulated) external {
-        PendingMatch storage pm = pendingByTier[turns][simulated];
-        if (!pm.exists)     revert NoPendingMatch();
-        if (!_arenaFree())  revert ArenaStillBusy();
+        if (!_arenaFree()) revert ArenaStillBusy();
 
-        // CEI: copy to memory and delete state before external calls
-        PendingMatch memory m = pm;
-        delete pendingByTier[turns][simulated];
+        // Walk past any cancelled entries (tombstones) to the real head.
+        uint256 head = pendingHead[turns][simulated];
+        uint256 tail = pendingTail[turns][simulated];
+        while (head < tail && !pendingQueue[turns][simulated][head].exists) head++;
+        if (head >= tail) {
+            pendingHead[turns][simulated] = head;
+            revert NoPendingMatch();
+        }
+
+        // CEI: copy to memory and clear state before any external call.
+        PendingMatch memory m = pendingQueue[turns][simulated][head];
+        delete pendingQueue[turns][simulated][head];
+        pendingHead[turns][simulated] = head + 1;
 
         _startOrRefund(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot, m.simulated);
+    }
+
+    /// @notice Withdraw a queued pair and refund both players. Either player of
+    ///         that pair may call it.
+    ///
+    ///         Without this a pair could be stuck indefinitely: cancelQueue only
+    ///         covers the un-matched slot, so once two players paired into a full
+    ///         Arena their deposits had no exit at all.
+    /// @param position  Queue position, as returned by getPending / pendingHead.
+    function cancelPending(uint16 turns, bool simulated, uint256 position) external {
+        PendingMatch memory m = pendingQueue[turns][simulated][position];
+        if (!m.exists) revert NoPendingMatch();
+        if (msg.sender != m.playerA && msg.sender != m.playerB) revert NotYourMatch();
+
+        // Effects before interaction: leave a tombstone the queue walk skips.
+        delete pendingQueue[turns][simulated][position];
+
+        uint256 eachRefund = m.totalPot / 2;
+        if (!usdso.transfer(m.playerA, eachRefund)) revert TransferFailed();
+        if (!usdso.transfer(m.playerB, m.totalPot - eachRefund)) revert TransferFailed();
+
+        emit PendingCancelled(position, m.playerA, m.playerB, turns);
     }
 
     // ─── Cancel queue entry ───────────────────────────────────────────────────
@@ -373,13 +417,35 @@ contract Matchmaker {
 
     function arenaFree() external view returns (bool) { return _arenaFree(); }
 
+    /// @notice How many pairs are waiting in a tier's queue (tombstones excluded).
+    function pendingCount(uint16 turns, bool simulated) public view returns (uint256 n) {
+        uint256 tail = pendingTail[turns][simulated];
+        for (uint256 i = pendingHead[turns][simulated]; i < tail; i++) {
+            if (pendingQueue[turns][simulated][i].exists) n++;
+        }
+    }
+
+    /// @notice The queue positions still waiting in a tier, in start order.
+    ///         Use these as the `position` argument to cancelPending.
+    function getPendingPositions(uint16 turns, bool simulated)
+        external view returns (uint256[] memory positions)
+    {
+        uint256 head = pendingHead[turns][simulated];
+        uint256 tail = pendingTail[turns][simulated];
+        uint256 n = pendingCount(turns, simulated);
+        positions = new uint256[](n);
+        uint256 k = 0;
+        for (uint256 i = head; i < tail; i++) {
+            if (pendingQueue[turns][simulated][i].exists) positions[k++] = i;
+        }
+    }
+
     // ─── Internal ─────────────────────────────────────────────────────────────
 
+    /// @dev "Free" now means "has a free slot", not "is idle" — Arena runs several
+    ///      duels at once, so this is a capacity question rather than a busy flag.
     function _arenaFree() internal view returns (bool) {
-        uint256 activeId = arena.activeDuelId();
-        if (activeId == 0) return true;
-        (,,,,,,,, uint8 status,,,) = arena.duels(activeId);
-        return status == STATUS_RESOLVED;
+        return arena.hasCapacity();
     }
 
     /// @dev Attempt to start a match. If the required deposit has drifted above

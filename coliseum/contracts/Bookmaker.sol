@@ -108,7 +108,10 @@ contract Bookmaker is IBookmaker {
         address _platform,
         uint256 _turnIntervalBlocks
     ) payable {
-        if (msg.value < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
+        // Reactivity is OPT-IN: call resubscribe() to switch it on. A BlockTick
+        // subscription bills every block regardless of activity (~25.8 STT/hour)
+        // and cannot be cancelled, so subscribing from the constructor made every
+        // deploy start burning STT the moment it landed. See Arena's constructor.
         // Must be a contract — an EOA/typo would silently disable the duelist guard.
         if (_matchmaker.code.length == 0) revert BadMatchmaker();
         arena         = IArena(_arena);
@@ -118,8 +121,6 @@ contract Bookmaker is IBookmaker {
         PLATFORM_ADDR = _platform;
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
         owner         = msg.sender;
-
-        subscriptionId = _subscribeReactivity();
     }
 
     receive() external payable {}

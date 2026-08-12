@@ -43,6 +43,12 @@ contract Arena is ArenaVault {
     /// @notice If no turn has advanced for this many blocks, owner may call emergencyFinalize.
     uint256 public constant EMERGENCY_FINALIZE_BLOCKS = 1000;
 
+    /// @notice Hard ceiling on maxActiveDuels. Each running duel burns STT on two
+    ///         inferences per turn out of one shared balance, so the owner is not
+    ///         free to raise the cap arbitrarily — a dry Arena silently produces
+    ///         all-Hold duels, which now resolve as draws.
+    uint16 public constant MAX_ACTIVE_CEILING = 8;
+
     address public immutable PLATFORM_ADDR;
     IFighterRegistry public immutable registry;
     uint256 public TURN_INTERVAL_BLOCKS;
@@ -51,7 +57,18 @@ contract Arena is ArenaVault {
 
     mapping(uint256 => ArenaTypes.Duel) public duels;
     uint256 public nextDuelId = 1;
-    uint256 public activeDuelId;
+
+    /// @notice Every duel currently running. Order is not stable — _resolveDuel
+    ///         removes by swap-and-pop, so the last id takes the resolved one's place.
+    ///         Read it through getActiveDuelIds() — kept private so solc does not
+    ///         also emit a per-index auto-getter, which Arena has no room for.
+    uint256[] private activeDuelIds;
+
+    /// @dev duelId → index+1 in activeDuelIds (0 = not active), for O(1) removal.
+    mapping(uint256 => uint256) private _activeIndex;
+
+    /// @notice How many duels may run at once. Owner-settable up to MAX_ACTIVE_CEILING.
+    uint16 public maxActiveDuels = 3;
 
     /// @notice USDso escrow held for each duel's creator (the pot, fee excluded).
     ///         Set on startDuel, paid out (and zeroed) on recoverFunds. recoverFunds
@@ -91,7 +108,14 @@ contract Arena is ArenaVault {
         uint256 _turnIntervalBlocks,
         uint8[3] memory _baseDecimals   // [WETH, WBTC, SOMI]
     ) payable ArenaVault(_usdso, _poolWeth, _poolWbtc, _poolSomi) {
-        if (msg.value < REACTIVITY_FUND_MIN) revert ArenaTypes.ReactivityUnderfunded();
+        // Reactivity is OPT-IN: call resubscribe() to switch it on.
+        //
+        // This used to demand 33 STT up front and subscribe in the constructor.
+        // A BlockTick subscription bills every block whether or not a duel is
+        // running — ~25.8 STT/hour — and the precompile offers no unsubscribe, so
+        // the only way to stop one is to let the contract's balance run dry. A
+        // fresh deploy therefore started burning immediately and silently. Turns
+        // are keeper-driven now, so nothing here needs the subscription.
         registry            = IFighterRegistry(_registry);
         PLATFORM_ADDR       = _platform;
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
@@ -99,8 +123,6 @@ contract Arena is ArenaVault {
         _cachePoolMeta(_poolWeth, _baseDecimals[0]);
         _cachePoolMeta(_poolWbtc, _baseDecimals[1]);
         _cachePoolMeta(_poolSomi, _baseDecimals[2]);
-
-        subscriptionId = _subscribeReactivity();
     }
 
     function _onEventSelector() internal pure override returns (bytes4) {
@@ -114,8 +136,10 @@ contract Arena is ArenaVault {
         if (eventTopics.length < 2) return;
         uint64 blockNumber = uint64(uint256(eventTopics[1]));
         if (blockNumber % TURN_INTERVAL_BLOCKS != 0) return;
-        if (activeDuelId == 0) return;
-        _runTurn();
+        // Advance every running duel. _runTurn is a no-op for any duel whose
+        // interval has not elapsed, so this stays cheap when only one is live.
+        uint256[] memory ids = activeDuelIds;
+        for (uint256 i = 0; i < ids.length; i++) _runTurn(ids[i]);
     }
 
     /// @notice Set the DuelHistory sink (owner-only). Recording is best-effort and
@@ -127,13 +151,13 @@ contract Arena is ArenaVault {
     /// @notice Manual turn advance, owner-only. Reactivity `onEvent` drives turns automatically;
     ///         this is a fallback for when the subscription is down. Public access would let an
     ///         attacker time turns to sandwich pool manipulation around LLM context reads.
-    function turn() external onlyOwner {
-        _runTurn();
+    function turn(uint256 duelId) external onlyOwner {
+        _runTurn(duelId);
     }
 
-    function _runTurn() internal {
-        if (activeDuelId == 0) return;
-        ArenaTypes.Duel storage duel = duels[activeDuelId];
+    function _runTurn(uint256 duelId) internal {
+        if (duelId == 0) return;
+        ArenaTypes.Duel storage duel = duels[duelId];
         if (duel.status != ArenaTypes.DuelStatus.Active) return;
         if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
         if (duel.completedCallbacks >= duel.turns * 2) return;
@@ -141,11 +165,20 @@ contract Arena is ArenaVault {
 
         // Snapshot mark prices on every active pool BEFORE any LLM requests.
         // emergencyFinalize will use these snapshots instead of live prices.
-        _snapshotMarkPrices(activeDuelId, duel);
+        _snapshotMarkPrices(duelId, duel);
 
-        _requestFighterMove(activeDuelId, duel.fighterA);
-        _requestFighterMove(activeDuelId, duel.fighterB);
-        emit ArenaTypes.TurnAdvanced(activeDuelId, duel.completedCallbacks, block.number);
+        _requestFighterMove(duelId, duel.fighterA);
+        _requestFighterMove(duelId, duel.fighterB);
+        emit ArenaTypes.TurnAdvanced(duelId, duel.completedCallbacks, block.number);
+    }
+
+    /// @notice Raise or lower how many duels may run at once. Lowering below the
+    ///         current count does not cancel anything — it only stops new starts
+    ///         until enough resolve.
+    function setMaxActiveDuels(uint16 n) external onlyOwner {
+        if (n == 0 || n > MAX_ACTIVE_CEILING) revert ArenaTypes.BadMaxActiveDuels();
+        maxActiveDuels = n;
+        emit ArenaTypes.MaxActiveDuelsSet(n);
     }
 
     function _snapshotMarkPrices(uint256 duelId, ArenaTypes.Duel storage duel) internal {
@@ -177,8 +210,12 @@ contract Arena is ArenaVault {
         uint16 turns,
         bool   simulated
     ) external returns (uint256 duelId) {
-        if (activeDuelId != 0 && duels[activeDuelId].status != ArenaTypes.DuelStatus.Resolved)
-            revert ArenaTypes.DuelAlreadyActive();
+        // Duels run concurrently up to maxActiveDuels. Everything that could
+        // collide between them — escrow, per-fighter balances, mark snapshots,
+        // odds and bets — is already keyed by duelId, so the only shared resource
+        // is this contract's STT balance for inference (see the watcher fuel guard).
+        if (activeDuelIds.length >= maxActiveDuels)
+            revert ArenaTypes.ArenaFull(activeDuelIds.length, maxActiveDuels);
 
         if (!ArenaUtils.isValidTurnCount(turns)) revert ArenaTypes.InvalidTurnCount();
 
@@ -234,7 +271,8 @@ contract Arena is ArenaVault {
             winnerSlot:              type(uint8).max, // 255 = unset until resolved
             simulated:               simulated
         });
-        activeDuelId = duelId;
+        activeDuelIds.push(duelId);
+        _activeIndex[duelId] = activeDuelIds.length; // index+1; 0 means "not active"
 
         // Escrow the real pot in this contract's USDso balance. recoverFunds pays
         // the creator from here (capped by duelPot) — never from the shared seed
@@ -318,7 +356,7 @@ contract Arena is ArenaVault {
             : (slot == 0 ? duel.fighterA : duel.fighterB);
         duel.winnerSlot = slot;
         duel.status = ArenaTypes.DuelStatus.Resolved;
-        activeDuelId = 0;
+        _dropActive(duelId);
         emit ArenaTypes.DuelResolved(duelId, winnerFighterId, valueA, valueB);
         if (slot == ArenaTypes.DRAW_SLOT) emit ArenaTypes.DuelDrawn(duelId, valueA, valueB);
 
@@ -653,6 +691,59 @@ contract Arena is ArenaVault {
         emit ArenaTypes.OrderPlaced(pool, fighterId, duelId, orderId, isBid, price, quantity, orderType);
         // FOK orders (orderType=1) from _executeFighterAction update fighter balances
         // at the call site — this function only places the order and emits.
+    }
+
+    // ─── Active-duel set ──────────────────────────────────────────────────────
+
+    /// @dev Swap-and-pop the resolved duel out of activeDuelIds. Order is not
+    ///      meaningful, so moving the tail into the hole keeps removal O(1).
+    function _dropActive(uint256 duelId) internal {
+        uint256 idxPlusOne = _activeIndex[duelId];
+        if (idxPlusOne == 0) return;
+        uint256 idx  = idxPlusOne - 1;
+        uint256 last = activeDuelIds.length - 1;
+        if (idx != last) {
+            uint256 moved = activeDuelIds[last];
+            activeDuelIds[idx] = moved;
+            _activeIndex[moved] = idx + 1;
+        }
+        activeDuelIds.pop();
+        _activeIndex[duelId] = 0;
+    }
+
+    /// @notice Every running duel id.
+    function getActiveDuelIds() external view returns (uint256[] memory) {
+        return activeDuelIds;
+    }
+
+    /// @notice True when another duel can be started. Matchmaker gates on this.
+    function hasCapacity() external view returns (bool) {
+        return activeDuelIds.length < maxActiveDuels;
+    }
+
+    /// @notice Deprecated single-duel view, kept so older consumers still read
+    ///         something sane. Returns the first running duel, or 0 if none.
+    ///         Use getActiveDuelIds() — this cannot see the others.
+    function activeDuelId() external view returns (uint256) {
+        return activeDuelIds.length > 0 ? activeDuelIds[0] : 0;
+    }
+
+    /// @notice Running duels whose turn interval has elapsed and which still have
+    ///         moves outstanding. The keeper calls this once per tick and then
+    ///         turn(id) on each, instead of polling every duel separately.
+    function duelsReadyForTurn() external view returns (uint256[] memory ready) {
+        uint256[] memory ids = activeDuelIds;
+        uint256 n = 0;
+        uint256[] memory buf = new uint256[](ids.length);
+        for (uint256 i = 0; i < ids.length; i++) {
+            ArenaTypes.Duel storage d = duels[ids[i]];
+            if (d.status != ArenaTypes.DuelStatus.Active) continue;
+            if (block.number < d.lastTurnBlock + TURN_INTERVAL_BLOCKS) continue;
+            if (d.completedCallbacks >= d.turns * 2) continue;
+            buf[n++] = ids[i];
+        }
+        ready = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) ready[i] = buf[i];
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
