@@ -221,6 +221,34 @@ describe("Bookmaker", function () {
       expect(accrued).to.equal(rake);
     });
 
+    // Nobody's bet was resolved against anybody, so every stake goes back whole.
+    // Raking a draw would charge bettors a fee for an outcome that never came.
+    it("on a draw every stake is refunded in full and no rake is taken", async function () {
+      const { bookmaker, mockArena, usdso, bettor1, bettor2, bettor3 } = await deploy();
+      await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
+
+      const stake10 = parseEther("10");
+      const stake6  = parseEther("6");
+      await bookmaker.write.placeBet([1n, 0, stake10], { account: bettor1.account });
+      await bookmaker.write.placeBet([1n, 0, stake10], { account: bettor2.account });
+      await bookmaker.write.placeBet([1n, 1, stake6],  { account: bettor3.account });
+
+      await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
+      await mockArena.write.setWinnerSlot([1n, 2]); // 2 = draw
+      await bookmaker.write.settleBets([1n]);
+
+      // Every bettor is made whole, on both sides of the book.
+      const startBal = parseEther("1000");
+      expect(await usdso.read.balanceOf([bettor1.account.address])).to.equal(startBal);
+      expect(await usdso.read.balanceOf([bettor2.account.address])).to.equal(startBal);
+      expect(await usdso.read.balanceOf([bettor3.account.address])).to.equal(
+        startBal,
+        "the fighter-B backer is refunded too, not treated as a loser",
+      );
+      expect(await bookmaker.read.rakeAccrued([1n])).to.equal(0n, "a draw is not raked");
+    });
+
     it("reverts DuelAlreadySettled on second settle call", async function () {
       const { bookmaker, mockArena } = await deploy();
       await bookmaker.write.initializeOdds([1n, 6000, 4000]);

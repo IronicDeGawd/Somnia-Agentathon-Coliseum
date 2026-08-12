@@ -72,6 +72,10 @@ contract Matchmaker {
     // If Arena's enum ever changes, update this constant.
     uint8 private constant STATUS_RESOLVED = 3;
 
+    // Mirrors ArenaTypes.DRAW_SLOT = 2 — the duel ended level and neither player
+    // takes the other's stake.
+    uint8 private constant DRAW_SLOT = 2;
+
     // Minimum blocks a player must wait before they can cancel their queue entry.
     // Prevents same-block queue-grief (queue then cancel to deny an opponent a slot).
     uint64 public constant CANCEL_DELAY_BLOCKS = 1;
@@ -301,8 +305,20 @@ contract Matchmaker {
         if (isA) m.settledA = true;
         else     m.settledB = true;
 
-        bool callerWon = (winnerSlot == 0 && isA) || (winnerSlot == 1 && isB);
-        uint256 payout = callerWon ? m.totalPot : 0;
+        // On a draw neither player takes the other's stake: each gets half the
+        // recovered pot back, less the arena fee already taken at entry. Both
+        // deposited the same amount, so half the pot is each player's own money.
+        //
+        // Split by ROLE, not by claim order, so the odd wei is deterministic and
+        // the two claims can never together exceed the pot.
+        uint256 payout;
+        if (winnerSlot == DRAW_SLOT) {
+            uint256 half = m.totalPot / 2;
+            payout = isA ? half : m.totalPot - half;
+        } else {
+            bool callerWon = (winnerSlot == 0 && isA) || (winnerSlot == 1 && isB);
+            payout = callerWon ? m.totalPot : 0;
+        }
 
         if (payout > 0) {
             if (!usdso.transfer(msg.sender, payout)) revert TransferFailed();

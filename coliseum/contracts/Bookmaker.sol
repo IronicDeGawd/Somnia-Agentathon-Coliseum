@@ -68,6 +68,8 @@ contract Bookmaker is IBookmaker {
     ///      reorders, update both constants.
     uint8 public constant ARENA_STATUS_ACTIVE   = 1;
     uint8 public constant ARENA_STATUS_RESOLVED = 3;
+    /// @dev Mirrors ArenaTypes.DRAW_SLOT = 2 — neither fighter won.
+    uint8 public constant ARENA_DRAW_SLOT = 2;
 
     mapping(uint256 => Bet[]) public bets;                // duelId => bets
     mapping(uint256 => uint16[2]) public currentOdds;     // duelId => [oddsA, oddsB] bps, sum = 10000
@@ -406,7 +408,8 @@ contract Bookmaker is IBookmaker {
         //   turns, poolMask, status, initialUsdsoPerFighter, fundsRecovered, winnerSlot
         (, , , , , , , , uint8 status, , , uint8 winnerSlot) = arena.duels(duelId);
         if (status != ARENA_STATUS_RESOLVED) revert DuelInactive();
-        if (winnerSlot > 1) revert InvalidWinner();
+        bool isDraw = winnerSlot == ARENA_DRAW_SLOT;
+        if (winnerSlot > 1 && !isDraw) revert InvalidWinner();
         uint8 winnerId = winnerSlot;
 
         uint256 totalLosingStake = 0;
@@ -415,8 +418,11 @@ contract Bookmaker is IBookmaker {
         Bet[] storage duelBets = bets[duelId];
         uint256 len = duelBets.length;
 
+        // A draw has no losing side to pay winners from, so nobody's bet is settled
+        // against anybody: every stake goes back whole. Raking a draw would charge
+        // bettors a fee for an outcome the book never resolved.
         for (uint256 i = 0; i < len; i++) {
-            if (duelBets[i].fighterId == winnerId) {
+            if (isDraw || duelBets[i].fighterId == winnerId) {
                 totalWinningStake += duelBets[i].stake;
             } else {
                 totalLosingStake += duelBets[i].stake;
@@ -440,7 +446,7 @@ contract Bookmaker is IBookmaker {
 
         for (uint256 i = 0; i < len; i++) {
             Bet storage bet = duelBets[i];
-            if (bet.fighterId != winnerId) continue;
+            if (!isDraw && bet.fighterId != winnerId) continue;
 
             // Winners receive their stake back plus a proportional share of the losing pool.
             // Winnings = losingPoolAfterRake * (bet.stake / totalWinningStake)

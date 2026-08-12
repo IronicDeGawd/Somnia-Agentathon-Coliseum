@@ -304,13 +304,23 @@ contract Arena is ArenaVault {
             valueB += balB.quoteTokenAmount + (balB.baseTokenAmount * markPrice / baseUnit);
         }
 
-        // Store both the slot (0/1) and emit the registry fighter id in the event.
-        uint8 slot = valueA >= valueB ? 0 : 1;
-        uint8 winnerFighterId = slot == 0 ? duel.fighterA : duel.fighterB;
+        // Store the slot (0/1, or DRAW_SLOT) and emit the registry fighter id.
+        //
+        // This was `valueA >= valueB ? 0 : 1`, which handed every exact tie to
+        // Player 1. Both fighters start with identical deposits, so any duel where
+        // neither trades — all Holds, or every move coerced to Hold — ends exactly
+        // level, and Player 2 lost their stake to a comparison operator.
+        uint8 slot = valueA == valueB
+            ? ArenaTypes.DRAW_SLOT
+            : (valueA > valueB ? 0 : 1);
+        uint8 winnerFighterId = slot == ArenaTypes.DRAW_SLOT
+            ? type(uint8).max
+            : (slot == 0 ? duel.fighterA : duel.fighterB);
         duel.winnerSlot = slot;
         duel.status = ArenaTypes.DuelStatus.Resolved;
         activeDuelId = 0;
         emit ArenaTypes.DuelResolved(duelId, winnerFighterId, valueA, valueB);
+        if (slot == ArenaTypes.DRAW_SLOT) emit ArenaTypes.DuelDrawn(duelId, valueA, valueB);
 
         // Best-effort: record the outcome in the history sink. A revert here must
         // never block duel resolution, so it is wrapped in try/catch.

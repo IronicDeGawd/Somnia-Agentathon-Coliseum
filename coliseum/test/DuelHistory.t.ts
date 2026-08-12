@@ -85,6 +85,25 @@ describe("DuelHistory", function () {
     expect(rb.cumulativePnl).to.equal(-e(40)); // negative PnL handled
   });
 
+  it("records a draw against both fighters, as neither a win nor a loss", async function () {
+    const { history } = await deploy();
+    // Both finish level at 100 — the all-Hold duel, which is the common case.
+    await record(history, 7, 4, 5, 2, e(100), e(100), e(100));
+
+    const r4 = (await history.read.getFighterRecord([4])) as FighterRecord & { draws: bigint };
+    const r5 = (await history.read.getFighterRecord([5])) as FighterRecord & { draws: bigint };
+    for (const r of [r4, r5]) {
+      expect(Number(r.wins)).to.equal(0);
+      expect(Number(r.losses)).to.equal(0);
+      expect(Number(r.draws)).to.equal(1);
+      expect(Number(r.duels)).to.equal(1, "a draw still counts as a duel fought");
+      expect(r.cumulativePnl).to.equal(0n);
+    }
+
+    const entries = (await history.read.getEntries([0n, 1n])) as { winnerFighter: number }[];
+    expect(Number(entries[0].winnerFighter)).to.equal(255, "no fighter won");
+  });
+
   it("records the slot-1 winner path", async function () {
     const { history } = await deploy();
     // valueA 80 (-20), valueB 120 (+20), winnerSlot 1 → fighter B (index 3) wins.
