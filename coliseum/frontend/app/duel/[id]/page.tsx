@@ -263,6 +263,12 @@ export default function ArenaPage() {
   // No duel (status=0 or not found)
   const noDuel = !isLoading && (!duel || duel.status === 0);
 
+  // Still fetching: `duel` is null, so every derived boolean below is false and
+  // the zero-value struct would render as a *finished* duel — "FINALIZING",
+  // "DUEL COMPLETE", ROUND 0/0 and fighter indices 0/1 (Degen vs Whale)
+  // regardless of who is actually fighting. Render a skeleton instead.
+  const duelPending = !noDuel && !duel;
+
   // Odds: chain BPS → percentage. Default to 50/50 if unavailable or no bets.
   const noBets = totalBetsA === BigInt(0) && totalBetsB === BigInt(0);
   const oddsDegenPct = (!odds || noBets) ? 50 : Math.round(odds.degenBps / 100);
@@ -341,6 +347,29 @@ export default function ArenaPage() {
     <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} winningVsOpponent={whaleWinning} />
   );
 
+  // ── Loading state ────────────────────────────────────────────────────────
+  if (duelPending) {
+    return (
+      <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
+        <AppTopBar />
+        <div
+          className="col ai-c jc-c"
+          style={{ flex: 1, gap: 16, padding: 48, textAlign: 'center' }}
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            className="t-display t-up"
+            style={{ fontSize: 32, color: 'var(--text-faint)', letterSpacing: '0.14em' }}
+          >
+            ENTERING THE ARENA
+          </span>
+          <span className="t-mono t-sm t-dim">Loading duel #{duelIdNum} from chain…</span>
+        </div>
+      </div>
+    );
+  }
+
   // ── Empty state when no active duel ──────────────────────────────────────
   if (noDuel) {
     return (
@@ -378,7 +407,7 @@ export default function ArenaPage() {
             <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
             {duelActive && <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>}
             {duelResolved && <Chip variant="gold">★ SETTLED</Chip>}
-            {!duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
+            {!isLoading && !duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
             {duel?.simulated && <Chip variant="loss">🧪 SIMULATED MARKET</Chip>}
             <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
               ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{displayRound}</span>
@@ -607,6 +636,7 @@ export default function ArenaPage() {
               totalBetsA={totalBetsA}
               totalBetsB={totalBetsB}
               isActive={isActive}
+              isResolved={isResolved}
               isLoading={isLoading}
               isParticipant={isDuelParticipant}
             />

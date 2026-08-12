@@ -62,10 +62,16 @@ export const RoundClock: React.FC<RoundClockProps> = ({
     ? `${mins}m ${secs.toString().padStart(2, '0')}s`
     : `${secs}s`;
 
-  const isFinalRound = currentTurn >= totalTurns;
+  // totalTurns is 0 only before duel data lands — a real duel always has turns.
+  // Without this, `!isActive` reads as "finished" while loading and the clock
+  // announces DUEL COMPLETE on a duel that has not started.
+  const notLoaded = totalTurns === 0;
+  const isFinalRound = !notLoaded && currentTurn >= totalTurns;
 
   let barColor: string;
-  if (!isActive) {
+  if (notLoaded) {
+    barColor = 'var(--border)';
+  } else if (!isActive) {
     barColor = 'var(--win)';
   } else if (isFinalRound) {
     barColor = 'var(--gold)';
@@ -103,14 +109,16 @@ export const RoundClock: React.FC<RoundClockProps> = ({
             color: 'var(--text-dim)',
           }}
         >
-          {!isActive
+          {notLoaded
+            ? 'LOADING ROUND…'
+            : !isActive
             ? 'DUEL COMPLETE'
             : isFinalRound
             ? 'FINAL ROUND'
             : `ROUND ${currentTurn} / ${totalTurns}`}
         </span>
 
-        {!isActive ? (
+        {notLoaded ? null : !isActive ? (
           <span
             style={{ fontSize: '14px', color: 'var(--gold)', lineHeight: 1 }}
             aria-label="trophy"
