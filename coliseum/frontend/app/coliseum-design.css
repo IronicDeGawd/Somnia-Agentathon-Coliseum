@@ -137,6 +137,11 @@ body {
   font-size: 12px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  /* 44px is the minimum comfortable touch target. The 12px type and 10px
+     padding only reached ~34px, so set the floor here rather than at each
+     call site — the button keeps its compact look and gains the hit area. */
+  min-height: 44px;
   gap: 8px;
   transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   border-radius: 2px;
@@ -212,6 +217,10 @@ body {
   letter-spacing: 0.18em;
   color: var(--text);
   position: relative;
+  /* The header brand is a link home; at 35px it was under the tap minimum. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 .brand::after {
   content: "";
@@ -222,6 +231,12 @@ body {
   color: var(--text-dim); font-size: 12px; letter-spacing: 0.08em;
   text-transform: uppercase; cursor: pointer; padding: 4px 8px;
   transition: color 120ms ease;
+  /* Vertical padding alone left these at 25px. Growing the box would push the
+     bar taller, so the hit area is extended instead: the link keeps its size,
+     the tappable region reaches 44px. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 .nav-link:hover, .nav-link.active { color: var(--text); }
 
@@ -340,6 +355,38 @@ body {
 .slide-in-l { animation: slideInLeft 600ms cubic-bezier(.34,1.56,.64,1) both; }
 .slide-in-r { animation: slideInRight 600ms cubic-bezier(.34,1.56,.64,1) both; }
 .vs-pop { animation: vsPop 700ms cubic-bezier(.34,1.56,.64,1) both; }
+
+/* TAP TARGET
+   Extends a small control's hit area to 44px without changing how it looks —
+   for text links that are too short to tap reliably (footer nav, inline links).
+   The text stays where it was; the clickable box grows around it. */
+.tap-44 {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* SKIP LINK
+   Sits off-screen until it takes focus, then drops into the top-left corner as
+   a normal control. Uses the bracket-button look so it belongs to the set. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--text);
+  color: var(--text);
+  font-family: var(--fnt-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.skip-link:focus {
+  left: 8px;
+  top: 8px;
+}
 
 /* SELECTABLE DATA
    The body sets `select-none` to keep the arcade chrome from highlighting like
@@ -736,13 +783,26 @@ button.sect-head {
 }
 
 /* ─── RESPONSIVE BREAKPOINTS ───
-   The design layer previously had ZERO @media rules. Three tiers: 1080 / 768 / 520. */
-@media (max-width: 1080px) {
-  body { font-size: 13.5px; }
-}
+   The design layer previously had ZERO @media rules. Four tiers now, and the
+   comment used to claim three: 768 (layout stacks) / 640 (arena + hero art) /
+   600 (ledger tape) / 520 (standings). 600 and 640 are close enough to look
+   like an accident but are not — each stacks a different grid at the width it
+   actually stops fitting. Duplicate blocks per tier have been merged. */
+/* Body type deliberately no longer shrinks with the viewport. It ran 14px
+   desktop -> 13.5px -> 13px, so the smallest screens got the smallest text —
+   backwards. The dense terminal look is the point, so the base stays 14px
+   rather than rising to the usual 16px minimum; it simply stops going down.
+   That leaves the 1080px tier with nothing to say, so it is gone. */
+
 @media (max-width: 768px) {
   .shell, .shell-pad { padding-block: var(--sp-4); }
   .topbar { gap: var(--sp-3); }
+  /* Landing helpers: inline styles can't hold breakpoints, so these classes let
+     the landing's fixed two-column sections reflow. */
+  .stack-sm { flex-direction: column; align-items: stretch; }
+  .stack-sm > * { width: 100% !important; max-width: 100% !important; flex: 0 1 auto !important; }
+  /* drop sticky positioning once a sidebar has stacked */
+  .lp-side { position: static !important; top: auto !important; }
 }
 @media (max-width: 640px) {
   /* Arena combatants: stack the two fighter cards; the VS divider goes
@@ -751,17 +811,6 @@ button.sect-head {
   .arena-duo > * { width: 100% !important; flex: 1 1 auto !important; opacity: 1 !important; transform: none !important; }
   .arena-vs { width: 100% !important; padding: var(--sp-1) 0; }
   .arena-vs .t-display { font-size: 28px !important; }
-}
-/* Landing/responsive helpers. inline styles can't hold breakpoints, so these
-   classes let the landing's fixed two-column sections reflow on small screens. */
-@media (max-width: 768px) {
-  /* a flex row that stacks into a column; children go full width */
-  .stack-sm { flex-direction: column; align-items: stretch; }
-  .stack-sm > * { width: 100% !important; max-width: 100% !important; flex: 0 1 auto !important; }
-  /* drop sticky positioning once a sidebar has stacked */
-  .lp-side { position: static !important; top: auto !important; }
-}
-@media (max-width: 640px) {
   /* decorative hero backdrop art overlaps the headline on phones — hide it */
   .lp-hero-bg { display: none !important; }
 }
@@ -787,7 +836,7 @@ button.sect-head {
 }
 
 @media (max-width: 520px) {
-  body { font-size: 13px; }
+  /* Body size held at the 14px base here too — see the 1080px note above. */
   .standings-head { display: none; }
   .standings-grid {
     grid-template-columns: 24px 1fr auto;
