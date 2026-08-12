@@ -45,6 +45,9 @@ export interface UseDuelStateResult {
   isResolved: boolean;
   winnerSlot: number | null;
   isLoading: boolean;
+  /** Set when the duel read itself failed, so callers can tell a broken RPC
+   *  apart from a duel that does not exist. */
+  error: Error | null;
   refetch: () => void;
 }
 
@@ -55,6 +58,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   const {
     data: duelRaw,
     isLoading: duelLoading,
+    error: duelError,
     refetch: refetchDuel,
   } = useReadContract({
     address: CONTRACT_ADDRESSES.Arena,
@@ -258,6 +262,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     isResolved,
     winnerSlot,
     isLoading: duelLoading,
+    error: duelError ?? null,
     refetch,
   };
 }

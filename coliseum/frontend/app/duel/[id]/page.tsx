@@ -222,6 +222,7 @@ export default function ArenaPage() {
     isResolved,
     winnerSlot,
     isLoading,
+    error: duelError,
     refetch,
   } = useDuelState(duelId);
 
@@ -346,6 +347,40 @@ export default function ArenaPage() {
   const whaleCard = (
     <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} winningVsOpponent={whaleWinning} />
   );
+
+  // ── Error state ──────────────────────────────────────────────────────────
+  // Distinct from "no duel": the read failed, so we know nothing either way.
+  // The public RPC throttles intermittently, so offer a retry rather than
+  // implying the duel does not exist.
+  if (duelError && !duel) {
+    return (
+      <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
+        <AppTopBar />
+        <div
+          className="col ai-c jc-c"
+          style={{ flex: 1, gap: 16, padding: 48, textAlign: 'center' }}
+          role="alert"
+        >
+          <span
+            className="t-display t-up"
+            style={{ fontSize: 32, color: 'var(--loss)', letterSpacing: '0.14em' }}
+          >
+            CANNOT REACH THE ARENA
+          </span>
+          <span className="t-mono t-sm t-dim" style={{ maxWidth: 520 }}>
+            Duel #{duelIdNum} could not be read from chain. The public RPC rate-limits
+            under load — this is usually temporary.
+          </span>
+          <div className="row gap-12">
+            <BracketButton onClick={() => refetch()}>RETRY →</BracketButton>
+            <Link href="/duel">
+              <BracketButton variant="ghost">← BACK TO LOBBY</BracketButton>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ── Loading state ────────────────────────────────────────────────────────
   if (duelPending) {

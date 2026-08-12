@@ -10,6 +10,8 @@ export interface UseActiveDuelResult {
   activeDuelId: bigint | null;
   duel: DuelData | null;
   isLoading: boolean;
+  /** Set when the lobby could not read the arena at all. */
+  error: Error | null;
   refetch: () => void;
 }
 
@@ -18,6 +20,7 @@ export function useActiveDuel(): UseActiveDuelResult {
   const {
     data: rawActiveDuelId,
     isLoading: isLoadingId,
+    error: activeIdError,
     refetch: refetchId,
   } = useReadContract({
     address: CONTRACT_ADDRESSES.Arena,
@@ -134,6 +137,7 @@ export function useActiveDuel(): UseActiveDuelResult {
     activeDuelId,
     duel,
     isLoading: isLoadingId || (activeDuelId !== null && isLoadingDuel),
+    error: activeIdError ?? null,
     refetch,
   };
 }

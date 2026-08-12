@@ -47,7 +47,13 @@ export default function LobbyPage() {
     );
   }, []);
 
-  const { activeDuelId, duel, isLoading: isDuelLoading } = useActiveDuel();
+  const {
+    activeDuelId,
+    duel,
+    isLoading: isDuelLoading,
+    error: duelError,
+    refetch: refetchActiveDuel,
+  } = useActiveDuel();
   const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
@@ -104,6 +110,13 @@ export default function LobbyPage() {
               <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
               {activeDuelId !== null ? (
                 <Chip variant="live"><Dot variant="a" pulse /> DUEL #{activeDuelIdStr} · LIVE</Chip>
+              ) : duelError ? (
+                // A failed read is not the same as an empty arena — saying
+                // "ARENA DARK" here claims knowledge we do not have.
+                <span className="row gap-8 ai-c" role="alert">
+                  <Chip variant="loss">⚠ ARENA UNREACHABLE</Chip>
+                  <BracketButton variant="ghost" onClick={() => refetchActiveDuel()}>RETRY →</BracketButton>
+                </span>
               ) : (
                 <Chip variant="gold">▸ ARENA DARK · START A DUEL</Chip>
               )}
