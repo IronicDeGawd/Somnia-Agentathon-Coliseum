@@ -4,12 +4,20 @@
   --bg-deep: #0a0612;
   --bg-stage: #161028;
   --bg-card: #1f1538;
-  --bg-card-2: #281b46;
+  /* Darkened from #281b46. It is the lightest surface, so it was the one
+     background where --text-dim (4.38:1) and --fighter-a (4.43:1) fell under
+     the 4.5:1 floor; at #20143a they clear it without touching either colour. */
+  --bg-card-2: #20143a;
   --border: #2d1f4f;
   --border-soft: #1f1538;
+
+  /* Three text tiers, same violet hue, each a clear step apart and each above
+     4.5:1 on all four surfaces. Worst-case ratios: text 13.5, dim 6.5, faint
+     4.8. --text-faint was #5a4d80, which measured 2.1–2.7:1 — it read as
+     decoration rather than text, and it carries real labels in ~85 places. */
   --text: #e8e0ff;
-  --text-dim: #8c7fb8;
-  --text-faint: #5a4d80;
+  --text-dim: #a399c2;
+  --text-faint: #8d80b2;
 
   --fighter-a: #ff3366;
   --fighter-a-glow: rgba(255, 51, 102, 0.28);
@@ -333,8 +341,22 @@ body {
 .slide-in-r { animation: slideInRight 600ms cubic-bezier(.34,1.56,.64,1) both; }
 .vs-pop { animation: vsPop 700ms cubic-bezier(.34,1.56,.64,1) both; }
 
-/* FOCUS RING */
-:focus-visible { outline: 1px solid var(--text); outline-offset: 2px; }
+/* SELECTABLE DATA
+   The body sets `select-none` to keep the arcade chrome from highlighting like
+   a web page. That must not extend to data the user needs to take with them —
+   hashes, addresses, ids and amounts. Numeric styles opt back in by default;
+   add `.selectable` to anything else worth copying. */
+.selectable,
+.t-num {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* FOCUS RING
+   2px, not 1px — a hairline ring on a dark, high-texture background is easy to
+   lose. Never set `outline: none` inline on a control: an inline style outranks
+   this rule on specificity and silently removes the only keyboard affordance. */
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 /* ─── COLISEUM MOTIFS ─── */
 
