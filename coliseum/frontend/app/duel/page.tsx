@@ -17,15 +17,11 @@ import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
 
-// On-chain fighter index → local fighter roster id (FighterRegistry order matches ROSTER order)
-const FIGHTER_INDEX_TO_ID: Record<number, string> = {
-  0: 'degen',
-  1: 'whale',
-  2: 'scalper',
-  3: 'reverter',
-  4: 'surfer',
-  5: 'contrarian',
-};
+// On-chain fighter index → roster id comes from lib/fighters (fighterIndexToId).
+// A local copy of that mapping used to live here and had drifted out of registry
+// order — it named index two Scalper (it is The Quant) and indexes three and four
+// as fighters that no longer exist, so the headline duel card mislabelled them.
+// The rest of this page already used the shared helper; the hero now does too.
 
 export default function LobbyPage() {
   const router = useRouter();
@@ -73,8 +69,8 @@ export default function LobbyPage() {
   const totalTurns = duel?.turns ?? 15;
   const fighterAIndex = duel?.fighterA ?? 0;
   const fighterBIndex = duel?.fighterB ?? 1;
-  const fighterAId = FIGHTER_INDEX_TO_ID[fighterAIndex] ?? 'degen';
-  const fighterBId = FIGHTER_INDEX_TO_ID[fighterBIndex] ?? 'whale';
+  const fighterAId = fighterIndexToId(fighterAIndex);
+  const fighterBId = fighterIndexToId(fighterBIndex);
   const fighterAName = ROSTER.find(r => r.id === fighterAId)?.name ?? `FIGHTER #${fighterAIndex}`;
   const fighterBName = ROSTER.find(r => r.id === fighterBId)?.name ?? `FIGHTER #${fighterBIndex}`;
 
