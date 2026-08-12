@@ -109,7 +109,9 @@ async function main() {
   }
 
   const turnIntervalBlocks = IS_LOCAL ? 1n : 600n;
-  const reactivityFund = parseEther("33");
+  // Reactivity is opt-in now (resubscribe()), so no constructor demands 33 STT.
+  // Arena still needs a balance to pay for LLM inference (~0.24 STT per move).
+  const arenaFuel = parseEther(process.env.ARENA_FUEL_STT ?? "5");
 
   const outDir = path.join(__dirname, "..", "deployments");
   fs.mkdirSync(outDir, { recursive: true });
@@ -174,12 +176,12 @@ async function main() {
       turnIntervalBlocks,
       baseDecimals,
     ],
-    { value: reactivityFund }
+    { value: arenaFuel }
   );
   const arena = await hre.viem.getContractAt("Arena", arenaAddress);
   console.log(`  Arena:           ${arena.address}`);
   const subId = await arena.read.subscriptionId() as bigint;
-  console.log(`  subscriptionId:  ${subId} (0 = precompile skipped on local)`);
+  console.log(`  subscriptionId:  ${subId} (0 = Reactivity off; call resubscribe() to enable)`);
   writeManifest({
     network,
     deployer,
@@ -221,7 +223,6 @@ async function main() {
   const bookmaker = await hre.viem.deployContract(
     "Bookmaker",
     [arena.address, addresses.usdso, registryAddress, matchmaker.address, addresses.platform, turnIntervalBlocks],
-    { value: reactivityFund }
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);
 

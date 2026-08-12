@@ -83,7 +83,7 @@ describe("DuelHistory", function () {
     expect(String(err)).to.include("OnlyOwner");
 
     await history.write.setArena([other.account.address]);
-    expect((await history.read.arena()).toLowerCase())
+    expect(((await history.read.arena()) as string).toLowerCase())
       .to.equal(other.account.address.toLowerCase());
 
     // The new Arena can write, and the old history is still there — this is the

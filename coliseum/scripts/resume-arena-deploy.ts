@@ -41,9 +41,10 @@ async function main() {
   console.log(`\nResume Arena migration — deployer ${deployer}`);
   console.log(`Balance: ${formatEther(balance)} STT`);
 
-  const reactivityFund = parseEther("33");
-  if (balance < reactivityFund + parseEther("2")) {
-    throw new Error(`need >=35 STT for the Bookmaker reactivity fund + gas, have ${formatEther(balance)}`);
+  // Reactivity is opt-in now, so the Bookmaker no longer needs a 33 STT fund
+  // at deploy time — only gas.
+  if (balance < parseEther("2")) {
+    throw new Error(`need >=2 STT for gas, have ${formatEther(balance)}`);
   }
 
   // ── Verify what the first run left behind ────────────────────────────────
@@ -76,7 +77,6 @@ async function main() {
   const bookmaker = await hre.viem.deployContract(
     "Bookmaker",
     [arenaAddr, external.usdso, registryAddr, matchmaker.address, external.platform, turnIntervalBlocks],
-    { value: reactivityFund },
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);
 
