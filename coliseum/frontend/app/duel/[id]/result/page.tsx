@@ -13,7 +13,7 @@ import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelTranscript } from '@/hooks/useDuelTranscript';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
-import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -123,12 +123,20 @@ export default function ResultPage() {
     !!duel?.creator &&
     duel.creator.toLowerCase() === userAddress.toLowerCase();
 
-  // winnerSlot: 0 = fighterA, 1 = fighterB
+  // winnerSlot: 0 = fighterA, 1 = fighterB, 2 = draw (neither won).
+  // A draw is not an edge case: both fighters are funded identically, so any duel
+  // where neither trades ends exactly level. Without this branch the page waits
+  // forever on a winner that will never arrive.
   const winnerSlotNum = isResolved && duel ? duel.winnerSlot : null;
+  const isDraw = isResolved && winnerSlotNum === DRAW_SLOT;
   const winnerFighterIndex =
     winnerSlotNum === 0 ? fighterAIndex : winnerSlotNum === 1 ? fighterBIndex : undefined;
   const loserFighterIndex =
     winnerSlotNum === 0 ? fighterBIndex : winnerSlotNum === 1 ? fighterAIndex : undefined;
+
+  // On a draw there is no winner/loser, so show the two fighters in slot order.
+  const drawAVisual = fighterAIndex !== undefined ? FIGHTER_VISUAL_MAP[fighterAIndex] : null;
+  const drawBVisual = fighterBIndex !== undefined ? FIGHTER_VISUAL_MAP[fighterBIndex] : null;
 
   const winnerVisual =
     winnerFighterIndex !== undefined ? FIGHTER_VISUAL_MAP[winnerFighterIndex] : null;
@@ -157,8 +165,13 @@ export default function ResultPage() {
       ? (winnerSlotNum === 0 ? resolvedValueB : resolvedValueA)
       : null;
 
-  const wValueDisplay = winnerFinalValue !== null ? fmtUsdso(winnerFinalValue) : '—';
-  const lValueDisplay = loserFinalValue  !== null ? fmtUsdso(loserFinalValue)  : '—';
+  // On a draw the two columns are just slot A and slot B — there is no winner
+  // side to put first, and the win/loss colouring would be a lie.
+  const leftValue  = isDraw ? resolvedValueA : winnerFinalValue;
+  const rightValue = isDraw ? resolvedValueB : loserFinalValue;
+
+  const wValueDisplay = leftValue  !== null ? fmtUsdso(leftValue)  : '—';
+  const lValueDisplay = rightValue !== null ? fmtUsdso(rightValue) : '—';
 
   const turns = duel?.turns ?? 0;
 
@@ -240,19 +253,34 @@ export default function ResultPage() {
           <div className="row gap-16 ai-c">
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
             <span className="eyebrow" style={{ color: 'var(--gold)', letterSpacing: '0.42em' }}>
-              {isLoading ? 'LOADING…' : isResolved ? '★ WINNER ★' : '★ RESULT PENDING ★'}
+              {isLoading
+                ? 'LOADING…'
+                : isDraw
+                  ? '★ DRAW ★'
+                  : isResolved
+                    ? '★ WINNER ★'
+                    : '★ RESULT PENDING ★'}
             </span>
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
           </div>
 
-          <div className="vs-pop" style={winnerKnown ? { filter: `drop-shadow(0 0 60px ${winnerHex})` } : undefined}>
-            <FighterAvatar
-              fighter={winnerId}
-              context="card"
-              size={220}
-              state={winnerKnown ? 'victory' : 'idle'}
-            />
-          </div>
+          {isDraw ? (
+            // Both fighters, side by side, neither crowned.
+            <div className="row gap-32 ai-c" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+              <FighterAvatar fighter={drawAVisual?.id ?? 'degen'} context="card" size={160} state="idle" />
+              <span className="fp-display" style={{ fontSize: 32, color: 'var(--muted)' }}>=</span>
+              <FighterAvatar fighter={drawBVisual?.id ?? 'whale'} context="card" size={160} state="idle" />
+            </div>
+          ) : (
+            <div className="vs-pop" style={winnerKnown ? { filter: `drop-shadow(0 0 60px ${winnerHex})` } : undefined}>
+              <FighterAvatar
+                fighter={winnerId}
+                context="card"
+                size={220}
+                state={winnerKnown ? 'victory' : 'idle'}
+              />
+            </div>
+          )}
 
           <h1
             className="fp-display"
@@ -262,13 +290,24 @@ export default function ResultPage() {
               lineHeight: 1,
               textAlign: 'center',
               margin: 0,
-              color: winnerHex,
-              textShadow: `0 0 60px ${winnerHex}`,
+              color: isDraw ? 'var(--gold)' : winnerHex,
+              textShadow: `0 0 60px ${isDraw ? 'var(--gold)' : winnerHex}`,
               whiteSpace: 'nowrap',
             }}
           >
-            {isLoading || !winnerKnown ? 'LOADING…' : (winnerFighter?.name ?? 'UNKNOWN')}
+            {isDraw
+              ? 'DRAW'
+              : isLoading || !winnerKnown
+                ? 'LOADING…'
+                : (winnerFighter?.name ?? 'UNKNOWN')}
           </h1>
+
+          {isDraw && (
+            <p style={{ textAlign: 'center', color: 'var(--muted)', maxWidth: 460, margin: '8px auto 0' }}>
+              Both fighters finished level. Each player is refunded their own deposit less the
+              arena fee, and every bet is returned in full with no rake.
+            </p>
+          )}
 
           <div className="row gap-32 ai-c" style={{ marginTop: 24, flexWrap: 'wrap', justifyContent: 'center' }}>
             <div className="col ai-c gap-2">
@@ -311,14 +350,32 @@ export default function ResultPage() {
           <div className="card flex-1 col gap-12 pad-24">
             <div className="row jc-sb ai-c">
               <div className="row gap-12 ai-c">
-                <FighterAvatar fighter={winnerId} context="mini" size={40} />
+                <FighterAvatar
+                  fighter={isDraw ? (drawAVisual?.id ?? 'degen') : winnerId}
+                  context="mini"
+                  size={40}
+                />
                 <div className="col gap-2">
-                  {winnerKnown ? <Chip variant="win">★ WON</Chip> : <Chip variant="gold">RESOLVING…</Chip>}
+                  {isDraw ? (
+                    <Chip variant="gold">DREW</Chip>
+                  ) : winnerKnown ? (
+                    <Chip variant="win">★ WON</Chip>
+                  ) : (
+                    <Chip variant="gold">RESOLVING…</Chip>
+                  )}
                   <span
                     className="t-display t-up"
-                    style={{ color: winnerHex, fontSize: 18, letterSpacing: '0.12em' }}
+                    style={{
+                      color: isDraw ? (drawAVisual?.hex ?? 'var(--gold)') : winnerHex,
+                      fontSize: 18,
+                      letterSpacing: '0.12em',
+                    }}
                   >
-                    {winnerKnown ? (winnerFighter?.name ?? '—') : '—'}
+                    {isDraw
+                      ? (FIGHTERS[drawAVisual?.id ?? 'degen']?.name ?? '—')
+                      : winnerKnown
+                        ? (winnerFighter?.name ?? '—')
+                        : '—'}
                   </span>
                 </div>
               </div>
@@ -345,14 +402,34 @@ export default function ResultPage() {
           <div className="card flex-1 col gap-12 pad-24" style={{ opacity: 0.7 }}>
             <div className="row jc-sb ai-c">
               <div className="row gap-12 ai-c">
-                <FighterAvatar fighter={loserId} context="mini" size={40} />
+                <FighterAvatar
+                  fighter={isDraw ? (drawBVisual?.id ?? 'whale') : loserId}
+                  context="mini"
+                  size={40}
+                />
                 <div className="col gap-2">
-                  {winnerKnown ? <Chip variant="loss">LOST</Chip> : <Chip variant="gold">RESOLVING…</Chip>}
+                  {isDraw ? (
+                    <Chip variant="gold">DREW</Chip>
+                  ) : winnerKnown ? (
+                    <Chip variant="loss">LOST</Chip>
+                  ) : (
+                    <Chip variant="gold">RESOLVING…</Chip>
+                  )}
                   <span
                     className="t-display t-up"
-                    style={{ color: loserFighter?.hex ?? 'var(--text-dim)', fontSize: 18, letterSpacing: '0.12em' }}
+                    style={{
+                      color: isDraw
+                        ? (drawBVisual?.hex ?? 'var(--text-dim)')
+                        : (loserFighter?.hex ?? 'var(--text-dim)'),
+                      fontSize: 18,
+                      letterSpacing: '0.12em',
+                    }}
                   >
-                    {winnerKnown ? (loserFighter?.name ?? '—') : '—'}
+                    {isDraw
+                      ? (FIGHTERS[drawBVisual?.id ?? 'whale']?.name ?? '—')
+                      : winnerKnown
+                        ? (loserFighter?.name ?? '—')
+                        : '—'}
                   </span>
                 </div>
               </div>
@@ -395,10 +472,10 @@ export default function ResultPage() {
           duelId={duelId}
           isCreator={isCreator}
           matchmakerDuel={isMatchmakerDuel}
-          winnerName={winnerFighter?.name}
-          loserName={loserFighter?.name}
-          winnerColor={winnerHex}
-          loserColor={loserFighter?.hex}
+          winnerName={isDraw ? FIGHTERS[drawAVisual?.id ?? 'degen']?.name : winnerFighter?.name}
+          loserName={isDraw ? FIGHTERS[drawBVisual?.id ?? 'whale']?.name : loserFighter?.name}
+          winnerColor={isDraw ? (drawAVisual?.hex ?? 'var(--gold)') : winnerHex}
+          loserColor={isDraw ? (drawBVisual?.hex ?? 'var(--text-dim)') : loserFighter?.hex}
         />
       </section>
 

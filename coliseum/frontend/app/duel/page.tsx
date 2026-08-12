@@ -472,7 +472,9 @@ export default function LobbyPage() {
                     <FighterAvatar fighter={fighterId} context="mini" size={28} />
                     <span className="t-display t-up" style={{ color: r.hex, letterSpacing: '0.08em', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
                   </div>
-                  <span className="st-rec t-num t-sm">{r.wins}W-{r.losses}L</span>
+                  <span className="st-rec t-num t-sm">
+                    {r.wins}W-{r.losses}L{r.draws > 0 ? `-${r.draws}D` : ''}
+                  </span>
                   <span
                     className="st-pnl t-num"
                     style={{ textAlign: 'right', color: !hasDuels ? 'var(--text-faint)' : isPos ? 'var(--win)' : 'var(--loss)' }}

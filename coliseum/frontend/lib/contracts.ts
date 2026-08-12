@@ -20,6 +20,18 @@ export const CONTRACT_ADDRESSES = {
   DuelHistory: '0x555Af81ED3f8305738710A929298fEF2A0b95a9F' as `0x${string}`,
 };
 
+/**
+ * `Duel.winnerSlot` value meaning neither fighter won. Mirrors
+ * ArenaTypes.DRAW_SLOT; 0 and 1 are the two slots, 255 is "unset until resolved".
+ *
+ * Not a rare case: both fighters are funded with identical deposits, so any duel
+ * where neither trades ends exactly level.
+ */
+export const DRAW_SLOT = 2;
+
+/** Registry index reported for the winner of a drawn duel — nobody. */
+export const NO_WINNER_FIGHTER = 255;
+
 /** True once DuelHistory has a real (non-zero) deployed address. */
 export const DUEL_HISTORY_DEPLOYED =
   CONTRACT_ADDRESSES.DuelHistory.toLowerCase() !==

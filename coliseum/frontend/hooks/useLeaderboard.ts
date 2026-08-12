@@ -11,6 +11,7 @@ export interface LeaderboardRow {
   hex: string;
   wins: number;
   losses: number;
+  draws: number;
   duels: number;
   pnl: bigint;
 }
@@ -18,6 +19,7 @@ export interface LeaderboardRow {
 type RawRecord = {
   wins: number;
   losses: number;
+  draws: number;
   duels: number;
   cumulativePnl: bigint;
 };
@@ -66,6 +68,7 @@ export function useLeaderboard(): {
       hex: fighter?.hex ?? '#ffffff',
       wins: Number(rec.wins),
       losses: Number(rec.losses),
+      draws: Number(rec.draws),
       duels: Number(rec.duels),
       pnl: BigInt(rec.cumulativePnl),
     };
