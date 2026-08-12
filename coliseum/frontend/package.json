@@ -8,13 +8,25 @@
     "start": "next start",
     "start:prod": "next start -p ${PORT:-3000}"
   },
+  "pnpm": {
+    "overrides": {
+      "ws@>=8.0.0 <8.21.0": "^8.21.0",
+      "postcss@>=8.0.0 <8.5.23": "^8.5.23",
+      "nanoid@>=3.0.0 <3.3.17": "^3.3.17",
+      "form-data@>=4.0.0 <4.0.6": "^4.0.6",
+      "axios@>=1.0.0 <1.18.0": "^1.18.0",
+      "socket.io-parser@>=4.0.0 <4.2.7": "^4.2.7",
+      "hono@>=4.0.0 <4.12.34": "^4.12.34",
+      "sharp@>=0.34.0 <0.35.0": "^0.35.3"
+    }
+  },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.11",
     "@tanstack/react-query": "^5.100.14",
     "@walletconnect/ethereum-provider": "^2.23.9",
     "framer-motion": "^12.40.0",
     "lucide-react": "^1.17.0",
-    "next": "16.2.6",
+    "next": "16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "viem": "^2.48.1",

@@ -2,12 +2,8 @@
 
 import { useState, useCallback } from 'react';
 import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
-import { parseAbiItem, decodeEventLog } from 'viem';
+import { decodeEventLog } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES } from '@/lib/contracts';
-
-const DUEL_STARTED_EVENT = parseAbiItem(
-  'event DuelStarted(uint256 indexed duelId, uint8 fighterA, uint8 fighterB, address indexed creator, uint16 turns, uint8 poolMask, uint256 startBlock)'
-);
 
 export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 9 | 15, simulated = false) {
   const { address } = useAccount();
@@ -95,7 +91,7 @@ export function useStartDuel(fighterA: number, fighterB: number, turns: 3 | 6 | 
       for (const log of receipt.logs) {
         try {
           const decoded = decodeEventLog({
-            abi: [DUEL_STARTED_EVENT],
+            abi: ABIS.Arena,
             data: log.data,
             topics: log.topics,
           });

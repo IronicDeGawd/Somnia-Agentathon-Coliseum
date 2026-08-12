@@ -61,6 +61,13 @@ export const POOLS = [
 ] as const;
 
 /**
+ * The SOMI/USDso pool, which doubles as the STT→USDso on-ramp (native STT is the
+ * pool's "SOMI" base). Derived from POOLS so a pool redeploy is a one-line edit
+ * above rather than a hunt for copies — see deployments/somnia.json `poolSomi`.
+ */
+export const SOMI_POOL = POOLS.find((p) => p.key === 'SOMI')!.address;
+
+/**
  * Simulated-market pools (MockSpotPool) fed by scripts/sim-market.ts. All three
  * are registered on-chain with 18-decimal base (setSimPools([18,18,18])), so the
  * WBTC entry uses 18 here — unlike the real WBTC pool, which is 8-decimal.
@@ -151,7 +158,10 @@ export const ABIS = {
     'function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated) external returns (uint256)',
     'function finalizeDuel(uint256 duelId) external',
     'function recoverFunds(uint256 duelId) external',
-    'event DuelStarted(uint256 indexed duelId, uint8 indexed fighterA, uint8 indexed fighterB, address creator, uint16 turns, uint8 poolMask, uint256 startBlock)',
+    // Indexing must match ArenaTypes.sol exactly: duelId and creator are indexed,
+    // the fighter ids are not. Getting this wrong decodes fields into the wrong
+    // slots (or drops the event) without any error.
+    'event DuelStarted(uint256 indexed duelId, uint8 fighterA, uint8 fighterB, address indexed creator, uint16 turns, uint8 poolMask, uint256 startBlock)',
     'event TurnAdvanced(uint256 indexed duelId, uint16 completedCallbacks, uint256 blockNumber)',
     // winnerFighterId is 255 when the duel ended level — see DuelDrawn below.
     'event DuelResolved(uint256 indexed duelId, uint8 indexed winnerFighterId, uint256 valueA, uint256 valueB)',

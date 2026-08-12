@@ -3,10 +3,8 @@
 import { useState, useCallback } from 'react';
 import { parseEther, formatUnits } from 'viem';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
-import { CONTRACT_ADDRESSES } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, SOMI_POOL } from '@/lib/contracts';
 
-// SOMI/USDso pool on dreamDEX testnet (native STT is the pool's "SOMI" base).
-const SOMI_POOL = '0x259fD6559214dd5aD3752322426eA9F9fABEFff4' as const;
 const ZERO = '0x0000000000000000000000000000000000000000' as const;
 const TICK = parseEther('0.0001');
 
