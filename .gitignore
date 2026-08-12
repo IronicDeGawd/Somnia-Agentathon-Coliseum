@@ -6,3 +6,6 @@ sandbox/artifacts/
 sandbox/cache/
 sandbox/typechain-types/
 sandbox/dist/
+.playwright-mcp/
+.DS_Store
+.claude/

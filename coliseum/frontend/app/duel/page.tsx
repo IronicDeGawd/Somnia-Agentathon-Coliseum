@@ -290,7 +290,7 @@ export default function LobbyPage() {
         </div>
 
         <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
-          {([3, 6, 9, 15] as QueueTier[]).map((turns) => {
+          {([6, 9, 15] as QueueTier[]).map((turns) => {
             const TIER_POOL_LABELS: Record<QueueTier, string> = {
               3:  'SOMI',
               6:  'SOMI · WETH',

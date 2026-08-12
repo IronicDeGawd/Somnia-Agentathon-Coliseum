@@ -135,8 +135,13 @@ export default function ResultPage() {
   const loserVisual =
     loserFighterIndex !== undefined ? FIGHTER_VISUAL_MAP[loserFighterIndex] : null;
 
+  // These fall back to a real fighter so the avatars always have something to
+  // render, which means they are NOT evidence of who won. Gate any win/loss claim
+  // on winnerKnown instead, or the page announces the fallback fighter as the
+  // winner for the second before the duel data arrives.
   const winnerId = winnerVisual ? winnerVisual.id : 'degen';
   const loserId  = loserVisual  ? loserVisual.id  : 'whale';
+  const winnerKnown = isResolved && winnerVisual !== null;
 
   const winnerFighter = FIGHTERS[winnerId];
   const loserFighter  = FIGHTERS[loserId];
@@ -240,8 +245,13 @@ export default function ResultPage() {
             <span style={{ height: 1, width: 80, background: 'var(--gold)' }} />
           </div>
 
-          <div className="vs-pop" style={{ filter: `drop-shadow(0 0 60px ${winnerHex})` }}>
-            <FighterAvatar fighter={winnerId} context="card" size={220} state="victory" />
+          <div className="vs-pop" style={winnerKnown ? { filter: `drop-shadow(0 0 60px ${winnerHex})` } : undefined}>
+            <FighterAvatar
+              fighter={winnerId}
+              context="card"
+              size={220}
+              state={winnerKnown ? 'victory' : 'idle'}
+            />
           </div>
 
           <h1
@@ -257,7 +267,7 @@ export default function ResultPage() {
               whiteSpace: 'nowrap',
             }}
           >
-            {isLoading ? 'LOADING…' : (winnerFighter?.name ?? 'UNKNOWN')}
+            {isLoading || !winnerKnown ? 'LOADING…' : (winnerFighter?.name ?? 'UNKNOWN')}
           </h1>
 
           <div className="row gap-32 ai-c" style={{ marginTop: 24, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -303,12 +313,12 @@ export default function ResultPage() {
               <div className="row gap-12 ai-c">
                 <FighterAvatar fighter={winnerId} context="mini" size={40} />
                 <div className="col gap-2">
-                  <Chip variant="win">★ WON</Chip>
+                  {winnerKnown ? <Chip variant="win">★ WON</Chip> : <Chip variant="gold">RESOLVING…</Chip>}
                   <span
                     className="t-display t-up"
                     style={{ color: winnerHex, fontSize: 18, letterSpacing: '0.12em' }}
                   >
-                    {winnerFighter?.name ?? 'Fighter A'}
+                    {winnerKnown ? (winnerFighter?.name ?? '—') : '—'}
                   </span>
                 </div>
               </div>
@@ -337,12 +347,12 @@ export default function ResultPage() {
               <div className="row gap-12 ai-c">
                 <FighterAvatar fighter={loserId} context="mini" size={40} />
                 <div className="col gap-2">
-                  <Chip variant="loss">LOST</Chip>
+                  {winnerKnown ? <Chip variant="loss">LOST</Chip> : <Chip variant="gold">RESOLVING…</Chip>}
                   <span
                     className="t-display t-up"
                     style={{ color: loserFighter?.hex ?? 'var(--text-dim)', fontSize: 18, letterSpacing: '0.12em' }}
                   >
-                    {loserFighter?.name ?? 'Fighter B'}
+                    {winnerKnown ? (loserFighter?.name ?? '—') : '—'}
                   </span>
                 </div>
               </div>

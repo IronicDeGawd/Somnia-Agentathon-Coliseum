@@ -133,20 +133,55 @@ library ArenaUtils {
             ));
         }
 
-        // Build the action list dynamically from the active pool mask so the LLM only
-        // sees options that will actually execute. Hold (0) is always available.
+        // Build the action list from what the fighter can actually execute right now:
+        // the tier's pools AND its current holdings. Offering "SellWETH" to a fighter
+        // holding no WETH invites a move that can only fail, and no amount of prompt
+        // wording reliably stops a model from taking an option it was handed. Hold (0)
+        // is always available.
         summary = string.concat(summary, " Pick 0=Hold");
         if (duel.poolMask & ArenaTypes.POOL_BIT_WBTC != 0) {
-            summary = string.concat(summary, " 1=BuyWBTC 2=SellWBTC");
+            summary = string.concat(summary, actionPair(
+                poolWbtc, duelId, fighterId, "1=BuyWBTC", "2=SellWBTC", fighterBalances, poolMeta
+            ));
         }
         if (duel.poolMask & ArenaTypes.POOL_BIT_WETH != 0) {
-            summary = string.concat(summary, " 3=BuyWETH 4=SellWETH");
+            summary = string.concat(summary, actionPair(
+                poolWeth, duelId, fighterId, "3=BuyWETH", "4=SellWETH", fighterBalances, poolMeta
+            ));
         }
         if (duel.poolMask & ArenaTypes.POOL_BIT_SOMI != 0) {
-            summary = string.concat(summary, " 5=BuySOMI 6=SellSOMI");
+            summary = string.concat(summary, actionPair(
+                poolSomi, duelId, fighterId, "5=BuySOMI", "6=SellSOMI", fighterBalances, poolMeta
+            ));
         }
         summary = string.concat(summary, ". Only those numbers are valid.");
         return summary;
+    }
+
+    /// @notice Emit the buy and/or sell option for one pool, keeping only those the
+    ///         fighter can currently fund. A sell needs at least one whole lot of the
+    ///         base token; a buy needs enough quote to cover one lot at the mark.
+    function actionPair(
+        address pool,
+        uint256 duelId,
+        uint8   fighterId,
+        string memory buyOpt,
+        string memory sellOpt,
+        mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
+        mapping(address => ArenaTypes.PoolMeta) storage poolMeta
+    ) internal view returns (string memory) {
+        ArenaTypes.PoolBalance memory bal  = fighterBalances[pool][duelId][fighterId];
+        ArenaTypes.PoolMeta    memory meta = poolMeta[pool];
+        uint256 markPrice = midMarkPrice(pool);
+
+        string memory out = "";
+        // An empty book gives no price to size against, so neither side is offerable.
+        if (meta.minQuantity > 0 && markPrice > 0) {
+            uint256 minCost = (meta.minQuantity * markPrice) / (10 ** meta.baseDecimals);
+            if (bal.quoteTokenAmount >= minCost) out = string.concat(out, " ", buyOpt);
+            if (bal.baseTokenAmount  >= meta.minQuantity) out = string.concat(out, " ", sellOpt);
+        }
+        return out;
     }
 
 
@@ -167,6 +202,11 @@ library ArenaUtils {
         uint256 baseWhole = bal.baseTokenAmount / baseUnit;
         uint256 baseFrac  = (bal.baseTokenAmount % baseUnit) * 10000 / baseUnit;
         uint256 markPrice = midMarkPrice(pool);
+        // Token amounts alone are useless as a position signal: one lot of a
+        // high-priced pool is a tiny fraction of a token, which truncates to
+        // "0.0000" at four decimals and reads as "I hold nothing" to the fighter.
+        // Lots held is exact, always legible, and is the unit trades are sized in.
+        uint256 lotsHeld = meta.minQuantity > 0 ? bal.baseTokenAmount / meta.minQuantity : 0;
         string memory flag = (
             meta.minQuantity > 0 &&
             markPrice > 0 &&
@@ -174,7 +214,8 @@ library ArenaUtils {
         ) ? "" : " [skip-no-funds]";
         return string.concat(
             label, ": ", uint256ToString(usdso), " USDso / ",
-            uint256ToString(baseWhole), ".", uint256ToString(baseFrac), " base",
+            uint256ToString(baseWhole), ".", uint256ToString(baseFrac), " base (",
+            uint256ToString(lotsHeld), " lots held)",
             priceTrend(pool, duelId, markPrice, markSnapshots, prevMarkSnapshots),
             flag, "."
         );
