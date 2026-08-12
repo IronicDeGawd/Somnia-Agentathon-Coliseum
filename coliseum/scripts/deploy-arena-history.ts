@@ -98,22 +98,24 @@ async function main() {
   }
   console.log(`  setDuelHistory wired OK (${wired})`);
 
-  // ── 3. Bookmaker ─────────────────────────────────────────────────────────
-  console.log("Deploying Bookmaker... (value=33 STT)");
-  const bookmaker = await hre.viem.deployContract(
-    "Bookmaker",
-    [arena.address, external.usdso, registryAddr, external.platform, turnIntervalBlocks],
-    { value: reactivityFund }
-  );
-  console.log(`  Bookmaker:       ${bookmaker.address}`);
-
-  // ── 4. Matchmaker (3-arg constructor: arena, usdso, registry) ─────────────
+  // ── 3. Matchmaker (3-arg constructor: arena, usdso, registry) ─────────────
+  // Must precede Bookmaker: Bookmaker's constructor takes the Matchmaker address
+  // and reverts BadMatchmaker if it has no code, so the old order could not work.
   console.log("Deploying Matchmaker...");
   const matchmaker = await hre.viem.deployContract(
     "Matchmaker",
     [arena.address, external.usdso, registryAddr]
   );
   console.log(`  Matchmaker:      ${matchmaker.address}`);
+
+  // ── 4. Bookmaker ─────────────────────────────────────────────────────────
+  console.log("Deploying Bookmaker... (value=33 STT)");
+  const bookmaker = await hre.viem.deployContract(
+    "Bookmaker",
+    [arena.address, external.usdso, registryAddr, matchmaker.address, external.platform, turnIntervalBlocks],
+    { value: reactivityFund }
+  );
+  console.log(`  Bookmaker:       ${bookmaker.address}`);
 
   // ── 5. Optional fundPools (skipped unless USDSO_PER_POOL set) ─────────────
   if (!IS_LOCAL && process.env.USDSO_PER_POOL) {
