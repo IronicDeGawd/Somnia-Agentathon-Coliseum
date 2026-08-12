@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { usePublicClient, useAccount } from 'wagmi';
 import { parseAbi } from 'viem';
 import { CONTRACT_ADDRESSES, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 import { getLogsChunked } from '@/lib/logs';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 export interface MyBet {
   duelId: bigint;
@@ -28,6 +29,21 @@ export function useMyBets(): {
 
   const [bets, setBets] = useState<MyBet[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // This is a one-shot getLogs scan, so without a trigger a bet placed after
+  // mount stays invisible until the user navigates away and back. Re-run it
+  // when a bet of ours lands.
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  useContractSubscription({
+    address: CONTRACT_ADDRESSES.Bookmaker,
+    abi: BET_PLACED_ABI,
+    eventName: 'BetPlaced',
+    args: address ? { bettor: address } : undefined,
+    enabled: !!address,
+    onLogs: reload,
+  });
 
   useEffect(() => {
     if (!address || !publicClient) {
@@ -94,7 +110,7 @@ export function useMyBets(): {
 
     fetchBets();
     return () => { cancelled = true; };
-  }, [address, publicClient]);
+  }, [address, publicClient, reloadKey]);
 
   const isEmpty = bets.length === 0;
 

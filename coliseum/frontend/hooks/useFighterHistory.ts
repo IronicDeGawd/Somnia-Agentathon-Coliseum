@@ -2,6 +2,7 @@
 
 import { useReadContracts } from 'wagmi';
 import { ABIS, CONTRACT_ADDRESSES, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 export interface HistoryEntry {
   duelId: bigint;
@@ -49,7 +50,7 @@ export function useFighterHistory(index: number): {
   isEmpty: boolean;
   isLoading: boolean;
 } {
-  const { data, isLoading } = useReadContracts({
+  const { data, isLoading, refetch } = useReadContracts({
     contracts: [
       {
         address: CONTRACT_ADDRESSES.DuelHistory,
@@ -65,6 +66,16 @@ export function useFighterHistory(index: number): {
       },
     ],
     query: { enabled: DUEL_HISTORY_DEPLOYED },
+  });
+
+  // A fighter's record only moves when a duel resolves; refetch on that event
+  // rather than polling, so the page is not stale from mount onwards.
+  useContractSubscription({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    eventName: 'DuelResolved',
+    enabled: DUEL_HISTORY_DEPLOYED,
+    onLogs: () => { void refetch(); },
   });
 
   if (!DUEL_HISTORY_DEPLOYED) {

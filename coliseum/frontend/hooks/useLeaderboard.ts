@@ -3,6 +3,7 @@
 import { useReadContract } from 'wagmi';
 import { ABIS, CONTRACT_ADDRESSES, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { useFighters } from '@/hooks/useFighters';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 export interface LeaderboardRow {
   index: number;
@@ -28,11 +29,21 @@ export function useLeaderboard(): {
 } {
   const { fighters, isLoading: fightersLoading } = useFighters();
 
-  const { data: rawRows, isLoading: contractLoading } = useReadContract({
+  const { data: rawRows, isLoading: contractLoading, refetch } = useReadContract({
     address: CONTRACT_ADDRESSES.DuelHistory,
     abi: ABIS.DuelHistory,
     functionName: 'leaderboard',
     query: { enabled: DUEL_HISTORY_DEPLOYED },
+  });
+
+  // Standings only change when a duel resolves, so refetch on that rather than
+  // polling. Without this the board is stale from mount until a navigation.
+  useContractSubscription({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    eventName: 'DuelResolved',
+    enabled: DUEL_HISTORY_DEPLOYED,
+    onLogs: () => { void refetch(); },
   });
 
   if (!DUEL_HISTORY_DEPLOYED) {
