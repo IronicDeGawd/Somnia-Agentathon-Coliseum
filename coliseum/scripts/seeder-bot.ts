@@ -561,8 +561,37 @@ async function tick(ctx: TickCtx) {
     account: seeder.account!, chain: pub.chain,
   });
   const r = await pub.waitForTransactionReceipt({ hash });
-  const placed = r.logs.length > 0; // empty logs = silent reject
-  log(`  placeOrder tx=${hash} status=${r.status} logs=${r.logs.length} ${placed ? "(resting)" : "(⚠ silent reject)"}`);
+  log(`  placeOrder tx=${hash} status=${r.status} logs=${r.logs.length}`);
+
+  // Empty logs used to be reported as a silent reject and left at that, which
+  // is a guess: the pool emits nothing when it rejects, but also nothing we
+  // match on if the order filled and closed within the same transaction. Ask
+  // the pool what actually happened rather than inferring it from log count.
+  const resting = await ourRestingBid(ctx).catch((e) => {
+    log(`  reconcile failed: ${errMsg(e)} — order state unknown this tick.`);
+    return undefined;
+  });
+  if (resting === undefined) return;
+
+  if (resting) {
+    log(
+      `  reconciled: bid resting orderId=${resting.orderId} ` +
+      `price=${formatEther(resting.price)} qtyRem=${formatEther(resting.quantityRemaining)}`,
+    );
+    return;
+  }
+
+  // No resting bid. Either it filled immediately (we now hold SOMI, swept next
+  // tick) or the pool rejected it. The vault balance separates the two: a fill
+  // spends the USDso, a reject leaves it untouched.
+  const after = (await pub.readContract({
+    address: pool, abi: POOL_ABI, functionName: "getWithdrawableBalance", args: [seederAddr, usdso],
+  })) as bigint;
+  if (after < vault) {
+    log(`  reconciled: no resting bid but vault USDso fell ${formatEther(vault)} → ${formatEther(after)} — filled on placement.`);
+  } else {
+    log(`  ⚠ reconciled: no resting bid and vault USDso unchanged (${formatEther(after)}) — order was rejected.`);
+  }
 }
 
 main().catch((err) => {
