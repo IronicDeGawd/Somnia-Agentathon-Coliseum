@@ -132,7 +132,13 @@ export const ABIS = {
     // tuple is 13 fields: ...initialUsdsoPerFighter[9], fundsRecovered[10], winnerSlot[11], simulated[12].
     'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, bool fundsRecovered, uint8 winnerSlot, bool simulated)',
     'function fighterBalances(address pool, uint256 duelId, uint8 fighterId) view returns (uint256 baseTokenAmount, uint256 quoteTokenAmount)',
+    // Several duels run at once. activeDuelId() survives as a deprecated view
+    // returning only the first, so read getActiveDuelIds() instead.
     'function activeDuelId() view returns (uint256)',
+    'function getActiveDuelIds() view returns (uint256[])',
+    'function duelsReadyForTurn() view returns (uint256[])',
+    'function hasCapacity() view returns (bool)',
+    'function maxActiveDuels() view returns (uint16)',
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
     'function nextDuelId() view returns (uint256)',
@@ -218,11 +224,15 @@ export const ABIS = {
     'function getSlot(uint16 turns, bool simulated) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
     'function arenaFree() view returns (bool)',
     'function slots(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
-    'function pending() view returns (address playerA, address playerB, uint8 fighterA, uint8 fighterB, uint16 turns, uint256 totalPot, bool exists)',
+    // Matched pairs waiting for a free ring, oldest first.
+    'function pendingCount(uint16 turns, bool simulated) view returns (uint256)',
+    'function getPendingPositions(uint16 turns, bool simulated) view returns (uint256[])',
+    'function cancelPending(uint16 turns, bool simulated, uint256 position) external',
     'function matches(uint256 duelId) view returns (address playerA, address playerB, uint256 totalPot, bool recovered, bool settledA, bool settledB)',
     'event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit)',
     'event QueueCancelled(address indexed player, uint16 turns, uint256 refund)',
     'event MatchPending(address indexed playerA, address indexed playerB, uint16 turns)',
+    'event PendingCancelled(uint256 indexed position, address playerA, address playerB, uint16 turns)',
     'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
     'event WinningsClaimed(uint256 indexed duelId, address indexed player, uint256 amount)',
   ]),
