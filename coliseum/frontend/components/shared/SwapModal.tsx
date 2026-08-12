@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAccount, useBalance } from 'wagmi';
 import { formatEther, parseEther } from 'viem';
 import { useSttSwap, type SwapStage } from '@/hooks/useSttSwap';
+import { TxHash } from '@/components/shared/TxHash';
 
 interface SwapModalProps {
   open: boolean;
@@ -131,7 +132,6 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
               fontFamily: 'var(--fnt-mono)',
               fontSize: 16,
               padding: '12px 14px',
-              outline: 'none',
               width: '100%',
             }}
           />
@@ -173,37 +173,13 @@ export function SwapModal({ open, onClose }: SwapModalProps) {
             </span>
           )}
           {result.swapHash && (
-            <a
-              className="t-mono t-xs t-dim"
-              href={`https://explorer-v2.testnet.somnia.network/tx/${result.swapHash}`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}
-            >
-              swap tx: {result.swapHash.slice(0, 10)}…{result.swapHash.slice(-8)} ↗
-            </a>
+            <TxHash hash={result.swapHash} label="swap tx" />
           )}
           {result.withdrawHash && (
-            <a
-              className="t-mono t-xs t-dim"
-              href={`https://explorer-v2.testnet.somnia.network/tx/${result.withdrawHash}`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}
-            >
-              withdraw tx: {result.withdrawHash.slice(0, 10)}…{result.withdrawHash.slice(-8)} ↗
-            </a>
+            <TxHash hash={result.withdrawHash} label="withdraw tx" />
           )}
           {result.fallbackHash && (
-            <a
-              className="t-mono t-xs t-dim"
-              href={`https://explorer-v2.testnet.somnia.network/tx/${result.fallbackHash}`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}
-            >
-              fallback tx: {result.fallbackHash.slice(0, 10)}…{result.fallbackHash.slice(-8)} ↗
-            </a>
+            <TxHash hash={result.fallbackHash} label="fallback tx" />
           )}
         </div>
 

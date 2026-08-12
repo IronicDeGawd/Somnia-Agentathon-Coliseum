@@ -373,12 +373,13 @@ export default function BetPanel({
                 border: '1px solid var(--border)',
                 borderRadius: 6,
                 color: 'var(--text)',
-                padding: '8px 12px',
-                fontSize: 14,
+                // 16px, not 14 — iOS auto-zooms the viewport when a focused
+                // input is under 16px, which shoves the bet form off-screen.
+                padding: '12px 12px',
+                fontSize: 16,
                 fontFamily: 'var(--font-mono, monospace)',
                 width: '100%',
                 boxSizing: 'border-box',
-                outline: 'none',
                 opacity: betsOpen ? 1 : 0.5,
               }}
             />
