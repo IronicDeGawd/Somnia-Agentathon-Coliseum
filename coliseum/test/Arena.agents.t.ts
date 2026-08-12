@@ -261,6 +261,38 @@ describe("Arena — Somnia Agents integration", function () {
     expect(turn[3]).to.equal(false, "pendingTurn cleared so the duel can still finalize");
   });
 
+  // The whole fairness fix rests on Arena asking via inferString rather than
+  // inferNumber, and that choice is invisible from the outside: both produce a
+  // uint256 request id and the same events. Assert the actual bytes on the wire.
+  it("asks the agent via inferString, with the allowed list as the fourth argument", async function () {
+    const { arena, mockPlatform } = await deploy();
+    await arena.write.testRequestFighterMove([DUEL_ID, FIGHTER_ID]);
+
+    const last = (await mockPlatform.read.lastCall()) as unknown as [bigint, string, string, `0x${string}`, bigint];
+    const payload = last[3];
+    const { toFunctionSelector, decodeAbiParameters } = await import("viem");
+
+    const inferString = toFunctionSelector("inferString(string,string,bool,string[])");
+    const inferNumber = toFunctionSelector("inferNumber(string,string,int256,int256,bool)");
+    expect(payload.slice(0, 10)).to.equal(
+      inferString,
+      `expected inferString ${inferString}, got ${payload.slice(0, 10)}` +
+        (payload.slice(0, 10) === inferNumber ? " (still inferNumber — the clamp bug is live)" : ""),
+    );
+
+    const [prompt, system, cot, allowed] = decodeAbiParameters(
+      [{ type: "string" }, { type: "string" }, { type: "bool" }, { type: "string[]" }],
+      `0x${payload.slice(10)}`,
+    ) as [string, string, boolean, string[]];
+
+    expect(cot).to.equal(false);
+    expect(allowed.length).to.be.greaterThan(0, "the agent must be given an answer set");
+    expect(allowed).to.include("Hold");
+    expect(allowed.join(" ")).to.not.match(/\d/, "actions must be named, never numbered");
+    expect(prompt).to.not.match(/\d/, `prompt must carry no numerals, got: ${prompt}`);
+    expect(system.length).to.be.greaterThan(0, "the persona must be sent");
+  });
+
   it("the turn prompt contains no digits, and offers no trade the fighter cannot make", async function () {
     const { arena } = await deploy();
     const [prompt, allowed] = await arena.read.previewTurnPrompt([DUEL_ID, FIGHTER_ID]) as [string, string[]];
