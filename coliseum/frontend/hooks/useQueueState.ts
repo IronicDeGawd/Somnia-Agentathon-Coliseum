@@ -30,19 +30,14 @@ export interface QueueSlot {
   deposit: bigint;
 }
 
-export interface PendingMatch {
-  playerA: string;
-  playerB: string;
-  fighterA: number;
-  fighterB: number;
-  turns: number;
-  totalPot: bigint;
-  exists: boolean;
-}
-
 export interface QueueState {
   slots: Record<QueueTier, QueueSlot | null>;
-  pendingMatch: PendingMatch | null;
+  /**
+   * Pairs waiting to start, per tier. Matched players who could not start
+   * because every ring was full sit in a FIFO queue and begin as duels finish;
+   * this is how deep that queue is.
+   */
+  pendingCounts: Record<QueueTier, number>;
   isLoading: boolean;
   refetch: () => void;
 }
@@ -59,13 +54,13 @@ export function useQueueState(): QueueState {
       functionName: 'getSlot' as const,
       args: [turns, false] as [number, boolean],
     })),
-    // pending() — index 4
-    {
+    // pendingCount for each tier — indices 4-7
+    ...TIERS.map((turns) => ({
       address: MATCHMAKER_ADDRESS,
       abi: ABIS.Matchmaker,
-      functionName: 'pending' as const,
-      args: [] as [],
-    },
+      functionName: 'pendingCount' as const,
+      args: [turns, false] as [number, boolean],
+    })),
   ];
 
   const { data, isLoading, refetch: wagmiRefetch } = useReadContracts({
@@ -115,23 +110,13 @@ export function useQueueState(): QueueState {
     }
   });
 
-  // Parse pending() result (index 4)
-  // ABI: returns (address playerA, address playerB, uint8 fighterA, uint8 fighterB, uint16 turns, uint256 totalPot, bool exists)
-  let pendingMatch: PendingMatch | null = null;
-  const pendingResult = data?.[4];
-  if (pendingResult?.status === 'success' && pendingResult.result) {
-    const [playerA, playerB, fighterA, fighterB, turns, totalPot, exists] =
-      pendingResult.result as [Address, Address, bigint | number, bigint | number, bigint | number, bigint, boolean];
-    pendingMatch = {
-      playerA,
-      playerB,
-      fighterA: Number(fighterA),
-      fighterB: Number(fighterB),
-      turns: Number(turns),
-      totalPot,
-      exists,
-    };
-  }
+  // Parse pendingCount results (indices 4-7)
+  const pendingCounts = {} as Record<QueueTier, number>;
+  TIERS.forEach((tier, i) => {
+    const result = data?.[TIERS.length + i];
+    pendingCounts[tier] =
+      result?.status === 'success' ? Number(result.result as bigint) : 0;
+  });
 
-  return { slots, pendingMatch, isLoading, refetch };
+  return { slots, pendingCounts, isLoading, refetch };
 }

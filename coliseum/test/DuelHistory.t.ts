@@ -69,6 +69,34 @@ describe("DuelHistory", function () {
     expect(String(err)).to.include("OnlyArena");
   });
 
+  it("setArena re-points the writer so the ledger survives an Arena redeploy", async function () {
+    const { history, other } = await deploy();
+    // A duel recorded against the old Arena.
+    await record(history, 1, 0, 1, 0, e(150), e(60), e(100));
+
+    // Only the deployer may re-point it.
+    let err: unknown;
+    try {
+      await history.write.setArena([other.account.address], { account: other.account });
+    } catch (e_) { err = e_; }
+    expect(err, "expected a non-owner setArena to revert").to.not.be.undefined;
+    expect(String(err)).to.include("OnlyOwner");
+
+    await history.write.setArena([other.account.address]);
+    expect(((await history.read.arena()) as string).toLowerCase())
+      .to.equal(other.account.address.toLowerCase());
+
+    // The new Arena can write, and the old history is still there — this is the
+    // whole point: an upgrade used to zero the leaderboard.
+    await history.write.onResolved(
+      [BigInt(2), 0, 1, 0, e(150), e(60), e(100)],
+      { account: other.account },
+    );
+    const ra = (await history.read.getFighterRecord([0])) as FighterRecord;
+    expect(Number(ra.wins)).to.equal(2, "records from before the swap must survive");
+    expect(Number(await history.read.totalDuels())).to.equal(2);
+  });
+
   it("records a win/loss with correct PnL (slot 0 wins)", async function () {
     const { history } = await deploy();
     // initial 100, winner A finishes 150 (+50), loser B finishes 60 (-40).

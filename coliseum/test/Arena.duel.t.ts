@@ -93,9 +93,21 @@ async function runOneTurn(
   mockPlatform: Awaited<ReturnType<typeof deploy>>["mockPlatform"],
   nextExpectedReqIdA: bigint,
 ): Promise<{ reqIdA: bigint; reqIdB: bigint }> {
+  const activeId = (await arena.read.activeDuelId()) as bigint;
+  return runOneTurnFor(arena, mockPlatform, activeId, nextExpectedReqIdA);
+}
+
+// Helper: run one full turn of a NAMED duel, so concurrent duels can be advanced
+// one at a time and checked against each other.
+async function runOneTurnFor(
+  arena: Awaited<ReturnType<typeof deploy>>["arena"],
+  mockPlatform: Awaited<ReturnType<typeof deploy>>["mockPlatform"],
+  duelId: bigint,
+  _nextExpectedReqIdA?: bigint,
+): Promise<{ reqIdA: bigint; reqIdB: bigint }> {
   const publicClient = await hre.viem.getPublicClient();
 
-  const tx = await arena.write.turn();
+  const tx = await arena.write.turn([duelId]);
   const receipt = await publicClient.getTransactionReceipt({ hash: tx });
 
   const requestIds: bigint[] = [];
@@ -226,16 +238,95 @@ describe("Arena — Duel lifecycle", function () {
     expect(Number(rb.draws)).to.equal(1);
   });
 
-  it("DuelAlreadyActive reverts when starting second duel mid-flow", async function () {
+  it("runs maxActiveDuels duels at once and rejects the next with ArenaFull", async function () {
     const { arena } = await deploy();
+    expect(await arena.read.maxActiveDuels()).to.equal(3);
 
-    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    for (let i = 0; i < 3; i++) {
+      await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    }
+    const ids = await arena.read.getActiveDuelIds() as bigint[];
+    expect(ids).to.deep.equal([1n, 2n, 3n]);
+    expect(await arena.read.hasCapacity()).to.equal(false);
 
     let caught: unknown = undefined;
     await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]).catch((e: unknown) => { caught = e; });
+    expect(caught, "expected ArenaFull revert").to.not.be.undefined;
+    expect(String(caught)).to.include("ArenaFull");
+  });
 
-    expect(caught, "expected DuelAlreadyActive revert").to.not.be.undefined;
-    expect(String(caught)).to.include("DuelAlreadyActive");
+  it("setMaxActiveDuels is owner-only and bounded by MAX_ACTIVE_CEILING", async function () {
+    const { arena } = await deploy();
+    const [, stranger] = await hre.viem.getWalletClients();
+
+    await arena.write.setMaxActiveDuels([5]);
+    expect(await arena.read.maxActiveDuels()).to.equal(5);
+
+    // Zero would wedge the arena shut; above the ceiling would let the owner
+    // start more duels than one STT balance can pay inference for.
+    for (const bad of [0, 9]) {
+      let caught: unknown = undefined;
+      await arena.write.setMaxActiveDuels([bad]).catch((e: unknown) => { caught = e; });
+      expect(caught, `expected ${bad} to revert`).to.not.be.undefined;
+      expect(String(caught)).to.include("BadMaxActiveDuels");
+    }
+
+    let caught: unknown = undefined;
+    await arena.write.setMaxActiveDuels([2], { account: stranger.account })
+      .catch((e: unknown) => { caught = e; });
+    expect(caught, "expected a non-owner to revert").to.not.be.undefined;
+  });
+
+  it("resolving the middle of three duels leaves the other two running", async function () {
+    const { arena, mockPlatform } = await deploy();
+
+    for (let i = 0; i < 3; i++) {
+      await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    }
+    await mineBlock();
+
+    // Duel 2 alone plays out its three turns and finalizes.
+    let nextReqId = 1n;
+    for (let i = 0; i < 3; i++) {
+      await runOneTurnFor(arena, mockPlatform, 2n, nextReqId);
+      nextReqId += 2n;
+    }
+    await arena.write.finalizeDuel([2n]);
+
+    // Swap-and-pop moves the tail into the hole, so order changes but membership
+    // must not: 1 and 3 are still running, 2 is gone.
+    const ids = (await arena.read.getActiveDuelIds() as bigint[]).slice().sort();
+    expect(ids).to.deep.equal([1n, 3n]);
+    expect(await arena.read.hasCapacity()).to.equal(true);
+
+    const d1 = await arena.read.duels([1n]) as unknown[];
+    const d3 = await arena.read.duels([3n]) as unknown[];
+    expect(Number(d1[D.status])).to.equal(DuelStatus.Active);
+    expect(Number(d3[D.status])).to.equal(DuelStatus.Active);
+    expect(Number(d1[D.completedCallbacks])).to.equal(0, "duel 1 never advanced");
+  });
+
+  it("two duels advance independently via turn(id)", async function () {
+    const { arena, mockPlatform } = await deploy();
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    await mineBlock();
+
+    await runOneTurnFor(arena, mockPlatform, 1n, 1n);
+    const a1 = await arena.read.duels([1n]) as unknown[];
+    const b1 = await arena.read.duels([2n]) as unknown[];
+    expect(Number(a1[D.completedCallbacks])).to.equal(2);
+    expect(Number(b1[D.completedCallbacks])).to.equal(0, "duel 2 must not move");
+
+    await runOneTurnFor(arena, mockPlatform, 2n, 3n);
+    const b2 = await arena.read.duels([2n]) as unknown[];
+    expect(Number(b2[D.completedCallbacks])).to.equal(2);
+
+    // duelsReadyForTurn reports both once their intervals reopen.
+    await mineBlock();
+    const ready = (await arena.read.duelsReadyForTurn() as bigint[]).slice().sort();
+    expect(ready).to.deep.equal([1n, 2n]);
   });
 
   it("DuelNotReadyToFinalize reverts when finalizing with 0 callbacks", async function () {
@@ -260,8 +351,8 @@ describe("Arena — Duel lifecycle", function () {
 
     await hre.network.provider.send("evm_setAutomine", [false]);
     try {
-      const tx1 = await arena.write.turn();
-      const tx2 = await arena.write.turn();
+      const tx1 = await arena.write.turn([1n]);
+      const tx2 = await arena.write.turn([1n]);
       await hre.network.provider.send("evm_mine", []);
 
       const r1 = await publicClient.getTransactionReceipt({ hash: tx1 });
@@ -309,7 +400,7 @@ describe("Arena — Duel lifecycle", function () {
       await runOneTurn(arena, mockPlatform, BigInt(i * 2 + 1));
     }
 
-    const tx15 = await arena.write.turn();
+    const tx15 = await arena.write.turn([duelId]);
     const receipt15 = await publicClient.getTransactionReceipt({ hash: tx15 });
     const requestIds15: bigint[] = [];
     for (const log of receipt15.logs) {
@@ -407,7 +498,7 @@ describe("Arena — Duel lifecycle", function () {
     await mineBlock();
 
     // Turn one: A buys SOMI, B holds. Their balances now differ.
-    const tx = await arena.write.turn();
+    const tx = await arena.write.turn([duelId]);
     const receipt = await publicClient.getTransactionReceipt({ hash: tx });
     const reqIds = receipt.logs.filter((l) => l.topics.length === 4).map((l) => BigInt(l.topics[3]!));
     expect(reqIds.length).to.equal(2, "expected a request per fighter");

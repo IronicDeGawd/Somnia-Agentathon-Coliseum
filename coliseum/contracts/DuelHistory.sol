@@ -40,7 +40,16 @@ contract DuelHistory is IDuelHistory {
         uint64  blockNumber;
     }
 
-    address public immutable arena;
+    /// @notice The only address allowed to write records.
+    ///
+    ///         Mutable on purpose. This was immutable, which meant every Arena
+    ///         redeploy orphaned the ledger and reset the leaderboard to zero —
+    ///         the record of every duel ever fought, gone for a contract upgrade.
+    ///         setArena lets the history outlive the Arena it records.
+    address public arena;
+
+    /// @notice May re-point `arena`. Fixed at deployment.
+    address public immutable owner;
 
     mapping(uint8 => FighterRecord) private _records;
     mapping(uint256 => bool) public recorded;            // duelId => already recorded
@@ -48,6 +57,8 @@ contract DuelHistory is IDuelHistory {
     mapping(uint8 => uint256[]) private _fighterEntryIdx; // fighter index => ledger positions
 
     error OnlyArena();
+    error OnlyOwner();
+    error ZeroArena();
     error AlreadyRecorded(uint256 duelId);
     error BadFighterIndex(uint8 index);
     error BadWinnerSlot(uint8 slot);
@@ -62,13 +73,31 @@ contract DuelHistory is IDuelHistory {
         int256  pnlB
     );
 
+    /// @notice Emitted when the writer is re-pointed at a new Arena.
+    event ArenaSet(address indexed previous, address indexed current);
+
     constructor(address _arena) {
         arena = _arena;
+        owner = msg.sender;
     }
 
     modifier onlyArena() {
         if (msg.sender != arena) revert OnlyArena();
         _;
+    }
+
+    /// @notice Point the ledger at a new Arena so the leaderboard survives an
+    ///         upgrade. Past entries are untouched; only who may write changes.
+    ///
+    ///         The owner can therefore authorise an arbitrary writer. That is the
+    ///         same trust already granted by Arena.setDuelHistory, and the
+    ///         alternative — an immutable writer — has already cost one full
+    ///         history reset.
+    function setArena(address a) external {
+        if (msg.sender != owner) revert OnlyOwner();
+        if (a == address(0)) revert ZeroArena();
+        emit ArenaSet(arena, a);
+        arena = a;
     }
 
     /// @inheritdoc IDuelHistory

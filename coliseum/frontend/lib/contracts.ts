@@ -1,23 +1,27 @@
 import { parseAbi } from 'viem';
 
 export const CONTRACT_ADDRESSES = {
-  // Fairness migration (deploy block 459829632). Fighters are now asked for an
-  // action BY NAME from a list of what they can actually execute, and a level
-  // duel resolves as a draw instead of being awarded to player one. Arena holds
-  // the registry immutable and Bookmaker/Matchmaker hold Arena immutable, so all
-  // four plus a fresh DuelHistory were redeployed together; FighterRegistry is
-  // reused, since its persona data is live-editable via setPrompt.
+  // Concurrency migration (deploy block 459909804). The Arena runs up to
+  // maxActiveDuels fights at once (default 3) instead of exactly one, and a
+  // matched pair that finds every ring full waits in a FIFO queue rather than
+  // being turned away. Reactivity is opt-in here: neither Arena nor Bookmaker
+  // subscribes at construction, so nothing bills per block until resubscribe().
+  //
+  // Bookmaker and Matchmaker hold Arena immutable, so all four redeployed
+  // together. FighterRegistry is reused (personas are live-editable via
+  // setPrompt). DuelHistory is fresh one last time — its `arena` is mutable now
+  // (owner-only setArena), so the next Arena redeploy can keep the leaderboard.
   //
   // Arena is linked against a deployed ArenaUtils library
-  // (0x7241564C0C3160F7aE4fdaC6ADEfaeccC3e678e4) — it exceeded the 24576-byte
+  // (0x27715e9610f3bf3a2ec614a8c88e4927eb3f5740) — it exceeded the 24576-byte
   // contract limit with the prompt builders inlined.
-  Arena: '0xcB347D6d9f4cF8a1c340a7138dBEA7A31f40D6e3' as const,
-  Bookmaker: '0x18e319c7509aef4eef8a3159fde9253c38394c13' as const,
+  Arena: '0xFC7F1E4B815D840307Bdbb7D2B8407E8507c7050' as const,
+  Bookmaker: '0xb44c8e0b357e5de27282504c5462480a31da4366' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0x462ae5ec9f006f8d8fec9622e73590a1ee77ab2e' as const,
+  Matchmaker: '0xcbf4b434f02e00d64d0350e39a2301fa489f038b' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
-  DuelHistory: '0x555Af81ED3f8305738710A929298fEF2A0b95a9F' as `0x${string}`,
+  DuelHistory: '0xb38278AB551F284C7Ff29921f83Bc0bE73ba266e' as `0x${string}`,
 };
 
 /**
@@ -42,7 +46,7 @@ export const DUEL_HISTORY_DEPLOYED =
  * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
  * never ask a public RPC to scan from genesis — that gets rejected/throttled.
  */
-export const BOOKMAKER_DEPLOY_BLOCK = BigInt(459829632);
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(459909804);
 
 /**
  * Active dreamDEX pools the Arena trades on, keyed by the poolMask bit.
@@ -132,7 +136,13 @@ export const ABIS = {
     // tuple is 13 fields: ...initialUsdsoPerFighter[9], fundsRecovered[10], winnerSlot[11], simulated[12].
     'function duels(uint256 duelId) view returns (uint8 fighterA, uint8 fighterB, address creator, uint256 startBlock, uint256 lastTurnBlock, uint16 completedCallbacks, uint16 turns, uint8 poolMask, uint8 status, uint256 initialUsdsoPerFighter, bool fundsRecovered, uint8 winnerSlot, bool simulated)',
     'function fighterBalances(address pool, uint256 duelId, uint8 fighterId) view returns (uint256 baseTokenAmount, uint256 quoteTokenAmount)',
+    // Several duels run at once. activeDuelId() survives as a deprecated view
+    // returning only the first, so read getActiveDuelIds() instead.
     'function activeDuelId() view returns (uint256)',
+    'function getActiveDuelIds() view returns (uint256[])',
+    'function duelsReadyForTurn() view returns (uint256[])',
+    'function hasCapacity() view returns (bool)',
+    'function maxActiveDuels() view returns (uint16)',
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
     'function nextDuelId() view returns (uint256)',
@@ -218,11 +228,15 @@ export const ABIS = {
     'function getSlot(uint16 turns, bool simulated) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
     'function arenaFree() view returns (bool)',
     'function slots(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
-    'function pending() view returns (address playerA, address playerB, uint8 fighterA, uint8 fighterB, uint16 turns, uint256 totalPot, bool exists)',
+    // Matched pairs waiting for a free ring, oldest first.
+    'function pendingCount(uint16 turns, bool simulated) view returns (uint256)',
+    'function getPendingPositions(uint16 turns, bool simulated) view returns (uint256[])',
+    'function cancelPending(uint16 turns, bool simulated, uint256 position) external',
     'function matches(uint256 duelId) view returns (address playerA, address playerB, uint256 totalPot, bool recovered, bool settledA, bool settledB)',
     'event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit)',
     'event QueueCancelled(address indexed player, uint16 turns, uint256 refund)',
     'event MatchPending(address indexed playerA, address indexed playerB, uint16 turns)',
+    'event PendingCancelled(uint256 indexed position, address playerA, address playerB, uint16 turns)',
     'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
     'event WinningsClaimed(uint256 indexed duelId, address indexed player, uint256 amount)',
   ]),

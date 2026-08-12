@@ -97,6 +97,10 @@ library ArenaTypes {
     error NotYetExpired();
     error InsufficientStt();
     error DuelAlreadyActive();
+    /// @notice Every concurrent-duel slot is taken. `active` duels are running,
+    ///         `max` is the current `maxActiveDuels` setting.
+    error ArenaFull(uint256 active, uint256 max);
+    error BadMaxActiveDuels();
     error DuelNotActive();
     error DuelNotReadyToFinalize();
     error InvalidFighterPair();
@@ -175,4 +179,6 @@ library ArenaTypes {
     /// @notice Mark price snapshot recorded at the end of each turn. Used by
     ///         emergencyFinalize to prevent owner-timed price manipulation.
     event MarkPriceSnapshot(uint256 indexed duelId, address indexed pool, uint256 markPrice, uint16 turnNum);
+    /// @notice The owner changed how many duels may run at once.
+    event MaxActiveDuelsSet(uint16 maxActiveDuels);
 }

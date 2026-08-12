@@ -56,7 +56,7 @@ const FALLBACK_ABI = [
 
 // Arena duel-driving ABI — read state + ring the bell + finalize.
 const ARENA_DUEL_ABI = [
-  { name: "activeDuelId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "getActiveDuelIds", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256[]" }] },
   {
     name: "duels", type: "function", stateMutability: "view",
     inputs: [{ name: "duelId", type: "uint256" }],
@@ -70,7 +70,7 @@ const ARENA_DUEL_ABI = [
     ],
   },
   { name: "nextDuelId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-  { name: "turn", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { name: "turn", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
   { name: "finalizeDuel", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
   { name: "emergencyFinalize", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
 ] as const;
@@ -139,8 +139,8 @@ const log = (...args: unknown[]) => console.log(`[${ts()}]`, ...args);
 /**
  * Settle bets on any recently resolved duel.
  *
- * Arena clears activeDuelId the moment a duel resolves, so this cannot hang off
- * the active-duel path — by the time a duel is settleable it is no longer active.
+ * Arena drops a duel from its active set the moment it resolves, so this cannot
+ * hang off the active-duel path — by the time a duel is settleable it is gone.
  * Instead sweep the last few duel ids each tick. Nothing on-chain settles bets, so
  * without this winning bettors stay unpaid until a spectator happens to press the
  * result page's button. Safe with zero bets: the payout loop is empty and the duel
@@ -191,7 +191,14 @@ async function settleResolvedDuels(opts: {
 // advances. Each tick: fuel the Arena if a fight is live, ring the bell
 // (turn()) when the block window opens, and finalize when all moves are in,
 // with a force-resolve fallback if a duel stalls.
-async function driveActiveDuel(opts: {
+//
+// Arena runs up to maxActiveDuels fights at once, so this drives every one of
+// them. Fuel is checked ONCE for the whole set, against a floor scaled by how
+// many duels are running: they all spend inference out of the same STT balance,
+// and a dry Arena fails soft — every move becomes Hold, and an all-Hold duel now
+// resolves as a draw. Silently drawing several fights at once is the failure
+// this guard exists to prevent.
+async function driveActiveDuels(opts: {
   bookmaker: `0x${string}` | undefined;
   pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
   wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
@@ -202,12 +209,59 @@ async function driveActiveDuel(opts: {
   arenaTopup: bigint;
   deployerMin: bigint;
 }) {
-  const { pub, wallet, arena, bookmaker, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin } = opts;
+  const { pub, wallet, arena, deployer, activeDuelArenaMin, arenaTopup, deployerMin } = opts;
   const emsg = (e: unknown) =>
     e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
 
-  const aid = (await pub.readContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "activeDuelId" })) as bigint;
-  if (aid === BigInt(0)) { log("duel: no active duel"); return; }
+  const ids = (await pub.readContract({
+    address: arena, abi: ARENA_DUEL_ABI, functionName: "getActiveDuelIds",
+  })) as readonly bigint[];
+
+  if (ids.length === 0) { log("duel: no active duel"); return; }
+  log(`duel: ${ids.length} active — ${ids.join(", ")}`);
+
+  // Fuel for the whole set before ringing any bell.
+  const need = activeDuelArenaMin * BigInt(ids.length);
+  const arenaBal = await pub.getBalance({ address: arena });
+  if (arenaBal < need) {
+    const topup = arenaTopup * BigInt(ids.length);
+    const deployerBal = await pub.getBalance({ address: deployer });
+    if (deployerBal < deployerMin + topup) {
+      log(`  duel-fuel: arena ${formatEther(arenaBal)} < ${formatEther(need)} STT for ${ids.length} duel(s), but deployer floor blocks topup — skipping turns to avoid silent all-Hold draws`);
+      return;
+    }
+    log(`  duel-fuel: arena ${formatEther(arenaBal)} < ${formatEther(need)} STT → sending ${formatEther(topup)} STT`);
+    try {
+      const h = await wallet.sendTransaction({ to: arena, value: topup });
+      const r = await pub.waitForTransactionReceipt({ hash: h });
+      log(`    duel-fuel tx=${h} status=${r.status}`);
+    } catch (e) { log(`    duel-fuel failed: ${emsg(e)}`); }
+  }
+
+  for (const id of ids) {
+    try {
+      await driveDuel(id, opts);
+    } catch (e) {
+      // One stuck duel must not stop the others from being refereed.
+      log(`  duel #${id}: drive failed: ${emsg(e)}`);
+    }
+  }
+}
+
+async function driveDuel(aid: bigint, opts: {
+  bookmaker: `0x${string}` | undefined;
+  pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
+  wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
+  arena: `0x${string}`;
+  deployer: `0x${string}`;
+  turnInterval: bigint;
+  activeDuelArenaMin: bigint;
+  arenaTopup: bigint;
+  deployerMin: bigint;
+}) {
+  const { pub, wallet, arena, bookmaker, turnInterval } = opts;
+  const emsg = (e: unknown) =>
+    e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
 
   const raw = (await pub.readContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "duels", args: [aid] })) as readonly unknown[];
   const d = parseDuelTuple(raw);
@@ -239,23 +293,6 @@ async function driveActiveDuel(opts: {
     } catch (e) { log(`  initializeOdds(${aid}) failed: ${emsg(e)}`); }
   }
 
-  // Fuel the Arena for the remaining LLM-inference moves (~0.24 STT each) before
-  // ringing the bell, so turn() doesn't stall on a dry Arena.
-  const arenaBal = await pub.getBalance({ address: arena });
-  if (arenaBal < activeDuelArenaMin) {
-    const deployerBal = await pub.getBalance({ address: deployer });
-    if (deployerBal < deployerMin + arenaTopup) {
-      log(`  duel-fuel: arena ${formatEther(arenaBal)} < ${formatEther(activeDuelArenaMin)} STT, but deployer floor blocks topup — skipping`);
-    } else {
-      log(`  duel-fuel: arena ${formatEther(arenaBal)} < ${formatEther(activeDuelArenaMin)} STT → sending ${formatEther(arenaTopup)} STT`);
-      try {
-        const h = await wallet.sendTransaction({ to: arena, value: arenaTopup });
-        const r = await pub.waitForTransactionReceipt({ hash: h });
-        log(`    duel-fuel tx=${h} status=${r.status}`);
-      } catch (e) { log(`    duel-fuel failed: ${emsg(e)}`); }
-    }
-  }
-
   // All moves in (or chain marked Finalizing) → finalize, with force-resolve fallback.
   if (d.completedCallbacks >= total || d.status === 2) {
     try {
@@ -285,11 +322,11 @@ async function driveActiveDuel(opts: {
       // of remaining gas into each nested call, an estimated limit can leave the
       // guard just short and the fighter's order reverts for no visible reason.
       // Unused gas is refunded, so over-providing costs nothing.
-      const h = await wallet.writeContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "turn", args: [], gas: TURN_GAS_LIMIT });
+      const h = await wallet.writeContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "turn", args: [aid], gas: TURN_GAS_LIMIT });
       const r = await pub.waitForTransactionReceipt({ hash: h });
-      log(`  turn() tx=${h} status=${r.status} block=${r.blockNumber}`);
+      log(`  turn(${aid}) tx=${h} status=${r.status} block=${r.blockNumber}`);
       if (r.status === "reverted" && cur >= d.lastTurnBlock + EMERGENCY_FINALIZE_BLOCKS) {
-        log("  turn() reverted past emergency window → force-resolving");
+        log(`  turn(${aid}) reverted past emergency window → force-resolving`);
         try {
           const h2 = await wallet.writeContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "emergencyFinalize", args: [aid] });
           const r2 = await pub.waitForTransactionReceipt({ hash: h2 });
@@ -297,7 +334,7 @@ async function driveActiveDuel(opts: {
         } catch (e2) { log(`  emergencyFinalize failed: ${emsg(e2)}`); }
       }
     } catch (e) {
-      log(`  turn() failed: ${emsg(e)}`);
+      log(`  turn(${aid}) failed: ${emsg(e)}`);
       if (cur >= d.lastTurnBlock + EMERGENCY_FINALIZE_BLOCKS) {
         try {
           const h2 = await wallet.writeContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "emergencyFinalize", args: [aid] });
@@ -408,7 +445,7 @@ async function tick(opts: {
 
   // 4. Referee any live player-started duel: fuel + ring the bell + finalize.
   try {
-    await driveActiveDuel({ pub, wallet, arena, bookmaker, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin });
+    await driveActiveDuels({ pub, wallet, arena, bookmaker, deployer, turnInterval, activeDuelArenaMin, arenaTopup, deployerMin });
     await settleResolvedDuels({ pub, wallet, arena, bookmaker });
   } catch (e: unknown) {
     const msg = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);

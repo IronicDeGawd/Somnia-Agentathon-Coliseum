@@ -37,8 +37,13 @@ async function main() {
   const balance = await publicClient.getBalance({ address: deployer });
   console.log(`Deployer: ${deployer}`);
   console.log(`Balance:  ${formatEther(balance)} STT`);
-  if (!IS_LOCAL && balance < parseEther("70")) {
-    throw new Error(`Insufficient balance: need >=70 STT, have ${formatEther(balance)}`);
+  // Was 70 STT, because the Arena and Bookmaker constructors each demanded a
+  // 33 STT Reactivity fund. Both are opt-in now, so the deploy needs the Arena's
+  // inference fuel plus gas and nothing more.
+  const arenaFuel = parseEther(process.env.ARENA_FUEL_STT ?? "5");
+  const needed = arenaFuel + parseEther("3");
+  if (!IS_LOCAL && balance < needed) {
+    throw new Error(`Insufficient balance: need >=${formatEther(needed)} STT, have ${formatEther(balance)}`);
   }
 
   const manifestPath = path.join(__dirname, "..", "deployments", `${network}.json`);
@@ -71,20 +76,22 @@ async function main() {
 
   const turnIntervalBlocks = IS_LOCAL ? 1n : 600n;
   const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
-  const reactivityFund = parseEther("33");
+  // Arena needs a working balance for LLM inference (~0.24 STT per fighter
+  // move); the Bookmaker needs nothing at deploy time. arenaFuel is resolved
+  // above, alongside the balance check.
 
   // ── 1. ArenaUtils library + Arena ────────────────────────────────────────
   // Arena exceeds the 24576-byte contract limit unless the prompt builders live
   // in a linked library, so the two deploy together. See lib/deployArena.ts.
-  console.log(`\nDeploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)}, value=33 STT)`);
+  console.log(`\nDeploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)}, fuel=${process.env.ARENA_FUEL_STT ?? "5"} STT)`);
   const { address: arenaAddress, arenaUtils } = await deployLinkedArena(
     hre,
     [registryAddr, external.usdso, external.poolWeth, external.poolWbtc, external.poolSomi, external.platform, turnIntervalBlocks, baseDecimals],
-    { value: reactivityFund }
+    { value: arenaFuel }
   );
   const arena = await hre.viem.getContractAt("Arena", arenaAddress);
-  const subId = (await arena.read.subscriptionId()) as bigint;
-  console.log(`  Arena:           ${arena.address}  (subscriptionId=${subId})`);
+  const maxActive = (await arena.read.maxActiveDuels()) as number;
+  console.log(`  Arena:           ${arena.address}  (maxActiveDuels=${maxActive}, Reactivity OFF)`);
 
   // ── 2. DuelHistory + wire ────────────────────────────────────────────────
   console.log("Deploying DuelHistory...");
@@ -109,11 +116,10 @@ async function main() {
   console.log(`  Matchmaker:      ${matchmaker.address}`);
 
   // ── 4. Bookmaker ─────────────────────────────────────────────────────────
-  console.log("Deploying Bookmaker... (value=33 STT)");
+  console.log("Deploying Bookmaker...");
   const bookmaker = await hre.viem.deployContract(
     "Bookmaker",
     [arena.address, external.usdso, registryAddr, matchmaker.address, external.platform, turnIntervalBlocks],
-    { value: reactivityFund }
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);
 
@@ -140,7 +146,7 @@ async function main() {
     contracts: {
       ...(prior.contracts ?? {}),  // preserve prior entries (e.g. SwapFallback)
       FighterRegistry: { address: registryAddr },
-      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils },
+      Arena: { address: arena.address, subscriptionId: "0", turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils, maxActiveDuels: maxActive },
       DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },
       Matchmaker: { address: matchmaker.address },

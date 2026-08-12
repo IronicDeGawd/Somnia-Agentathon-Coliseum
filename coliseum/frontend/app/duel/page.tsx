@@ -8,7 +8,7 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import { DuelCreator } from '@/components/shared/DuelCreator';
 import DuelCard from '@/components/shared/DuelCard';
-import { useActiveDuel } from '@/hooks/useActiveDuel';
+import { useActiveDuels } from '@/hooks/useActiveDuels';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useQueueState, type QueueTier } from '@/hooks/useQueueState';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
@@ -48,16 +48,22 @@ export default function LobbyPage() {
   }, []);
 
   const {
-    activeDuelId,
-    duel,
+    duels: liveDuels,
+    hasCapacity,
+    maxActiveDuels,
     isLoading: isDuelLoading,
     error: duelError,
     refetch: refetchActiveDuel,
-  } = useActiveDuel();
+  } = useActiveDuels();
+  // The hero shows one headline fight; the rest are listed below it.
+  const headline = liveDuels[0] ?? null;
+  const activeDuelId = headline?.duelId ?? null;
+  const duel = headline?.duel ?? null;
+  const otherDuels = liveDuels.slice(1);
   const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
-  const { slots: queueSlots, isLoading: isQueueLoading } = useQueueState();
+  const { slots: queueSlots, pendingCounts, isLoading: isQueueLoading } = useQueueState();
   // Live betting odds for the active duel (real Bookmaker pools, 0 = disabled).
   const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
 
@@ -82,7 +88,7 @@ export default function LobbyPage() {
     <>WBTC/USDso <span className="t-num t-dim">—</span></>,
     <>WETH/USDso <span className="t-num t-dim">—</span></>,
     <>SOMI/USDso <span className="t-num t-dim">—</span></>,
-    <>ONE ARENA · ONE LIVE DUEL</>,
+    <>{maxActiveDuels > 0 ? `UP TO ${maxActiveDuels} DUELS AT ONCE` : 'THE ARENA'}</>,
     activeDuelId !== null
       ? <>ACTIVE DUEL <span className="t-num text-gold">#{activeDuelIdStr}</span></>
       : <>ARENA IS DARK · START A DUEL</>,
@@ -242,7 +248,8 @@ export default function LobbyPage() {
           <span className="sect-head-title">LIVE NOW</span>
           <span className="sect-head-meta">
             {activeDuelId !== null && !isDuelLoading
-              ? `duel #${activeDuelIdStr} · round ${currentTurn}/${totalTurns}`
+              ? `duel #${activeDuelIdStr} · round ${currentTurn}/${totalTurns}` +
+                (otherDuels.length > 0 ? ` · +${otherDuels.length} more live` : '')
               : activeDuelId !== null
               ? 'loading…'
               : 'no active duel'}
@@ -262,6 +269,37 @@ export default function LobbyPage() {
                 <BracketButton variant="primary">WATCH LIVE →</BracketButton>
               </Link>
             </div>
+
+            {/* Every other duel running right now. The arena used to hold one
+                fight at a time; without this list the second and third are
+                live on chain but invisible here. */}
+            {otherDuels.length > 0 && (
+              <div className="col gap-12" style={{ paddingTop: 8 }}>
+                <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>
+                  ALSO LIVE · {otherDuels.length}
+                </span>
+                {otherDuels.map(({ duelId, duel: d }) => (
+                  <div key={duelId.toString()} className="col gap-8">
+                    <DuelCard
+                      duelId={duelId}
+                      fighterAIndex={d.fighterA}
+                      fighterBIndex={d.fighterB}
+                    />
+                    <div className="row ai-c jc-c">
+                      <Link href={`/duel/${duelId.toString()}`}>
+                        <BracketButton variant="ghost">WATCH DUEL #{duelId.toString()} →</BracketButton>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!hasCapacity && (
+              <span className="t-mono t-xs t-dim" style={{ textAlign: 'center' }}>
+                every ring is full ({liveDuels.length}/{maxActiveDuels}) — new challengers join the queue and start as duels finish
+              </span>
+            )}
           </div>
         ) : activeDuelId !== null && isDuelLoading ? (
           <div className="card pad-24 col ai-c gap-8">
@@ -334,6 +372,15 @@ export default function LobbyPage() {
                   ) : (
                     <Chip variant="default">OPEN</Chip>
                   )}
+                </div>
+
+                {/* Pairs already matched and waiting for a free ring. They start
+                    in arrival order as running duels finish. */}
+                <div className="row jc-sb ai-c">
+                  <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>QUEUED PAIRS</span>
+                  <span className="t-mono t-xs t-num" style={{ color: (pendingCounts[turns] ?? 0) > 0 ? 'var(--text)' : 'var(--text-faint)' }}>
+                    {pendingCounts[turns] ?? 0}
+                  </span>
                 </div>
 
                 {/* Pool label */}
