@@ -12,3 +12,16 @@ pnpm exec hardhat run scripts/daily-duel.ts --network somnia >> "$LOG" 2>&1
 RC=$?
 pm2 start coliseum-watcher coliseum-housematch >> "$LOG" 2>&1
 echo "[$(date -u +%FT%TZ)] === cron end rc=$RC ===" >> "$LOG"
+
+# Fail loudly. Previously the run's exit code died here, so a failed duel left
+# nothing but a line in a log nobody reads. Writing to stderr makes cron mail
+# the failure, and the marker file is what to check when the arena looks quiet.
+if [ "$RC" -ne 0 ]; then
+  MARK=/home/ubuntu/app/coliseum/logs/daily-duel-FAILED
+  echo "[$(date -u +%FT%TZ)] daily-duel FAILED rc=$RC — see $LOG" | tee "$MARK" >&2
+  tail -n 20 "$LOG" >&2
+else
+  rm -f /home/ubuntu/app/coliseum/logs/daily-duel-FAILED
+fi
+
+exit "$RC"
