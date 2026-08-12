@@ -30,7 +30,7 @@ export default function FightersPage() {
       <section className="shell-pad col gap-24" style={{ paddingTop: 40, paddingBottom: 120 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
-          <span className="sect-head-title">FIGHTER ROSTER</span>
+          <h1 className="sect-head-title">FIGHTER ROSTER</h1>
           <span className="sect-head-meta">all agents registered on-chain via FighterRegistry</span>
         </div>
 
