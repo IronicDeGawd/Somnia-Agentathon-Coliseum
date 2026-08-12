@@ -71,20 +71,23 @@ async function main() {
 
   const turnIntervalBlocks = IS_LOCAL ? 1n : 600n;
   const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
-  const reactivityFund = parseEther("33");
+  // Reactivity is opt-in now (resubscribe()), so neither constructor demands
+  // 33 STT any more. Arena still needs a working balance for LLM inference
+  // (~0.24 STT per fighter move); Bookmaker needs nothing at deploy time.
+  const arenaFuel = parseEther(process.env.ARENA_FUEL_STT ?? "5");
 
   // ── 1. ArenaUtils library + Arena ────────────────────────────────────────
   // Arena exceeds the 24576-byte contract limit unless the prompt builders live
   // in a linked library, so the two deploy together. See lib/deployArena.ts.
-  console.log(`\nDeploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)}, value=33 STT)`);
+  console.log(`\nDeploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)}, fuel=${process.env.ARENA_FUEL_STT ?? "5"} STT)`);
   const { address: arenaAddress, arenaUtils } = await deployLinkedArena(
     hre,
     [registryAddr, external.usdso, external.poolWeth, external.poolWbtc, external.poolSomi, external.platform, turnIntervalBlocks, baseDecimals],
-    { value: reactivityFund }
+    { value: arenaFuel }
   );
   const arena = await hre.viem.getContractAt("Arena", arenaAddress);
-  const subId = (await arena.read.subscriptionId()) as bigint;
-  console.log(`  Arena:           ${arena.address}  (subscriptionId=${subId})`);
+  const maxActive = (await arena.read.maxActiveDuels()) as number;
+  console.log(`  Arena:           ${arena.address}  (maxActiveDuels=${maxActive}, Reactivity OFF)`);
 
   // ── 2. DuelHistory + wire ────────────────────────────────────────────────
   console.log("Deploying DuelHistory...");
@@ -109,11 +112,10 @@ async function main() {
   console.log(`  Matchmaker:      ${matchmaker.address}`);
 
   // ── 4. Bookmaker ─────────────────────────────────────────────────────────
-  console.log("Deploying Bookmaker... (value=33 STT)");
+  console.log("Deploying Bookmaker...");
   const bookmaker = await hre.viem.deployContract(
     "Bookmaker",
     [arena.address, external.usdso, registryAddr, matchmaker.address, external.platform, turnIntervalBlocks],
-    { value: reactivityFund }
   );
   console.log(`  Bookmaker:       ${bookmaker.address}`);
 
@@ -140,7 +142,7 @@ async function main() {
     contracts: {
       ...(prior.contracts ?? {}),  // preserve prior entries (e.g. SwapFallback)
       FighterRegistry: { address: registryAddr },
-      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils },
+      Arena: { address: arena.address, subscriptionId: "0", turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils, maxActiveDuels: maxActive },
       DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },
       Matchmaker: { address: matchmaker.address },

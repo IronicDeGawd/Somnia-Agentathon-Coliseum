@@ -22,6 +22,8 @@ import {
   parseEther,
   maxUint256,
   defineChain,
+  keccak256,
+  toBytes,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import fs from "fs";
@@ -135,13 +137,36 @@ const MATCHMAKER_ABI = [
   },
 ] as const;
 
+// keccak256("MatchStarted(uint256,address,address,uint8,uint8,uint16)") — the
+// first three parameters are indexed, so topics[1] carries the duel id.
+const MATCH_STARTED_SIG = keccak256(
+  toBytes("MatchStarted(uint256,address,address,uint8,uint8,uint16)"),
+);
+
+/** The duel id started by a transaction, read from its own receipt logs. */
+function matchStartedDuelId(logs: readonly { topics: readonly string[] }[]): bigint {
+  for (const l of logs) {
+    if (l.topics[0]?.toLowerCase() === MATCH_STARTED_SIG.toLowerCase() && l.topics[1]) {
+      return BigInt(l.topics[1]);
+    }
+  }
+  return BigInt(0);
+}
+
 const ARENA_ABI = [
   {
-    name: "activeDuelId",
+    name: "getActiveDuelIds",
     type: "function",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ type: "uint256" }],
+    outputs: [{ type: "uint256[]" }],
+  },
+  {
+    name: "hasCapacity",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "bool" }],
   },
   {
     name: "duels",
@@ -167,7 +192,7 @@ const ARENA_ABI = [
     name: "turn",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [],
+    inputs: [{ name: "duelId", type: "uint256" }],
     outputs: [],
   },
   {
@@ -335,18 +360,31 @@ async function main() {
   // -- Step 1: Preflight checks ----------------------------------------------
   log("--- PREFLIGHT ---");
 
-  const activeDuelIdPre = (await publicClient.readContract({
+  const activePre = (await publicClient.readContract({
     address: arenaAddr,
     abi: ARENA_ABI,
-    functionName: "activeDuelId",
-  })) as bigint;
+    functionName: "getActiveDuelIds",
+  })) as readonly bigint[];
+  const hasCapacity = (await publicClient.readContract({
+    address: arenaAddr,
+    abi: ARENA_ABI,
+    functionName: "hasCapacity",
+  })) as boolean;
 
   let duelId: bigint = BigInt(0);
-  const resuming = activeDuelIdPre !== BigInt(0);
+  // The arena runs several duels at once now, so "something is active" no longer
+  // means this bot cannot start its own. Only take over an existing fight when
+  // every ring is genuinely full — otherwise a crashed run would still wedge us,
+  // but a player's duel no longer cancels the daily fixture. The newest active
+  // duel is the one a crashed run most likely left behind.
+  const resuming = !hasCapacity && activePre.length > 0;
   if (resuming) {
-    duelId = activeDuelIdPre;
-    log(`Arena busy — RESUMING active duel ${duelId} (finish it instead of starting a new one; prevents a crashed run from wedging the bot).`);
+    duelId = activePre.reduce((a, b) => (b > a ? b : a));
+    log(`Arena full (${activePre.length} running: ${activePre.join(", ")}) — RESUMING duel ${duelId} instead of starting a new one.`);
   } else {
+    if (activePre.length > 0) {
+      log(`Arena has ${activePre.length} duel(s) running (${activePre.join(", ")}) and still has capacity — starting a fresh one alongside them.`);
+    }
     log("Arena is free — proceeding");
   }
 
@@ -584,16 +622,16 @@ async function main() {
     return;
   }
 
-  // -- Read activeDuelId — P2 queue should have triggered Arena.startDuel ----
-  duelId = (await publicClient.readContract({
-    address: arenaAddr,
-    abi: ARENA_ABI,
-    functionName: "activeDuelId",
-  })) as bigint;
+  // -- Which duel did P2's queue start? --------------------------------------
+  //
+  // Read it out of our own receipt rather than asking the Arena what is active:
+  // with concurrent duels that view would just as happily name a player's fight,
+  // and this bot would then referee and claim someone else's duel.
+  duelId = matchStartedDuelId(p2QueueReceipt.logs);
 
   if (duelId === BigInt(0)) {
     log(
-      "activeDuelId still 0 after P2 queue — trying triggerPendingMatch..."
+      "P2 queue did not start a duel (it joined the queue) — trying triggerPendingMatch..."
     );
     try {
       const triggerTx = await ownerWallet.writeContract({
@@ -606,6 +644,7 @@ async function main() {
         hash: triggerTx,
       });
       log(`triggerPendingMatch tx=${triggerTx} status=${triggerReceipt.status}`);
+      duelId = matchStartedDuelId(triggerReceipt.logs);
     } catch (e: unknown) {
       const msg =
         e instanceof Error
@@ -613,16 +652,10 @@ async function main() {
           : String(e);
       log(`triggerPendingMatch failed (non-fatal): ${msg}`);
     }
-
-    duelId = (await publicClient.readContract({
-      address: arenaAddr,
-      abi: ARENA_ABI,
-      functionName: "activeDuelId",
-    })) as bigint;
   }
 
   if (duelId === BigInt(0)) {
-    log("ERROR: activeDuelId is still 0 — duel did not start. Aborting.");
+    log("ERROR: no MatchStarted event — the duel did not start. Aborting.");
     process.exitCode = 1;
     return;
   }
@@ -690,20 +723,20 @@ async function main() {
 
     if (currentBlock >= blocksNeeded && turnsFired < TURNS) {
       log(
-        `Block ${currentBlock} >= ${blocksNeeded} — calling turn() (turn #${turnsFired + 1})...`
+        `Block ${currentBlock} >= ${blocksNeeded} — calling turn(${duelId}) (turn #${turnsFired + 1})...`
       );
       try {
         const turnTx = await ownerWallet.writeContract({
           address: arenaAddr,
           abi: ARENA_ABI,
           functionName: "turn",
-          args: [],
+          args: [duelId],
         });
         const turnReceipt = await publicClient.waitForTransactionReceipt({
           hash: turnTx,
         });
         log(
-          `turn() tx=${turnTx} status=${turnReceipt.status} block=${turnReceipt.blockNumber}`
+          `turn(${duelId}) tx=${turnTx} status=${turnReceipt.status} block=${turnReceipt.blockNumber}`
         );
         if (turnReceipt.status !== "reverted") {
           turnsFired++;
@@ -714,7 +747,7 @@ async function main() {
           e instanceof Error
             ? (e as { shortMessage?: string }).shortMessage ?? e.message
             : String(e);
-        log(`turn() failed (non-fatal, will retry): ${msg}`);
+        log(`turn(${duelId}) failed (non-fatal, will retry): ${msg}`);
       }
     } else {
       const blocksLeft = blocksNeeded - currentBlock;

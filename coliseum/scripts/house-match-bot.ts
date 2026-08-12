@@ -29,7 +29,7 @@
 import "dotenv/config";
 import {
   createPublicClient, createWalletClient, http, defineChain,
-  formatUnits, maxUint256,
+  formatUnits, maxUint256, keccak256, toBytes,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import fs from "fs";
@@ -61,7 +61,7 @@ const MM_ABI = [
   { name: "queue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "fighter", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
   { name: "cancelQueue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
   { name: "claimWinnings", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
-  { name: "pendingByTier", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ name: "playerA", type: "address" }, { name: "playerB", type: "address" }, { name: "fighterA", type: "uint8" }, { name: "fighterB", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "totalPot", type: "uint256" }, { name: "exists", type: "bool" }, { name: "simulated", type: "bool" }] },
+  { name: "pendingCount", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ type: "uint256" }] },
   { name: "triggerPendingMatch", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
 ] as const;
 
@@ -70,8 +70,23 @@ const MM_ABI = [
 const ALL_TIERS: (3 | 6 | 9 | 15)[] = [3, 6, 9, 15];
 const ALL_MARKETS: boolean[] = [true, false];
 
+// keccak256("MatchStarted(uint256,address,address,uint8,uint8,uint16)") — the
+// first three parameters are indexed, so topics[1] carries the duel id.
+const MATCH_STARTED_SIG = keccak256(
+  toBytes("MatchStarted(uint256,address,address,uint8,uint8,uint16)"),
+);
+
+/** The duel id a queue() receipt started, or 0n if it only joined the queue. */
+function matchStartedDuelId(logs: readonly { topics: readonly string[] }[]): bigint {
+  for (const l of logs) {
+    if (l.topics[0]?.toLowerCase() === MATCH_STARTED_SIG.toLowerCase() && l.topics[1]) {
+      return BigInt(l.topics[1]);
+    }
+  }
+  return 0n;
+}
+
 const ARENA_ABI = [
-  { name: "activeDuelId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   // 12-field auto-getter (uint8[2] lastAction omitted); status=idx8, winnerSlot=idx11
   { name: "duels", type: "function", stateMutability: "view", inputs: [{ name: "", type: "uint256" }], outputs: [
     { type: "uint8" }, { type: "uint8" }, { type: "address" }, { type: "uint256" }, { type: "uint256" },
@@ -146,23 +161,27 @@ async function main() {
   while (running) {
     try {
       // ── Pass 0: ring the bell for any waiting pair ──────────────────────────
-      // Two players who queued while a duel was already running are parked as a
-      // pendingByTier match (funds escrowed, safe) — but nothing auto-starts them
-      // once the arena frees. Trigger it here so they don't wait forever.
+      // Two players who queued while every ring was busy are parked in the tier's
+      // FIFO queue (funds escrowed, safe) — but nothing auto-starts them once a
+      // ring frees. Drain the queue here so they don't wait forever, one start
+      // per pass until the arena is full again.
       for (const turns of ALL_TIERS) {
         for (const sim of ALL_MARKETS) {
           if (!running) break;
-          const pend = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "pendingByTier", args: [turns, sim] }) as readonly unknown[];
-          if (!pend[6] /* exists */) continue;
-          if (!(await pub.readContract({ address: MM, abi: MM_ABI, functionName: "arenaFree" }))) continue; // ring still busy
           const pkey = `${turns}:${sim ? "sim" : "real"}`;
-          log(`${pkey}: pending match (${String(pend[0]).slice(0, 8)}… vs ${String(pend[1]).slice(0, 8)}…) + arena free — triggering`);
-          try {
-            const h = await wallet.writeContract({ address: MM, abi: MM_ABI, functionName: "triggerPendingMatch", args: [turns, sim] });
-            await pub.waitForTransactionReceipt({ hash: h });
-            log(`${pkey}: pending match started`);
-          } catch (e) {
-            log(`${pkey}: triggerPendingMatch failed: ${(e as Error).message?.slice(0, 120)}`);
+          let waiting = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "pendingCount", args: [turns, sim] }) as bigint;
+          while (running && waiting > 0n) {
+            if (!(await pub.readContract({ address: MM, abi: MM_ABI, functionName: "arenaFree" }))) break; // every ring busy
+            log(`${pkey}: ${waiting} pair(s) waiting + a free ring — triggering the head`);
+            try {
+              const h = await wallet.writeContract({ address: MM, abi: MM_ABI, functionName: "triggerPendingMatch", args: [turns, sim] });
+              await pub.waitForTransactionReceipt({ hash: h });
+              log(`${pkey}: pending match started`);
+            } catch (e) {
+              log(`${pkey}: triggerPendingMatch failed: ${(e as Error).message?.slice(0, 120)}`);
+              break;
+            }
+            waiting = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "pendingCount", args: [turns, sim] }) as bigint;
           }
         }
       }
@@ -218,10 +237,13 @@ async function main() {
           log(`${key}: matching ${player.slice(0, 8)}… (their fighter ${slotFighter}) with house fighter ${f}, ${fmtU(half)} USDso`);
           try {
             const h = await wallet.writeContract({ address: MM, abi: MM_ABI, functionName: "queue", args: [f, turns, sim] });
-            await pub.waitForTransactionReceipt({ hash: h });
+            const rc = await pub.waitForTransactionReceipt({ hash: h });
             seenAt.delete(key);
             ourQueuedAt.set(key, Date.now());
-            const duelId = await pub.readContract({ address: ARENA, abi: ARENA_ABI, functionName: "activeDuelId" }) as bigint;
+            // Read the duel id out of our own receipt. Asking the Arena which duel
+            // is active no longer identifies it: several run at once, so that view
+            // would name somebody else's fight.
+            const duelId = matchStartedDuelId(rc.logs);
             if (duelId > 0n && !started.some((s) => s.duelId === duelId)) {
               started.push({ duelId, claimed: false });
               log(`${key}: duel #${duelId} started`);
