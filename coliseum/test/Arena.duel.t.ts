@@ -6,6 +6,7 @@ const HANDLE_SELECTOR = "0xc4e34fdd" as `0x${string}`;
 
 // keccak256("DuelResolved(uint256,uint8,uint256,uint256)")
 const DUEL_RESOLVED_SIG = keccak256(toBytes("DuelResolved(uint256,uint8,uint256,uint256)"));
+const DUEL_DRAWN_SIG    = keccak256(toBytes("DuelDrawn(uint256,uint256,uint256)"));
 
 // DuelStatus: Active=1, Finalizing=2, Resolved=3 (None removed, Pending removed)
 const DuelStatus = {
@@ -32,7 +33,15 @@ async function mineBlock() {
   await hre.network.provider.send("evm_mine", []);
 }
 
-async function deploy() {
+/**
+ * @param tradableSomi configure SOMI with pool params and a book BEFORE Arena
+ *        deploys, so buys are executable. Arena caches pool metadata in its
+ *        constructor, so this cannot be done afterwards. SOMI specifically,
+ *        because the 3-turn tier's pool mask covers SOMI alone. Off by default:
+ *        with no book, the only executable action is Hold, which is what most of
+ *        these tests want.
+ */
+async function deploy(tradableSomi = false) {
   const [owner] = await hre.viem.getWalletClients();
   const registry    = await hre.viem.deployContract("FighterRegistry");
   const usdso       = await hre.viem.deployContract("MockERC20", ["USDso", "USDso"]);
@@ -41,6 +50,19 @@ async function deploy() {
   const poolSomi    = await hre.viem.deployContract("MockSpotPool");
   const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
+  if (tradableSomi) {
+    const ONE = 10n ** 18n;
+    // baseToken, quoteToken, tickSize, minQuantity, lotSize
+    await poolSomi.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await poolSomi.write.setMarkPrice([100n * ONE]);
+    // An ask to buy into, and a bid so a mid price exists.
+    await poolSomi.write.setBookLevel([false, 100n * ONE, ONE]);
+    await poolSomi.write.setBookLevel([true, 100n * ONE, ONE]);
+  }
+
+  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
+  // in a linked library, so ArenaUtils has to be deployed alongside it.
+  const arenaUtils = await hre.viem.deployContract("ArenaUtils");
   const arena = await hre.viem.deployContract("Arena", [
     registry.address,
     usdso.address,
@@ -50,7 +72,7 @@ async function deploy() {
     mockPlatform.address,
     1n,
     [18, 18, 18],
-  ], { value: parseEther("33") });
+  ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
 
   // Fund arena with enough STT for 30 requests (each = 0.03 + 0.07*3 = 0.24)
   await hre.network.provider.send("hardhat_setBalance", [
@@ -133,14 +155,45 @@ describe("Arena — Duel lifecycle", function () {
     const resolvedLog = finalizeReceipt.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
     expect(resolvedLog, "expected DuelResolved log").to.not.be.undefined;
 
+    // Both fighters held every turn, so they end on identical balances. That used
+    // to be awarded to fighterA by `valueA >= valueB`; it is a draw.
     const winnerId = parseInt(resolvedLog!.topics[2]!, 16);
-    expect(winnerId).to.equal(FIGHTER_A, "tie should resolve to fighterA");
+    expect(winnerId).to.equal(255, "a level duel has no winner");
+
+    const drawn = finalizeReceipt.logs.find((l) => l.topics[0] === DUEL_DRAWN_SIG);
+    expect(drawn, "expected DuelDrawn log alongside DuelResolved").to.not.be.undefined;
 
     const activeAfter = await arena.read.activeDuelId() as bigint;
     expect(activeAfter).to.equal(0n, "activeDuelId should be 0 after finalize");
 
     const finalState = await arena.read.duels([duelId]) as unknown[];
     expect(finalState[D.status]).to.equal(DuelStatus.Resolved);
+  });
+
+  // The duel-21 regression, in contract form.
+  //
+  // Every duel begins with both fighters holding only cash and zero base tokens,
+  // so a Sell is impossible on turn one by definition. The deployed contract
+  // still listed "6=SellSOMI" as valid, and the agent's extract-then-clamp rule
+  // turned an echoed price into exactly that 6. The fighter sold a token it did
+  // not hold, the order was rejected, the turn was burned, and the player lost.
+  it("a fighter holding no base is never offered a Sell it cannot execute", async function () {
+    const { arena } = await deploy();
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    for (const fighter of [FIGHTER_A, FIGHTER_B]) {
+      const [prompt, allowed] = await arena.read.previewTurnPrompt([duelId, fighter]) as [string, string[]];
+
+      expect(allowed).to.include("Hold", "Hold is always executable");
+      expect(allowed.filter((a) => a.startsWith("Sell"))).to.have.length(
+        0,
+        `fighter ${fighter} holds no base on turn one, so no Sell may be offered — got ${allowed.join(", ")}`,
+      );
+      // The prompt must not smuggle a number back in either: a digit anywhere is
+      // something the model can echo and the agent can extract.
+      expect(prompt).to.not.match(/\d/, `prompt must carry no numerals, got: ${prompt}`);
+    }
   });
 
   it("records the resolved duel in DuelHistory when the sink is set", async function () {
@@ -163,9 +216,14 @@ describe("Arena — Duel lifecycle", function () {
 
     expect(Number(await history.read.totalDuels()), "history should record the duel").to.equal(1);
     expect(await history.read.recorded([duelId])).to.equal(true);
-    // Tie resolves to fighterA → fighterA gets the win on record.
-    const ra = await history.read.getFighterRecord([FIGHTER_A]) as { wins: bigint };
-    expect(Number(ra.wins)).to.equal(1);
+    // Neither fighter traded, so the duel is level: a draw on both records,
+    // rather than a win handed to whoever happened to occupy slot A.
+    const ra = await history.read.getFighterRecord([FIGHTER_A]) as { wins: bigint; draws: bigint };
+    const rb = await history.read.getFighterRecord([FIGHTER_B]) as { losses: bigint; draws: bigint };
+    expect(Number(ra.wins)).to.equal(0, "a draw is not a win");
+    expect(Number(rb.losses)).to.equal(0, "a draw is not a loss");
+    expect(Number(ra.draws)).to.equal(1);
+    expect(Number(rb.draws)).to.equal(1);
   });
 
   it("DuelAlreadyActive reverts when starting second duel mid-flow", async function () {
@@ -306,7 +364,9 @@ describe("Arena — Duel lifecycle", function () {
     expect(String(caught)).to.include("InvalidTurnCount");
   });
 
-  it("winner with higher portfolio value wins (non-tie case)", async function () {
+  // Previously named "non-tie case", but both fighters played identically, so it
+  // was a tie that only looked decisive because `valueA >= valueB` broke it.
+  it("two fighters that both sit out end level, not with a slot-A win", async function () {
     const { arena, mockPlatform, poolWeth } = await deploy();
     const publicClient = await hre.viem.getPublicClient();
 
@@ -326,7 +386,51 @@ describe("Arena — Duel lifecycle", function () {
 
     const resolvedLog = receipt.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
     expect(resolvedLog).to.not.be.undefined;
-    const winnerId = parseInt(resolvedLog!.topics[2]!, 16);
-    expect(winnerId).to.equal(FIGHTER_A);
+    expect(parseInt(resolvedLog!.topics[2]!, 16)).to.equal(255, "identical play is a draw");
+
+    const state = await arena.read.duels([duelId]) as unknown[];
+    expect(Number(state[11])).to.equal(2, "winnerSlot should be the draw sentinel");
+  });
+
+  // The draw path must not swallow genuine wins: when one fighter actually gets
+  // ahead, that fighter still wins outright.
+  it("a fighter that trades into a gain wins outright", async function () {
+    const { arena, mockPlatform, poolSomi } = await deploy(true);
+    const publicClient = await hre.viem.getPublicClient();
+
+    // A buy is only sized if the Arena's own vault balance in the pool covers one
+    // lot, so the pools have to hold seed liquidity before anyone can trade.
+    await arena.write.fundPools([parseEther("1000")]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+    await mineBlock();
+
+    // Turn one: A buys SOMI, B holds. Their balances now differ.
+    const tx = await arena.write.turn();
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx });
+    const reqIds = receipt.logs.filter((l) => l.topics.length === 4).map((l) => BigInt(l.topics[3]!));
+    expect(reqIds.length).to.equal(2, "expected a request per fighter");
+    await mineBlock();
+
+    await mockPlatform.write.dispatchSuccessString([arena.address, reqIds[0], HANDLE_SELECTOR, "BuySOMI"]);
+    await mockPlatform.write.dispatchSuccessString([arena.address, reqIds[1], HANDLE_SELECTOR, "Hold"]);
+
+    const [, allowedAfter] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(allowedAfter).to.include("SellSOMI", "holding SOMI, A may now sell it");
+
+    for (let i = 1; i < 3; i++) await runOneTurn(arena, mockPlatform, reqIds[1] + BigInt(i * 2 - 1));
+
+    // SOMI doubles, so A's base is worth more than the cash B never spent.
+    await poolSomi.write.setMarkPrice([200n * 10n ** 18n]);
+    await poolSomi.write.setBookLevel([true, 200n * 10n ** 18n, 10n ** 18n]);
+    await poolSomi.write.setBookLevel([false, 200n * 10n ** 18n, 10n ** 18n]);
+
+    const finTx = await arena.write.finalizeDuel([duelId]);
+    const finRc = await publicClient.getTransactionReceipt({ hash: finTx });
+
+    const resolved = finRc.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
+    expect(parseInt(resolved!.topics[2]!, 16)).to.equal(FIGHTER_A, "A traded into a lead and should win");
+    expect(finRc.logs.find((l) => l.topics[0] === DUEL_DRAWN_SIG), "not a draw").to.be.undefined;
   });
 });

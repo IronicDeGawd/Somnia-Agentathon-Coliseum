@@ -8,6 +8,7 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot, Ticker } from '@/components/shared/OtherHUD';
 import { FIGHTERS, ROSTER, fighterIndexToId } from '@/lib/fighters';
 import { fmtUsd } from '@/lib/format';
+import { DRAW_SLOT } from '@/lib/contracts';
 import { useActiveDuel } from '@/hooks/useActiveDuel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
@@ -602,7 +603,9 @@ export default function LandingPage() {
                     {(() => {
                       // Real on-chain record/PnL for this fighter (roster idx === registry index).
                       const lb = leaderboardRows.find((r) => r.index === idx);
-                      const realRecord = lb ? `${lb.wins}W-${lb.losses}L` : '0W-0L';
+                      const realRecord = lb
+                        ? `${lb.wins}W-${lb.losses}L${lb.draws > 0 ? `-${lb.draws}D` : ''}`
+                        : '0W-0L';
                       const realPnl = lb ? parseFloat(formatUnits(lb.pnl, 18)) : 0;
                       return (
                         <>
@@ -771,12 +774,18 @@ export default function LandingPage() {
               </span>
             </div>
           ) : ledgerEntries.map((e) => {
-            const winnerId = fighterIndexToId(e.winnerFighter);
-            const loserId  = fighterIndexToId(e.winnerSlot === 0 ? e.fighterB : e.fighterA);
+            // winnerFighter is 255 on a draw, which is not a registry index — left
+            // alone it resolves to a fallback fighter and the tape would announce
+            // an innocent bystander as the winner. Show the two slots instead.
+            const drew = e.winnerSlot === DRAW_SLOT;
+            const winnerId = drew ? fighterIndexToId(e.fighterA) : fighterIndexToId(e.winnerFighter);
+            const loserId  = drew
+              ? fighterIndexToId(e.fighterB)
+              : fighterIndexToId(e.winnerSlot === 0 ? e.fighterB : e.fighterA);
             const wf = FIGHTERS[winnerId];
             const lf = FIGHTERS[loserId];
-            const pnlW = parseFloat(formatUnits(e.winnerSlot === 0 ? e.pnlA : e.pnlB, 18));
-            const pnlL = parseFloat(formatUnits(e.winnerSlot === 0 ? e.pnlB : e.pnlA, 18));
+            const pnlW = parseFloat(formatUnits(drew || e.winnerSlot === 0 ? e.pnlA : e.pnlB, 18));
+            const pnlL = parseFloat(formatUnits(drew || e.winnerSlot === 0 ? e.pnlB : e.pnlA, 18));
             return (
               <div key={e.duelId.toString()} className="tape-row">
                 <span className="t-num t-sm t-dim" style={{ whiteSpace: 'nowrap' }}>#{e.duelId.toString()}</span>
@@ -788,11 +797,13 @@ export default function LandingPage() {
                   >
                     {wf.name}
                   </span>
-                  <span className="chip chip-win">★ W</span>
+                  {drew
+                    ? <span className="chip chip-gold">DRAW</span>
+                    : <span className="chip chip-win">★ W</span>}
                   <span className="t-mono t-xs t-dim">vs</span>
                   <span
                     className="t-display t-up"
-                    style={{ fontSize: 13, color: lf.hex, letterSpacing: '0.08em', opacity: 0.55 }}
+                    style={{ fontSize: 13, color: lf.hex, letterSpacing: '0.08em', opacity: drew ? 1 : 0.55 }}
                   >
                     {lf.name}
                   </span>
@@ -813,7 +824,9 @@ export default function LandingPage() {
                   </div>
                   <span className="t-num t-xs text-loss">{fmtUsd(pnlL)}</span>
                 </div>
-                <span className="t-num t-sm text-gold" style={{ textAlign: 'right' }}>{wf.name}</span>
+                <span className="t-num t-sm text-gold" style={{ textAlign: 'right' }}>
+                  {drew ? 'DRAW' : wf.name}
+                </span>
                 <span className="t-mono t-xs t-faint" style={{ textAlign: 'right' }}>{e.blockNumber.toString()}</span>
               </div>
             );

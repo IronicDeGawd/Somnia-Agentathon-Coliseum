@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { formatUnits } from 'viem';
 import { useAccount, useReadContract } from 'wagmi';
-import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, DRAW_SLOT } from '@/lib/contracts';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { OddsBar } from '@/components/shared/OddsBar';
@@ -313,7 +313,14 @@ export default function ArenaPage() {
 
   // Winner from chain
   const resolvedWinnerSlot = duelResolved && winnerSlot !== null ? winnerSlot : null;
-  const winnerName = resolvedWinnerSlot === 0 ? degenF.name : resolvedWinnerSlot === 1 ? whaleF.name : '—';
+  const winnerName =
+    resolvedWinnerSlot === 0
+      ? degenF.name
+      : resolvedWinnerSlot === 1
+        ? whaleF.name
+        : resolvedWinnerSlot === DRAW_SLOT
+          ? 'DRAW'
+          : '—';
 
   // Real portfolio PnL (float for AnimatedNumber)
   const degenPnl = liveA.pnlNum;

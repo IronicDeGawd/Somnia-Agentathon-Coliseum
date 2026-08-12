@@ -22,6 +22,7 @@ import hre from "hardhat";
 import { parseEther, formatEther } from "viem";
 import fs from "fs";
 import path from "path";
+import { deployLinkedArena } from "./lib/deployArena";
 
 const IS_LOCAL = hre.network.name === "localhost" || hre.network.name === "hardhat";
 
@@ -72,13 +73,16 @@ async function main() {
   const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
   const reactivityFund = parseEther("33");
 
-  // ── 1. Arena ─────────────────────────────────────────────────────────────
+  // ── 1. ArenaUtils library + Arena ────────────────────────────────────────
+  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
+  // in a linked library, so the two deploy together. See lib/deployArena.ts.
   console.log(`\nDeploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)}, value=33 STT)`);
-  const arena = await hre.viem.deployContract(
-    "Arena",
+  const { address: arenaAddress, arenaUtils } = await deployLinkedArena(
+    hre,
     [registryAddr, external.usdso, external.poolWeth, external.poolWbtc, external.poolSomi, external.platform, turnIntervalBlocks, baseDecimals],
     { value: reactivityFund }
   );
+  const arena = await hre.viem.getContractAt("Arena", arenaAddress);
   const subId = (await arena.read.subscriptionId()) as bigint;
   console.log(`  Arena:           ${arena.address}  (subscriptionId=${subId})`);
 
@@ -94,22 +98,24 @@ async function main() {
   }
   console.log(`  setDuelHistory wired OK (${wired})`);
 
-  // ── 3. Bookmaker ─────────────────────────────────────────────────────────
-  console.log("Deploying Bookmaker... (value=33 STT)");
-  const bookmaker = await hre.viem.deployContract(
-    "Bookmaker",
-    [arena.address, external.usdso, registryAddr, external.platform, turnIntervalBlocks],
-    { value: reactivityFund }
-  );
-  console.log(`  Bookmaker:       ${bookmaker.address}`);
-
-  // ── 4. Matchmaker (3-arg constructor: arena, usdso, registry) ─────────────
+  // ── 3. Matchmaker (3-arg constructor: arena, usdso, registry) ─────────────
+  // Must precede Bookmaker: Bookmaker's constructor takes the Matchmaker address
+  // and reverts BadMatchmaker if it has no code, so the old order could not work.
   console.log("Deploying Matchmaker...");
   const matchmaker = await hre.viem.deployContract(
     "Matchmaker",
     [arena.address, external.usdso, registryAddr]
   );
   console.log(`  Matchmaker:      ${matchmaker.address}`);
+
+  // ── 4. Bookmaker ─────────────────────────────────────────────────────────
+  console.log("Deploying Bookmaker... (value=33 STT)");
+  const bookmaker = await hre.viem.deployContract(
+    "Bookmaker",
+    [arena.address, external.usdso, registryAddr, matchmaker.address, external.platform, turnIntervalBlocks],
+    { value: reactivityFund }
+  );
+  console.log(`  Bookmaker:       ${bookmaker.address}`);
 
   // ── 5. Optional fundPools (skipped unless USDSO_PER_POOL set) ─────────────
   if (!IS_LOCAL && process.env.USDSO_PER_POOL) {
@@ -134,7 +140,7 @@ async function main() {
     contracts: {
       ...(prior.contracts ?? {}),  // preserve prior entries (e.g. SwapFallback)
       FighterRegistry: { address: registryAddr },
-      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString() },
+      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils },
       DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },
       Matchmaker: { address: matchmaker.address },

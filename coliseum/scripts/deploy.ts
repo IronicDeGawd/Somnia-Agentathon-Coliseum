@@ -14,6 +14,7 @@ import hre from "hardhat";
 import { parseEther, formatEther } from "viem";
 import fs from "fs";
 import path from "path";
+import { deployLinkedArena } from "./lib/deployArena";
 
 const IS_LOCAL =
   hre.network.name === "localhost" || hre.network.name === "hardhat";
@@ -159,8 +160,10 @@ async function main() {
   // WETH = 18, WBTC = 8, SOMI = 18. Local mocks all use 18.
   const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
   console.log(`Deploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)})`);
-  const arena = await hre.viem.deployContract(
-    "Arena",
+  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
+  // in a linked library, so ArenaUtils deploys alongside it. See lib/deployArena.ts.
+  const { address: arenaAddress, arenaUtils } = await deployLinkedArena(
+    hre,
     [
       registryAddress,
       addresses.usdso,
@@ -173,6 +176,7 @@ async function main() {
     ],
     { value: reactivityFund }
   );
+  const arena = await hre.viem.getContractAt("Arena", arenaAddress);
   console.log(`  Arena:           ${arena.address}`);
   const subId = await arena.read.subscriptionId() as bigint;
   console.log(`  subscriptionId:  ${subId} (0 = precompile skipped on local)`);
@@ -181,7 +185,7 @@ async function main() {
     deployer,
     contracts: {
       FighterRegistry: { address: registryAddress },
-      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString() },
+      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils },
     },
     external: addresses,
   });

@@ -10,8 +10,18 @@ library ArenaTypes {
 
     enum DuelStatus { None, Active, Finalizing, Resolved }
 
+    /// @notice `Duel.winnerSlot` value meaning neither fighter won.
+    ///
+    ///         A tie is not a curiosity here: both fighters are funded with exactly
+    ///         the same deposit, so any duel where both end up holding only their
+    ///         untouched cash — every turn Hold, or every trade coerced to Hold —
+    ///         ends in an exact-wei tie. Awarding that to Player 1, as the previous
+    ///         `valueA >= valueB` did, took real money from Player 2 for nothing.
+    ///
+    ///         0 and 1 are the two slots; 255 stays "unset until resolved".
+    uint8 internal constant DRAW_SLOT = 2;
+
     /// @notice Actions an LLM fighter can take each turn.
-    ///         The LLM returns a number 0–6 which maps to this enum.
     enum FighterAction { Hold, BuyWBTC, SellWBTC, BuyWETH, SellWETH, BuySOMI, SellSOMI }
 
     // ─── Turn tiers ──────────────────────────────────────────────────────────
@@ -110,16 +120,26 @@ library ArenaTypes {
         uint8   poolMask,
         uint256 startBlock
     );
+    /// @param winnerId registry index of the winning fighter, or 255 on a draw.
+    ///        Every resolution emits this event, draw included, so a consumer that
+    ///        watches only this one never misses a duel ending.
     event DuelResolved(
         uint256 indexed duelId,
         uint8   indexed winnerId,
         uint256 fighterAValueUsdso,
         uint256 fighterBValueUsdso
     );
+    /// @notice Emitted alongside DuelResolved when the duel ended level, so a draw
+    ///         can be filtered for directly rather than inferred from a sentinel.
+    event DuelDrawn(uint256 indexed duelId, uint256 fighterAValueUsdso, uint256 fighterBValueUsdso);
     event TurnAdvanced(uint256 indexed duelId, uint16 completedCallbacks, uint256 blockNumber);
     event FighterMoveRequested(uint256 indexed duelId, uint8 indexed fighterId, uint256 indexed requestId);
     event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, FighterAction action, uint128 orderId);
     event FighterMoveFailed(uint256 indexed duelId, uint8 indexed fighterId, string reason);
+    /// @notice The model answered with something the fighter could not execute, so
+    ///         the turn was taken as Hold instead of being burned. `requested` is the
+    ///         raw answer, kept so a coercion can be told apart from a genuine Hold.
+    event FighterMoveCoerced(uint256 indexed duelId, uint8 indexed fighterId, string requested);
     event OrderPlaced(
         address indexed pool,
         uint8   indexed fighterId,

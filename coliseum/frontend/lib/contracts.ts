@@ -1,19 +1,36 @@
 import { parseAbi } from 'viem';
 
 export const CONTRACT_ADDRESSES = {
-  // Simulated-market migration (deploy block 403937518): per-duel real/simulated
-  // pool routing, a fresh DuelHistory wired to the new Arena, and the existing
-  // FighterRegistry reused (immutable persona data). Arena holds the registry
-  // immutable and Bookmaker/Matchmaker hold Arena immutable, so all four (plus a
-  // new DuelHistory) were redeployed together.
-  Arena: '0x8813fef83ae3faa8d700c6fbcb8cf92de08ea726' as const,
-  Bookmaker: '0x323cf312d93a5cbe575d30ef4d39a56ac362ece3' as const,
+  // Fairness migration (deploy block 459829632). Fighters are now asked for an
+  // action BY NAME from a list of what they can actually execute, and a level
+  // duel resolves as a draw instead of being awarded to player one. Arena holds
+  // the registry immutable and Bookmaker/Matchmaker hold Arena immutable, so all
+  // four plus a fresh DuelHistory were redeployed together; FighterRegistry is
+  // reused, since its persona data is live-editable via setPrompt.
+  //
+  // Arena is linked against a deployed ArenaUtils library
+  // (0x7241564C0C3160F7aE4fdaC6ADEfaeccC3e678e4) — it exceeded the 24576-byte
+  // contract limit with the prompt builders inlined.
+  Arena: '0xcB347D6d9f4cF8a1c340a7138dBEA7A31f40D6e3' as const,
+  Bookmaker: '0x18e319c7509aef4eef8a3159fde9253c38394c13' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0xadfc07d9e36622476860f8d27ba0a08e33e592e0' as const,
+  Matchmaker: '0x462ae5ec9f006f8d8fec9622e73590a1ee77ab2e' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
-  DuelHistory: '0xa4aeab0164c9086dab7f9e5540c40f0935945fcd' as `0x${string}`,
+  DuelHistory: '0x555Af81ED3f8305738710A929298fEF2A0b95a9F' as `0x${string}`,
 };
+
+/**
+ * `Duel.winnerSlot` value meaning neither fighter won. Mirrors
+ * ArenaTypes.DRAW_SLOT; 0 and 1 are the two slots, 255 is "unset until resolved".
+ *
+ * Not a rare case: both fighters are funded with identical deposits, so any duel
+ * where neither trades ends exactly level.
+ */
+export const DRAW_SLOT = 2;
+
+/** Registry index reported for the winner of a drawn duel — nobody. */
+export const NO_WINNER_FIGHTER = 255;
 
 /** True once DuelHistory has a real (non-zero) deployed address. */
 export const DUEL_HISTORY_DEPLOYED =
@@ -25,7 +42,7 @@ export const DUEL_HISTORY_DEPLOYED =
  * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
  * never ask a public RPC to scan from genesis — that gets rejected/throttled.
  */
-export const BOOKMAKER_DEPLOY_BLOCK = BigInt(403937518);
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(459829632);
 
 /**
  * Active dreamDEX pools the Arena trades on, keyed by the poolMask bit.
@@ -126,10 +143,20 @@ export const ABIS = {
     'function recoverFunds(uint256 duelId) external',
     'event DuelStarted(uint256 indexed duelId, uint8 indexed fighterA, uint8 indexed fighterB, address creator, uint16 turns, uint8 poolMask, uint256 startBlock)',
     'event TurnAdvanced(uint256 indexed duelId, uint16 completedCallbacks, uint256 blockNumber)',
+    // winnerFighterId is 255 when the duel ended level — see DuelDrawn below.
     'event DuelResolved(uint256 indexed duelId, uint8 indexed winnerFighterId, uint256 valueA, uint256 valueB)',
+    // Emitted alongside DuelResolved when neither fighter won, so a draw can be
+    // filtered for directly instead of inferred from the 255 sentinel.
+    'event DuelDrawn(uint256 indexed duelId, uint256 valueA, uint256 valueB)',
     'event FighterMoveRequested(uint256 indexed duelId, uint8 indexed fighterId, uint256 requestId)',
     'event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, uint8 action, uint128 orderId)',
     'event FighterMoveFailed(uint256 indexed duelId, uint8 indexed fighterId, string reason)',
+    // The model answered with something the fighter could not execute, so the
+    // turn was taken as Hold rather than burned. `requested` is the raw answer.
+    'event FighterMoveCoerced(uint256 indexed duelId, uint8 indexed fighterId, string requested)',
+    // The exact prompt and allowed action list for a fighter's next turn, without
+    // spending an inference. Useful for showing why a fighter chose what it did.
+    'function previewTurnPrompt(uint256 duelId, uint8 fighterId) view returns (string prompt, string[] allowed)',
     'event DuelFundsRecovered(uint256 indexed duelId, address indexed creator, uint256 amount)',
     'event MarkPriceSnapshot(uint256 indexed duelId, address indexed pool, uint256 markPrice, uint16 turnNum)',
     'event DuelDegenerate(uint256 indexed duelId, address indexed pool, string reason)',
@@ -158,8 +185,10 @@ export const ABIS = {
   ]),
 
   DuelHistory: parseAbi([
-    'function getFighterRecord(uint8 index) view returns ((uint32 wins, uint32 losses, uint32 duels, int256 cumulativePnl))',
-    'function leaderboard() view returns ((uint32 wins, uint32 losses, uint32 duels, int256 cumulativePnl)[])',
+    // `draws` was added with the draw migration — a tuple-shape change, so an old
+    // ABI decodes this struct wrongly rather than failing loudly.
+    'function getFighterRecord(uint8 index) view returns ((uint32 wins, uint32 losses, uint32 draws, uint32 duels, int256 cumulativePnl))',
+    'function leaderboard() view returns ((uint32 wins, uint32 losses, uint32 draws, uint32 duels, int256 cumulativePnl)[])',
     'function totalDuels() view returns (uint256)',
     'function getEntries(uint256 offset, uint256 limit) view returns ((uint256 duelId, uint8 fighterA, uint8 fighterB, uint8 winnerSlot, uint8 winnerFighter, uint256 valueA, uint256 valueB, int256 pnlA, int256 pnlB, uint64 blockNumber)[])',
     'function getFighterEntries(uint8 index, uint256 offset, uint256 limit) view returns ((uint256 duelId, uint8 fighterA, uint8 fighterB, uint8 winnerSlot, uint8 winnerFighter, uint256 valueA, uint256 valueB, int256 pnlA, int256 pnlB, uint64 blockNumber)[])',

@@ -7,6 +7,7 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { Meter } from '@/components/shared/Meter';
 import { BracketButton } from '@/components/shared/OtherHUD';
 import { fighterIdToIndex, fighterIndexToId } from '@/lib/fighters';
+import { DRAW_SLOT } from '@/lib/contracts';
 import { useFighters } from '@/hooks/useFighters';
 import { useFighterHistory } from '@/hooks/useFighterHistory';
 import { formatUnits } from 'viem';
@@ -223,7 +224,10 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
           <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
             <div className="card pad-16 col gap-4 flex-1" style={{ minWidth: 'min(100%, 140px)' }}>
               <span className="label-tiny">RECORD</span>
-              <span className="t-num" style={{ fontSize: 24 }}>{fighterRecord.wins}W – {fighterRecord.losses}L</span>
+              <span className="t-num" style={{ fontSize: 24 }}>
+                {fighterRecord.wins}W – {fighterRecord.losses}L
+                {fighterRecord.draws > 0 ? ` – ${fighterRecord.draws}D` : ''}
+              </span>
             </div>
             <div className="card pad-16 col gap-4 flex-1" style={{ minWidth: 'min(100%, 140px)' }}>
               <span className="label-tiny">DUELS</span>
@@ -268,7 +272,10 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
               const myPnl = isA ? entry.pnlA : entry.pnlB;
               const opponentIndex = isA ? entry.fighterB : entry.fighterA;
               const opponentId = fighterIndexToId(opponentIndex);
-              const won = entry.winnerFighter === fighterIndex;
+              // winnerFighter is 255 on a draw, which matches no fighter index —
+              // so without this the entry would silently read as a LOSS.
+              const drew = entry.winnerSlot === DRAW_SLOT;
+              const won = !drew && entry.winnerFighter === fighterIndex;
               const isPos = myPnl >= BigInt(0);
               const absVal = parseFloat(formatUnits(myPnl < BigInt(0) ? -myPnl : myPnl, 18)).toFixed(2);
               const sign = myPnl > BigInt(0) ? '+' : myPnl < BigInt(0) ? '-' : '';
@@ -283,9 +290,12 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
                     <span className="t-mono t-xs t-faint">#{entry.duelId.toString()}</span>
                     <span
                       className="t-mono t-xs"
-                      style={{ color: won ? 'var(--win)' : 'var(--loss)', letterSpacing: '0.15em' }}
+                      style={{
+                        color: drew ? 'var(--gold)' : won ? 'var(--win)' : 'var(--loss)',
+                        letterSpacing: '0.15em',
+                      }}
                     >
-                      {won ? 'WIN' : 'LOSS'}
+                      {drew ? 'DRAW' : won ? 'WIN' : 'LOSS'}
                     </span>
                     <span className="t-mono t-xs t-dim">vs {opponentId.toUpperCase()}</span>
                   </div>

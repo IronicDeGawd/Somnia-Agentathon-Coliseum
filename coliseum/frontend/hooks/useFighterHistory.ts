@@ -20,6 +20,7 @@ export interface HistoryEntry {
 export interface FighterRecord {
   wins: number;
   losses: number;
+  draws: number;
   duels: number;
   pnl: bigint;
 }
@@ -27,6 +28,7 @@ export interface FighterRecord {
 type RawRecord = {
   wins: number;
   losses: number;
+  draws: number;
   duels: number;
   cumulativePnl: bigint;
 };
@@ -95,6 +97,7 @@ export function useFighterHistory(index: number): {
     record = {
       wins: Number(raw.wins),
       losses: Number(raw.losses),
+      draws: Number(raw.draws),
       duels: Number(raw.duels),
       pnl: BigInt(raw.cumulativePnl),
     };

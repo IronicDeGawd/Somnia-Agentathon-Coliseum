@@ -12,6 +12,9 @@ describe("Arena — fundPools", function () {
     const poolSomi = await hre.viem.deployContract("MockSpotPool");
     const registry = await hre.viem.deployContract("FighterRegistry");
 
+    // Arena exceeds the 24576-byte contract limit unless the prompt builders
+    // live in a linked library, so ArenaUtils has to be deployed alongside it.
+    const arenaUtils = await hre.viem.deployContract("ArenaUtils");
     const arena = await hre.viem.deployContract("Arena", [
       registry.address,
       usdso.address,
@@ -21,7 +24,7 @@ describe("Arena — fundPools", function () {
       owner.account.address,  // dummy platform — not exercised in fund tests
       1n,
       [18, 18, 18],
-    ], { value: parseEther("33") });
+    ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
 
     return { arena, usdso, poolWeth, poolWbtc, poolSomi, registry, owner, other };
   }

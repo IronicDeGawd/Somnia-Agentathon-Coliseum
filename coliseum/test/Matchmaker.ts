@@ -258,6 +258,39 @@ describe("Matchmaker", () => {
       // No revert, but bob gets 0 (balance unchanged relative to post-duel state)
     });
 
+    // A duel where neither fighter got ahead used to be awarded to slot A, so the
+    // slot-B player lost their whole stake to a comparison operator. On a draw
+    // each player takes back their own money instead.
+    it("on a draw both players are refunded, and the two halves are the whole pot", async () => {
+      const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
+      const half = await mm.read.halfDeposit([3, false]);
+
+      await mockUsdso.write.approve([mm.address, half], { account: alice.account });
+      await mm.write.queue([0, 3, false], { account: alice.account });
+      await mockUsdso.write.approve([mm.address, half], { account: bob.account });
+      await mm.write.queue([1, 3, false], { account: bob.account });
+
+      const duelId = await mockArena.read.lastDuelId();
+      await mockArena.write.resolveDuel([duelId, 2]); // 2 = draw
+
+      const aliceBefore = await mockUsdso.read.balanceOf([alice.account.address]);
+      const bobBefore   = await mockUsdso.read.balanceOf([bob.account.address]);
+
+      await mm.write.claimWinnings([duelId], { account: alice.account });
+      await mm.write.claimWinnings([duelId], { account: bob.account });
+
+      const alicePaid = (await mockUsdso.read.balanceOf([alice.account.address])) - aliceBefore;
+      const bobPaid   = (await mockUsdso.read.balanceOf([bob.account.address])) - bobBefore;
+
+      expect(alicePaid).to.be.gt(0n, "slot A must not walk away with everything");
+      expect(bobPaid).to.be.gt(0n, "slot B must not lose a duel nobody won");
+
+      const { totalPot } = await mm.read.matches([duelId]).then((m: unknown[]) => ({ totalPot: m[2] as bigint }));
+      expect(alicePaid + bobPaid).to.equal(totalPot, "the two refunds must exactly exhaust the pot");
+      // Split by role, not claim order, so the odd wei is deterministic.
+      expect(bobPaid - alicePaid).to.be.lte(1n);
+    });
+
     it("reverts if duel not resolved", async () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
       const half = await mm.read.halfDeposit([3, false]);

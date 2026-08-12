@@ -14,9 +14,15 @@ contract DuelHistory is IDuelHistory {
     /// @notice Number of fighters in the registry (indexes 0..FIGHTER_COUNT-1).
     uint8 public constant FIGHTER_COUNT = 6;
 
+    /// @notice `winnerSlot` value meaning the duel ended level. Mirrors
+    ///         ArenaTypes.DRAW_SLOT; kept local so this sink stays independent of
+    ///         the Arena libraries, as ARENA_STATUS constants already are elsewhere.
+    uint8 public constant DRAW_SLOT = 2;
+
     struct FighterRecord {
         uint32 wins;
         uint32 losses;
+        uint32 draws;
         uint32 duels;
         int256 cumulativePnl;   // Σ (finalValue − initialPerFighter), USDso wei
     }
@@ -78,7 +84,7 @@ contract DuelHistory is IDuelHistory {
         if (recorded[duelId]) revert AlreadyRecorded(duelId);
         if (fighterA >= FIGHTER_COUNT) revert BadFighterIndex(fighterA);
         if (fighterB >= FIGHTER_COUNT) revert BadFighterIndex(fighterB);
-        if (winnerSlot > 1) revert BadWinnerSlot(winnerSlot);
+        if (winnerSlot > 1 && winnerSlot != DRAW_SLOT) revert BadWinnerSlot(winnerSlot);
         // Solidity does not bounds-check uint256→int256 casts; a value ≥ 2^255
         // would silently flip sign and corrupt PnL. Reject explicitly. (Portfolio
         // values are USDso-denominated and never approach this in practice.)
@@ -92,7 +98,11 @@ contract DuelHistory is IDuelHistory {
         int256 init = int256(initialPerFighter);
         int256 pnlA = int256(valueA) - init;
         int256 pnlB = int256(valueB) - init;
-        uint8  winnerFighter = winnerSlot == 0 ? fighterA : fighterB;
+        bool   isDraw = winnerSlot == DRAW_SLOT;
+        // 255 = nobody won. Mirrors the sentinel Arena emits in DuelResolved.
+        uint8  winnerFighter = isDraw
+            ? type(uint8).max
+            : (winnerSlot == 0 ? fighterA : fighterB);
 
         // ── Aggregates ──────────────────────────────────────────────────────
         FighterRecord storage ra = _records[fighterA];
@@ -101,7 +111,10 @@ contract DuelHistory is IDuelHistory {
         rb.duels += 1;
         ra.cumulativePnl += pnlA;
         rb.cumulativePnl += pnlB;
-        if (winnerSlot == 0) {
+        if (isDraw) {
+            ra.draws += 1;
+            rb.draws += 1;
+        } else if (winnerSlot == 0) {
             ra.wins   += 1;
             rb.losses += 1;
         } else {
