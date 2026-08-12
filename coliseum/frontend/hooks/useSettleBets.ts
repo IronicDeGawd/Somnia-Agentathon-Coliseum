@@ -5,11 +5,11 @@ import { parseAbi, parseAbiItem, type Address } from 'viem';
 import {
   useReadContract,
   useWriteContract,
-  useWatchContractEvent,
   useAccount,
   usePublicClient,
 } from 'wagmi';
 import { ABIS, CONTRACT_ADDRESSES, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 // ─── Local ABI extensions not present in the shared ABIS object ──────────────
 // Bookmaker.bets is a public mapping: bets[duelId][index] → Bet struct.
@@ -150,12 +150,14 @@ export function useSettleBets(
   }, [duelId, userAddress, publicClient]);
 
   // ── Live watcher: catch bets placed in this browser session ───────────────
-  useWatchContractEvent({
+  useContractSubscription({
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: parseAbi([
       'event BetPlaced(uint256 indexed duelId, uint8 indexed fighterId, address indexed bettor, uint256 stake, uint16 oddsAtPlacementBps, uint256 betIndex)',
     ]),
     eventName: 'BetPlaced',
+    args: { duelId },
+    enabled: !!userAddress,
     onLogs(logs) {
       if (!userAddress) return;
       for (const log of logs) {

@@ -47,7 +47,13 @@ export default function LobbyPage() {
     );
   }, []);
 
-  const { activeDuelId, duel, isLoading: isDuelLoading } = useActiveDuel();
+  const {
+    activeDuelId,
+    duel,
+    isLoading: isDuelLoading,
+    error: duelError,
+    refetch: refetchActiveDuel,
+  } = useActiveDuel();
   const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
@@ -104,6 +110,13 @@ export default function LobbyPage() {
               <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
               {activeDuelId !== null ? (
                 <Chip variant="live"><Dot variant="a" pulse /> DUEL #{activeDuelIdStr} · LIVE</Chip>
+              ) : duelError ? (
+                // A failed read is not the same as an empty arena — saying
+                // "ARENA DARK" here claims knowledge we do not have.
+                <span className="row gap-8 ai-c" role="alert">
+                  <Chip variant="loss">⚠ ARENA UNREACHABLE</Chip>
+                  <BracketButton variant="ghost" onClick={() => refetchActiveDuel()}>RETRY →</BracketButton>
+                </span>
               ) : (
                 <Chip variant="gold">▸ ARENA DARK · START A DUEL</Chip>
               )}
@@ -361,8 +374,14 @@ export default function LobbyPage() {
 
       {/* ── § 02.5 CREATE NEW DUEL ────────────────────────────────── */}
       <section ref={creatorRef} className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
-        <div
+        {/* This is the primary way into starting a duel, so it is a real
+            button: focusable, Enter/Space operable, and it announces its
+            expanded state. */}
+        <button
+          type="button"
           className="sect-head"
+          aria-expanded={creatorExpanded}
+          aria-controls="duel-creator-panel"
           style={{ cursor: 'pointer' }}
           onClick={() => {
             // Header toggle opens the generic creator (selectable tier).
@@ -373,10 +392,10 @@ export default function LobbyPage() {
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">{lockedTurns ? `JOIN ${lockedTurns}-ROUND TIER` : 'CREATE NEW DUEL'}</span>
           <span className="sect-head-meta">{creatorExpanded ? '▲ collapse' : '▼ expand to start a duel'}</span>
-        </div>
+        </button>
 
         {creatorExpanded && (
-          <div style={{ maxWidth: 520 }}>
+          <div id="duel-creator-panel" style={{ maxWidth: 520 }}>
             <DuelCreator
               lockedTurns={lockedTurns ?? undefined}
               onMatchFound={(duelId) => {
@@ -434,14 +453,19 @@ export default function LobbyPage() {
               // FORM = win rate (wins / duels), left-anchored bar.
               const winRate = hasDuels ? r.wins / r.duels : 0;
               return (
-                <div
+                // A row is navigation, so it is a link: focusable and
+                // keyboard-operable for free, and routed client-side rather
+                // than through a full page reload.
+                <Link
                   key={r.index}
+                  href={`/fighters/${fighterId}`}
                   className="standings-grid"
                   style={{
                     borderBottom: i < leaderboardRows.length - 1 ? '1px solid var(--border)' : 'none',
                     cursor: 'pointer',
+                    color: 'inherit',
+                    textDecoration: 'none',
                   }}
-                  onClick={() => { window.location.href = `/fighters/${fighterId}`; }}
                 >
                   <span className="st-rank t-num t-sm t-dim">{String(i + 1).padStart(2, '0')}</span>
                   <div className="st-name row ai-c" style={{ gap: 10, minWidth: 0, overflow: 'hidden' }}>
@@ -473,7 +497,7 @@ export default function LobbyPage() {
                       />
                     )}
                   </div>
-                </div>
+                </Link>
               );
             })
           )}

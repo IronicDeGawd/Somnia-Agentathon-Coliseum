@@ -18,6 +18,9 @@ interface BetPanelProps {
   totalBetsB: bigint;
   isActive: boolean;
   isLoading: boolean;
+  // Belt and braces alongside isActive: a stale isActive must never leave the
+  // panel open on a settled duel, where a bet can no longer be honoured.
+  isResolved?: boolean;
   // True when the connected wallet is one of the two fighters' players — they
   // can't bet on their own duel.
   isParticipant?: boolean;
@@ -75,6 +78,7 @@ export default function BetPanel({
   totalBetsB,
   isActive,
   isLoading: duelLoading,
+  isResolved = false,
   isParticipant = false,
 }: BetPanelProps) {
   const { address } = useAccount();
@@ -129,7 +133,8 @@ export default function BetPanel({
 
   // ── Guard flags ─────────────────────────────────────────────────────────────
   const walletConnected = !!address;
-  const betsOpen        = isActive && walletConnected && !existingBet && !isParticipant;
+  const bettingLive     = isActive && !isResolved;
+  const betsOpen        = bettingLive && walletConnected && !existingBet && !isParticipant;
   const canPlaceBet     = betsOpen && selectedSlot !== null && pendingAmount > BigInt(0) && !isPending;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -139,13 +144,13 @@ export default function BetPanel({
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="row ai-c jc-sb">
         <span className="eyebrow">Bet Panel</span>
-        {isActive && (
+        {bettingLive && (
           <span className="chip chip-live">
             <span className="dot pulse" />
             BETS OPEN
           </span>
         )}
-        {!isActive && !duelLoading && (
+        {!bettingLive && !duelLoading && (
           <span className="chip" style={{ color: 'var(--text-dim)' }}>BETS CLOSED</span>
         )}
       </div>
@@ -185,7 +190,13 @@ export default function BetPanel({
           )}
         </div>
 
-        <div className="row jc-sb">
+        {/* Odds move on their own as bets land, so announce the change. */}
+        <div
+          className="row jc-sb"
+          role="status"
+          aria-live="polite"
+          aria-label={`Win probability: ${fighterAName} ${oddsAPercent} percent, ${fighterBName} ${oddsBPercent} percent`}
+        >
           <span className="t-mono t-sm" style={{ color: 'var(--fighter-a)' }}>
             {oddsAPercent}%
           </span>
@@ -344,8 +355,13 @@ export default function BetPanel({
             </div>
 
             {/* Freeform number input — unified with quick-picks via customAmount */}
+            <label htmlFor="bet-amount" className="label-tiny">
+              Bet amount (USDso)
+            </label>
             <input
+              id="bet-amount"
               type="number"
+              inputMode="decimal"
               min="0"
               step="1"
               placeholder="Custom amount…"
@@ -388,6 +404,7 @@ export default function BetPanel({
           {submitError && (
             <div
               className="panel pad-16"
+              role="alert"
               style={{ border: '1px solid var(--loss)', color: 'var(--loss)' }}
             >
               <span className="t-xs">{submitError.message}</span>
@@ -425,7 +442,7 @@ export default function BetPanel({
           )}
 
           {/* Bets closed notice — shown when duel is not Active */}
-          {!isActive && !duelLoading && (
+          {!bettingLive && !duelLoading && (
             <div
               className="panel pad-16"
               style={{ textAlign: 'center', color: 'var(--text-dim)' }}

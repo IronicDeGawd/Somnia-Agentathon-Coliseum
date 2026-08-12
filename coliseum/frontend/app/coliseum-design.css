@@ -130,7 +130,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  transition: all 120ms ease;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   border-radius: 2px;
   white-space: nowrap;
 }
@@ -521,6 +521,18 @@ body {
   flex-wrap: wrap; /* let the meta drop below the title on narrow screens */
   position: relative;
 }
+/* A section header doubling as a disclosure control. Strip the button chrome
+   so it renders identically to the static header, keeping only the semantics. */
+button.sect-head {
+  width: 100%;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .sect-head::before {
   content: "";
   position: absolute; top: -1px; left: 0;
@@ -770,4 +782,29 @@ body {
   .st-rec  { grid-area: rec; }
   .st-pnl  { grid-area: pnl; }
   .st-form { grid-area: form; }
+}
+
+/* ─── Reduced motion ────────────────────────────────────────────────────────
+   Several of this app's animations run indefinitely — the pulsing live dot,
+   the 50s ticker, the blinking cursor. For users who ask the OS for reduced
+   motion those are the ones that actually cause problems, so infinite loops
+   are stopped outright while one-shot entrances are collapsed to an instant
+   state change rather than removed. Transitions are shortened, not disabled,
+   so hover and focus feedback survives.                                     */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The ticker scrolls via transform; freeze it in its start position rather
+     than snapping it to the end of a 50s translation. */
+  .ticker {
+    animation: none !important;
+    transform: none !important;
+  }
 }

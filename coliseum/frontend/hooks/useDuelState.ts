@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useReadContract, useWatchContractEvent, usePublicClient } from 'wagmi';
+import { useReadContract, usePublicClient } from 'wagmi';
 import { parseAbiItem } from 'viem';
 import { ABIS, CONTRACT_ADDRESSES } from '@/lib/contracts';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 // DuelStatus enum mirrors ArenaTypes.DuelStatus { None=0, Active=1, Finalizing=2, Resolved=3 }
 const DUEL_STATUS_ACTIVE   = 1;
@@ -44,6 +45,9 @@ export interface UseDuelStateResult {
   isResolved: boolean;
   winnerSlot: number | null;
   isLoading: boolean;
+  /** Set when the duel read itself failed, so callers can tell a broken RPC
+   *  apart from a duel that does not exist. */
+  error: Error | null;
   refetch: () => void;
 }
 
@@ -54,6 +58,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   const {
     data: duelRaw,
     isLoading: duelLoading,
+    error: duelError,
     refetch: refetchDuel,
   } = useReadContract({
     address: CONTRACT_ADDRESSES.Arena,
@@ -63,6 +68,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     query: {
       enabled,
       refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
     },
   });
 
@@ -80,6 +86,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     query: {
       enabled,
       refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
     },
   });
 
@@ -94,6 +101,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     query: {
       enabled,
       refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
     },
   });
 
@@ -116,7 +124,8 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
       for (const log of logs) {
         const args = log.args as { duelId?: bigint; fighterId?: number; stake?: bigint };
         // Reject foreign-duel logs BEFORE touching the dedup set, so it never
-        // accumulates keys for other duels (the live watcher is broad-filtered).
+        // accumulates keys for other duels. Both feeds filter on the indexed
+        // duelId already; this is the belt-and-braces check.
         if (args.duelId !== duelId) continue;
         const key = `${log.transactionHash}:${log.logIndex}`;
         if (seenBets.current.has(key)) continue;
@@ -163,7 +172,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
 
   // Live BetPlaced watcher — appends new bets as they land. Filter by the
   // indexed duelId at the RPC level so only this duel's logs reach the client.
-  useWatchContractEvent({
+  useContractSubscription({
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: ABIS.Bookmaker,
     eventName: 'BetPlaced',
@@ -175,34 +184,26 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
   });
 
   // ── TurnAdvanced → refetch duel state ─────────────────────────────────────
-  useWatchContractEvent({
+  useContractSubscription({
     address: CONTRACT_ADDRESSES.Arena,
     abi: ABIS.Arena,
     eventName: 'TurnAdvanced',
-    onLogs(logs) {
-      for (const log of logs) {
-        const args = log.args as { duelId?: bigint };
-        if (args.duelId === duelId) {
-          refetchDuel();
-        }
-      }
+    args: { duelId },
+    onLogs() {
+      refetchDuel();
     },
     enabled,
   });
 
   // ── OddsUpdated → refetch odds ────────────────────────────────────────────
-  useWatchContractEvent({
+  useContractSubscription({
     address: CONTRACT_ADDRESSES.Bookmaker,
     abi: ABIS.Bookmaker,
     eventName: 'OddsUpdated',
-    onLogs(logs) {
-      for (const log of logs) {
-        const args = log.args as { duelId?: bigint };
-        if (args.duelId === duelId) {
-          refetchOddsA();
-          refetchOddsB();
-        }
-      }
+    args: { duelId },
+    onLogs() {
+      refetchOddsA();
+      refetchOddsB();
     },
     enabled,
   });
@@ -261,6 +262,7 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     isResolved,
     winnerSlot,
     isLoading: duelLoading,
+    error: duelError ?? null,
     refetch,
   };
 }

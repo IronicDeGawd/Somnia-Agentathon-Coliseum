@@ -88,6 +88,16 @@ const ERC20_ABI = [
     ],
     outputs: [{ type: "bool" }],
   },
+  {
+    name: "transfer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
 ] as const;
 
 const MATCHMAKER_ABI = [
@@ -366,7 +376,11 @@ async function main() {
   })) as bigint;
   log(`halfDeposit(${TURNS}, sim=${SIMULATED}): ${fmtU(halfDeposit)} USDso`);
 
-  const [p1UsdBal, p2UsdBal, p1SttBal, p2SttBal] = await Promise.all([
+  // p1UsdBal / p2UsdBal are reassigned by the top-up below.
+  let [p1UsdBal, p2UsdBal] = [BigInt(0), BigInt(0)];
+  let p1SttBal: bigint;
+  let p2SttBal: bigint;
+  [p1UsdBal, p2UsdBal, p1SttBal, p2SttBal] = await Promise.all([
     publicClient.readContract({
       address: usdsoAddr,
       abi: ERC20_ABI,
@@ -390,10 +404,46 @@ async function main() {
     `P2 balances: USDso=${fmtU(p2UsdBal)}  STT=${fmtU(p2SttBal)} (gas)`
   );
 
+  // P2 only ever spends, while winnings land wherever the duel decides, so P2
+  // drains over time and the run used to abort here — silently, since nothing
+  // reads the cron log. Top P2 up from P1 when P1 can cover both, and only
+  // fail when neither wallet has enough.
+  if (p2UsdBal < halfDeposit && p1UsdBal >= halfDeposit * BigInt(2)) {
+    // Move enough for several runs so this isn't a transfer every single day.
+    const topUp = halfDeposit * BigInt(4) - p2UsdBal;
+    const affordable = p1UsdBal - halfDeposit;
+    const amount = topUp < affordable ? topUp : affordable;
+    log(
+      `P2 short of USDso (${fmtU(p2UsdBal)} < ${fmtU(halfDeposit)}) — ` +
+        `transferring ${fmtU(amount)} from P1`
+    );
+    const topUpTx = await p1Wallet.writeContract({
+      address: usdsoAddr,
+      abi: ERC20_ABI,
+      functionName: "transfer",
+      args: [p2, amount],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: topUpTx });
+    p2UsdBal = (await publicClient.readContract({
+      address: usdsoAddr,
+      abi: ERC20_ABI,
+      functionName: "balanceOf",
+      args: [p2],
+    })) as bigint;
+    p1UsdBal = (await publicClient.readContract({
+      address: usdsoAddr,
+      abi: ERC20_ABI,
+      functionName: "balanceOf",
+      args: [p1],
+    })) as bigint;
+    log(`After top-up: P1=${fmtU(p1UsdBal)}  P2=${fmtU(p2UsdBal)}`);
+  }
+
   if (p1UsdBal < halfDeposit || p2UsdBal < halfDeposit) {
     log(
       `ERROR: Insufficient USDso. Need ${fmtU(halfDeposit)} each. ` +
-        `P1=${fmtU(p1UsdBal)}, P2=${fmtU(p2UsdBal)}`
+        `P1=${fmtU(p1UsdBal)}, P2=${fmtU(p2UsdBal)}. ` +
+        `Both wallets need funding — a P1→P2 transfer cannot fix this.`
     );
     process.exitCode = 1;
     return;

@@ -2,14 +2,14 @@
 
 import React, { useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { formatUnits, parseAbi, type Address } from 'viem';
-import { useAccount, useReadContract, useWatchContractEvent } from 'wagmi';
+import { formatUnits } from 'viem';
+import { useAccount, useReadContract } from 'wagmi';
 import { AppTopBar } from '@/components/shared/AppTopBar';
 import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton } from '@/components/shared/OtherHUD';
 import { useFighters } from '@/hooks/useFighters';
 import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
-import { config } from '@/lib/chain';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 // ─── Pool mask bits ───────────────────────────────────────────────────────────
 const POOL_BIT_SOMI = 0x01;
@@ -37,15 +37,9 @@ function parseFullDuel(raw: readonly unknown[]) {
   };
 }
 
-// Matchmaker ABI — only what we need here
-const MATCHMAKER_ABI = parseAbi([
-  'event MatchStarted(address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns, uint256 duelId)',
-  'function getSlot(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
-]);
-
-const MATCHMAKER_ADDRESS = (
-  (CONTRACT_ADDRESSES as Record<string, Address>)['Matchmaker'] ?? '0x0000000000000000000000000000000000000000'
-) as Address;
+// Use the shared Matchmaker ABI. The local copy this replaced declared
+// MatchStarted with duelId last and unindexed; the contract emits it first and
+// indexed, so the signature hashed to a different topic0 and never matched.
 
 // ─── Pulse animation ──────────────────────────────────────────────────────────
 const pulseStyle = `
@@ -79,6 +73,7 @@ export default function PreDuelPage() {
     query: {
       enabled: duelIdBig > BigInt(0),
       refetchInterval: 4_000,
+      refetchIntervalInBackground: true,
     },
   });
 
@@ -92,19 +87,13 @@ export default function PreDuelPage() {
   }, [duel, duelIdStr, router]);
 
   // Watch MatchStarted — redirect as soon as this duel fires
-  useWatchContractEvent({
-    address: MATCHMAKER_ADDRESS,
-    abi: MATCHMAKER_ABI,
+  useContractSubscription({
+    address: CONTRACT_ADDRESSES.Matchmaker,
+    abi: ABIS.Matchmaker,
     eventName: 'MatchStarted',
-    config,
-    onLogs(logs) {
-      for (const log of logs) {
-        const eventDuelId = (log.args as { duelId?: bigint }).duelId;
-        if (eventDuelId !== undefined && eventDuelId === duelIdBig) {
-          router.replace(`/duel/${duelIdStr}`);
-          return;
-        }
-      }
+    args: { duelId: duelIdBig },
+    onLogs() {
+      router.replace(`/duel/${duelIdStr}`);
     },
   });
 

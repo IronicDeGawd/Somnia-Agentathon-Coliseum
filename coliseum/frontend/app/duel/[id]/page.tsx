@@ -222,6 +222,7 @@ export default function ArenaPage() {
     isResolved,
     winnerSlot,
     isLoading,
+    error: duelError,
     refetch,
   } = useDuelState(duelId);
 
@@ -262,6 +263,12 @@ export default function ArenaPage() {
 
   // No duel (status=0 or not found)
   const noDuel = !isLoading && (!duel || duel.status === 0);
+
+  // Still fetching: `duel` is null, so every derived boolean below is false and
+  // the zero-value struct would render as a *finished* duel — "FINALIZING",
+  // "DUEL COMPLETE", ROUND 0/0 and fighter indices 0/1 (Degen vs Whale)
+  // regardless of who is actually fighting. Render a skeleton instead.
+  const duelPending = !noDuel && !duel;
 
   // Odds: chain BPS → percentage. Default to 50/50 if unavailable or no bets.
   const noBets = totalBetsA === BigInt(0) && totalBetsB === BigInt(0);
@@ -341,6 +348,63 @@ export default function ArenaPage() {
     <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} winningVsOpponent={whaleWinning} />
   );
 
+  // ── Error state ──────────────────────────────────────────────────────────
+  // Distinct from "no duel": the read failed, so we know nothing either way.
+  // The public RPC throttles intermittently, so offer a retry rather than
+  // implying the duel does not exist.
+  if (duelError && !duel) {
+    return (
+      <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
+        <AppTopBar />
+        <div
+          className="col ai-c jc-c"
+          style={{ flex: 1, gap: 16, padding: 48, textAlign: 'center' }}
+          role="alert"
+        >
+          <span
+            className="t-display t-up"
+            style={{ fontSize: 32, color: 'var(--loss)', letterSpacing: '0.14em' }}
+          >
+            CANNOT REACH THE ARENA
+          </span>
+          <span className="t-mono t-sm t-dim" style={{ maxWidth: 520 }}>
+            Duel #{duelIdNum} could not be read from chain. The public RPC rate-limits
+            under load — this is usually temporary.
+          </span>
+          <div className="row gap-12">
+            <BracketButton onClick={() => refetch()}>RETRY →</BracketButton>
+            <Link href="/duel">
+              <BracketButton variant="ghost">← BACK TO LOBBY</BracketButton>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Loading state ────────────────────────────────────────────────────────
+  if (duelPending) {
+    return (
+      <div className="col app-floor" style={{ minHeight: 'calc(100dvh - var(--topbar-h))' }}>
+        <AppTopBar />
+        <div
+          className="col ai-c jc-c"
+          style={{ flex: 1, gap: 16, padding: 48, textAlign: 'center' }}
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            className="t-display t-up"
+            style={{ fontSize: 32, color: 'var(--text-faint)', letterSpacing: '0.14em' }}
+          >
+            ENTERING THE ARENA
+          </span>
+          <span className="t-mono t-sm t-dim">Loading duel #{duelIdNum} from chain…</span>
+        </div>
+      </div>
+    );
+  }
+
   // ── Empty state when no active duel ──────────────────────────────────────
   if (noDuel) {
     return (
@@ -378,9 +442,15 @@ export default function ArenaPage() {
             <span style={{ height: 14, width: 1, background: 'var(--border)' }} />
             {duelActive && <Chip variant="live"><Dot variant="a" pulse /> LIVE</Chip>}
             {duelResolved && <Chip variant="gold">★ SETTLED</Chip>}
-            {!duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
+            {!isLoading && !duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
             {duel?.simulated && <Chip variant="loss">🧪 SIMULATED MARKET</Chip>}
-            <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
+            <span
+              className="t-mono t-xs"
+              style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}
+              role="status"
+              aria-live="polite"
+              aria-label={`Round ${displayRound} of ${displayTurns}`}
+            >
               ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{displayRound}</span>
               <span className="t-faint"> / {displayTurns}</span>
             </span>
@@ -484,8 +554,14 @@ export default function ArenaPage() {
         </div>
 
         {/* § FEED — Real last action + thinking state */}
+        {/* The feed is the primary content of a live duel and updates without
+            any user action, so it is announced politely rather than silently
+            replaced. `atomic` off: only the corner that changed is read. */}
         <div
           className="card pad-24 col gap-16"
+          aria-live="polite"
+          aria-atomic="false"
+          aria-label="Fighter actions feed"
           style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%), var(--bg-card)' }}
         >
           <div className="sect-head">
@@ -607,6 +683,7 @@ export default function ArenaPage() {
               totalBetsA={totalBetsA}
               totalBetsB={totalBetsB}
               isActive={isActive}
+              isResolved={isResolved}
               isLoading={isLoading}
               isParticipant={isDuelParticipant}
             />
