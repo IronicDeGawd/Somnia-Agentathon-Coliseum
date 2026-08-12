@@ -102,6 +102,12 @@ export function useDuelLive(
   duel: DuelData | null,
 ): DuelLiveResult {
   const enabled = duelId > BigInt(0) && duel !== null && duel.status !== 0;
+  // The WS feed subscribes on duelId alone. `enabled` additionally requires
+  // `duel`, which arrives from useDuelState — so gating the subscription on it
+  // meant the working live feed sat idle waiting on another hook's freshness,
+  // and the first turns of a duel were missed. The getLogs backfill below still
+  // waits for `duel`, because it needs startBlock to stay bounded.
+  const subscribeEnabled = duelId > BigInt(0);
   const publicClient = usePublicClient();
 
   // ── Mark price state: latest price + history per pool ─────────────────────
@@ -271,7 +277,7 @@ export function useDuelLive(
   // HTTP transport can't do eth_subscribe. watchEvent over the WS client pushes
   // FighterMove/MarkPriceSnapshot/FighterMoveRequested in real time.
   useEffect(() => {
-    if (!enabled) return;
+    if (!subscribeEnabled) return;
     const client = getWsClient();
     if (!client) return;
     const unwatchers: (() => void)[] = [];
@@ -309,7 +315,7 @@ export function useDuelLive(
     return () => {
       for (const u of unwatchers) { try { u(); } catch { /* already torn down */ } }
     };
-  }, [enabled, duelId, ingestMarkPriceLogs, ingestMoveLogs, ingestRequestLogs]);
+  }, [subscribeEnabled, duelId, ingestMarkPriceLogs, ingestMoveLogs, ingestRequestLogs]);
 
   // ── Active pools (from duel.poolMask) ─────────────────────────────────────
   // Resolve pool addresses based on whether this is a simulated-market duel.
@@ -337,7 +343,7 @@ export function useDuelLive(
 
   const { data: balancesRaw, isLoading: balancesLoading } = useReadContracts({
     contracts: balanceContracts,
-    query: { enabled: enabled && activePools.length > 0, refetchInterval: 10_000 },
+    query: { enabled: enabled && activePools.length > 0, refetchInterval: 10_000, refetchIntervalInBackground: true },
   });
 
   // ── Derive per-fighter portfolio value ─────────────────────────────────────

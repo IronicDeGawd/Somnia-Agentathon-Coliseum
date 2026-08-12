@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback } from 'react';
-import { useReadContract, useWatchContractEvent } from 'wagmi';
+import { useReadContract } from 'wagmi';
 import { CONTRACT_ADDRESSES, ABIS, DuelData } from '@/lib/contracts';
 import { config } from '@/lib/chain';
+import { useContractSubscription } from '@/hooks/useContractSubscription';
 
 export interface UseActiveDuelResult {
   activeDuelId: bigint | null;
@@ -22,6 +23,13 @@ export function useActiveDuel(): UseActiveDuelResult {
     address: CONTRACT_ADDRESSES.Arena,
     abi: ABIS.Arena,
     functionName: 'activeDuelId',
+    query: {
+      // Fallback for a dropped subscription. Runs while backgrounded too —
+      // React Query's default pauses polling on blur, which is exactly when a
+      // spectator looks away mid-duel and returns to a stale lobby.
+      refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
+    },
     config,
   });
 
@@ -41,6 +49,8 @@ export function useActiveDuel(): UseActiveDuelResult {
     args: activeDuelId !== null ? [activeDuelId] : undefined,
     query: {
       enabled: activeDuelId !== null,
+      refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
     },
     config,
   });
@@ -104,19 +114,19 @@ export function useActiveDuel(): UseActiveDuelResult {
   }, [refetchId, refetchDuel, activeDuelId]);
 
   // ── Step 4: watch events and refetch ─────────────────────────────────────
-  useWatchContractEvent({
+  // No duelId filter here by design: the point is to notice a duel this hook
+  // does not know about yet.
+  useContractSubscription({
     address: CONTRACT_ADDRESSES.Arena,
     abi: ABIS.Arena,
     eventName: 'DuelStarted',
-    config,
     onLogs: () => refetch(),
   });
 
-  useWatchContractEvent({
+  useContractSubscription({
     address: CONTRACT_ADDRESSES.Arena,
     abi: ABIS.Arena,
     eventName: 'DuelResolved',
-    config,
     onLogs: () => refetch(),
   });
 

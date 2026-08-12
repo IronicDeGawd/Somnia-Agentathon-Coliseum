@@ -16,6 +16,7 @@ export function useUSDsoBalance(address?: string) {
     query: {
       enabled: !!target,
       refetchInterval: 10000,
+      refetchIntervalInBackground: true,
     },
   });
 
@@ -36,6 +37,7 @@ export function useUSDsoAllowance(spender: string) {
     query: {
       enabled: !!connectedAddress && !!spender,
       refetchInterval: 10000,
+      refetchIntervalInBackground: true,
     },
   });
 
