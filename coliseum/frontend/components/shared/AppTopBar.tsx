@@ -99,6 +99,7 @@ export const AppTopBar: React.FC = () => {
                       onClick={openAccountModal}
                       type="button"
                       title="Account"
+                      aria-label={`Account ${account.displayName}, balance ${usdsoBalance} USDso`}
                       style={{ cursor: 'pointer', background: 'none', border: 'none' }}
                     >
                       <span className="dot dot-win" /> {account.displayName} ·{' '}
@@ -111,6 +112,7 @@ export const AppTopBar: React.FC = () => {
                       onClick={() => setSwapOpen(true)}
                       type="button"
                       title="Swap STT → USDso"
+                      aria-label="Swap STT for USDso"
                       style={{ padding: '4px 10px' }}
                     >
                       + USDso
@@ -124,7 +126,10 @@ export const AppTopBar: React.FC = () => {
         <button
           className="bk bk-ghost"
           onClick={toggleAudio}
+          type="button"
           title={audioOn ? 'Mute' : 'Unmute'}
+          aria-label={audioOn ? 'Mute sound' : 'Unmute sound'}
+          aria-pressed={audioOn}
         >
           {audioOn ? '♪ ON' : '♪ OFF'}
         </button>

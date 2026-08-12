@@ -444,7 +444,13 @@ export default function ArenaPage() {
             {duelResolved && <Chip variant="gold">★ SETTLED</Chip>}
             {!isLoading && !duelActive && !duelResolved && <Chip variant="loss">FINALIZING</Chip>}
             {duel?.simulated && <Chip variant="loss">🧪 SIMULATED MARKET</Chip>}
-            <span className="t-mono t-xs" style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
+            <span
+              className="t-mono t-xs"
+              style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}
+              role="status"
+              aria-live="polite"
+              aria-label={`Round ${displayRound} of ${displayTurns}`}
+            >
               ROUND <span className="t-num" style={{ color: 'var(--text)' }}>{displayRound}</span>
               <span className="t-faint"> / {displayTurns}</span>
             </span>
@@ -548,8 +554,14 @@ export default function ArenaPage() {
         </div>
 
         {/* § FEED — Real last action + thinking state */}
+        {/* The feed is the primary content of a live duel and updates without
+            any user action, so it is announced politely rather than silently
+            replaced. `atomic` off: only the corner that changed is read. */}
         <div
           className="card pad-24 col gap-16"
+          aria-live="polite"
+          aria-atomic="false"
+          aria-label="Fighter actions feed"
           style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%), var(--bg-card)' }}
         >
           <div className="sect-head">

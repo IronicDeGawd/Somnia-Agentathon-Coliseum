@@ -190,7 +190,13 @@ export default function BetPanel({
           )}
         </div>
 
-        <div className="row jc-sb">
+        {/* Odds move on their own as bets land, so announce the change. */}
+        <div
+          className="row jc-sb"
+          role="status"
+          aria-live="polite"
+          aria-label={`Win probability: ${fighterAName} ${oddsAPercent} percent, ${fighterBName} ${oddsBPercent} percent`}
+        >
           <span className="t-mono t-sm" style={{ color: 'var(--fighter-a)' }}>
             {oddsAPercent}%
           </span>
@@ -349,8 +355,13 @@ export default function BetPanel({
             </div>
 
             {/* Freeform number input — unified with quick-picks via customAmount */}
+            <label htmlFor="bet-amount" className="label-tiny">
+              Bet amount (USDso)
+            </label>
             <input
+              id="bet-amount"
               type="number"
+              inputMode="decimal"
               min="0"
               step="1"
               placeholder="Custom amount…"
@@ -393,6 +404,7 @@ export default function BetPanel({
           {submitError && (
             <div
               className="panel pad-16"
+              role="alert"
               style={{ border: '1px solid var(--loss)', color: 'var(--loss)' }}
             >
               <span className="t-xs">{submitError.message}</span>
