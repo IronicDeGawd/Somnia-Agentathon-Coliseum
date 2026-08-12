@@ -87,7 +87,20 @@ export default function RootLayout({
       >
         {/* Render the scanlines globally */}
         <CrtBg />
-        <Providers>{children}</Providers>
+        {/* Off-screen until focused, so a keyboard user can jump the nav on
+            every page instead of tabbing through it each time. */}
+        <a href="#main" className="skip-link">
+          Skip to main content
+        </a>
+        <Providers>
+          {/* The app had no <main>: no landmark to skip to, and nothing marking
+              where the chrome ends and the page begins. Deliberately a flex
+              child rather than `display: contents`, which some engines drop the
+              landmark role for — that would defeat the point of adding it. */}
+          <main id="main" className="flex-1 flex flex-col">
+            {children}
+          </main>
+        </Providers>
       </body>
     </html>
   );

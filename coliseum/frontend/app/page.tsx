@@ -124,45 +124,54 @@ export default function LandingPage() {
               AUTONOMOUS AI TRADING ARENA · LIVE ON SOMNIA
             </span>
 
-            {/* Fighter A name */}
-            <h1
-              className="fp-display"
-              style={{
-                fontSize: 'clamp(80px, 9vw, 144px)',
-                color: 'var(--fighter-a)',
-                textShadow: 'none',
-                textAlign: 'center',
-                lineHeight: 1,
-              }}
-            >
-              THE DEGEN
-            </h1>
-
-            {/* VS bar */}
-            <div className="row ai-c gap-12" style={{ margin: '20px 0' }}>
-              <span style={{ height: 1, width: 80, background: 'var(--text-faint)' }} />
+            {/* The matchup is the page's heading. Both names carried an <h1> of
+                their own, which reads as two competing page titles; they are
+                peers, so neither can outrank the other. One heading wrapping the
+                pair gives the accessible name "THE DEGEN VS THE WHALE" while the
+                nested column reproduces the previous spacing exactly. */}
+            {/* aria-label because the three spans concatenate to
+                "THE DEGENVSTHE WHALE" with no separating whitespace. */}
+            <h1 className="col ai-c gap-8" style={{ margin: 0 }} aria-label="The Degen versus The Whale">
+              {/* Fighter A name */}
               <span
                 className="fp-display"
-                style={{ fontSize: 32, letterSpacing: '0.18em', color: 'var(--text-dim)' }}
+                style={{
+                  fontSize: 'clamp(80px, 9vw, 144px)',
+                  color: 'var(--fighter-a)',
+                  textShadow: 'none',
+                  textAlign: 'center',
+                  lineHeight: 1,
+                }}
               >
-                VS
+                THE DEGEN
               </span>
-              <span style={{ height: 1, width: 80, background: 'var(--text-faint)' }} />
-            </div>
 
-            {/* Fighter B name */}
-            <h1
-              className="fp-display"
-              style={{
-                fontSize: 'clamp(80px, 9vw, 144px)',
-                color: 'var(--fighter-b)',
-                textShadow: 'none',
-                textAlign: 'center',
-                lineHeight: 1,
-                marginBottom: 8,
-              }}
-            >
-              THE WHALE
+              {/* VS bar */}
+              <span className="row ai-c gap-12" style={{ margin: '20px 0' }}>
+                <span style={{ height: 1, width: 80, background: 'var(--text-faint)' }} />
+                <span
+                  className="fp-display"
+                  style={{ fontSize: 32, letterSpacing: '0.18em', color: 'var(--text-dim)' }}
+                >
+                  VS
+                </span>
+                <span style={{ height: 1, width: 80, background: 'var(--text-faint)' }} />
+              </span>
+
+              {/* Fighter B name */}
+              <span
+                className="fp-display"
+                style={{
+                  fontSize: 'clamp(80px, 9vw, 144px)',
+                  color: 'var(--fighter-b)',
+                  textShadow: 'none',
+                  textAlign: 'center',
+                  lineHeight: 1,
+                  marginBottom: 8,
+                }}
+              >
+                THE WHALE
+              </span>
             </h1>
 
             {/* Project pitch — what Coliseum actually is */}
@@ -913,12 +922,12 @@ export default function LandingPage() {
             <span className="t-mono t-xs t-faint">© 2026 · BUILT ON SOMNIA TESTNET · TRADING ON DREAMDEX</span>
           </div>
           <div className="row gap-16">
-            <a className="t-mono t-xs t-dim" href="#fight">TONIGHT</a>
-            <a className="t-mono t-xs t-dim" href="#roster">ROSTER</a>
-            <a className="t-mono t-xs t-dim" href="#ledger">LEDGER</a>
-            <a className="t-mono t-xs t-dim" href="#">CONTRACTS</a>
-            <a className="t-mono t-xs t-dim" href="#">DISCORD</a>
-            <a className="t-mono t-xs t-dim" href="#">GITHUB</a>
+            <a className="t-mono t-xs t-dim tap-44" href="#fight">TONIGHT</a>
+            <a className="t-mono t-xs t-dim tap-44" href="#roster">ROSTER</a>
+            <a className="t-mono t-xs t-dim tap-44" href="#ledger">LEDGER</a>
+            <a className="t-mono t-xs t-dim tap-44" href="#">CONTRACTS</a>
+            <a className="t-mono t-xs t-dim tap-44" href="#">DISCORD</a>
+            <a className="t-mono t-xs t-dim tap-44" href="#">GITHUB</a>
           </div>
         </div>
       </footer>

@@ -443,6 +443,13 @@ export default function ArenaPage() {
             pointerEvents: 'none',
           }}
         />
+        {/* The design gives this page no visible title, so it had no heading at
+            all — a screen reader landed here with nothing naming the duel. The
+            live round is deliberately left out: it changes every turn, and a
+            heading that rewrites itself is announced repeatedly. */}
+        <h1 className="sr-only">
+          Duel #{duelIdNum} — {degenF.name} versus {whaleF.name}
+        </h1>
         <div className="row ai-c jc-sb" style={{ padding: '12px var(--gutter)', gap: 16, position: 'relative', flexWrap: 'wrap' }}>
           <div className="row gap-16 ai-c" style={{ flexWrap: 'wrap' }}>
             <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>§ ARENA · MAIN EVENT</span>

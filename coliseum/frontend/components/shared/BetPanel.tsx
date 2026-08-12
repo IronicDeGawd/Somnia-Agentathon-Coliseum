@@ -370,7 +370,7 @@ export default function BetPanel({
               onChange={(e) => setCustomAmount(e.target.value)}
               style={{
                 background: 'var(--bg-stage)',
-                border: '1px solid var(--border)',
+                border: '1px solid var(--border-input)',
                 borderRadius: 6,
                 color: 'var(--text)',
                 // 16px, not 14 — iOS auto-zooms the viewport when a focused
