@@ -104,4 +104,52 @@ contract MockPlatform is IAgentRequester {
     ) external {
         this.dispatchSuccess(callback, requestId, selector, rawResult);
     }
+
+    /// @notice Deliver a string answer, as `inferString` does. Arena asks for an
+    ///         action by name now, so this is the live shape of a response.
+    function dispatchSuccessString(
+        address callback,
+        uint256 requestId,
+        bytes4 selector,
+        string calldata result
+    ) external {
+        Response[] memory responses = new Response[](1);
+        responses[0].result = abi.encode(result);
+        responses[0].status = ResponseStatus.Success;
+
+        Request memory req;
+        req.id = requestId;
+
+        bytes memory data = abi.encodeWithSelector(
+            selector, requestId, responses, ResponseStatus.Success, req
+        );
+        (bool ok, bytes memory ret) = callback.call(data);
+        if (!ok) {
+            assembly { revert(add(ret, 32), mload(ret)) }
+        }
+    }
+
+    /// @notice Deliver arbitrary bytes, to prove a malformed payload degrades to a
+    ///         coerced Hold rather than reverting and stranding the turn.
+    function dispatchSuccessBytes(
+        address callback,
+        uint256 requestId,
+        bytes4 selector,
+        bytes calldata result
+    ) external {
+        Response[] memory responses = new Response[](1);
+        responses[0].result = result;
+        responses[0].status = ResponseStatus.Success;
+
+        Request memory req;
+        req.id = requestId;
+
+        bytes memory data = abi.encodeWithSelector(
+            selector, requestId, responses, ResponseStatus.Success, req
+        );
+        (bool ok, bytes memory ret) = callback.call(data);
+        if (!ok) {
+            assembly { revert(add(ret, 32), mload(ret)) }
+        }
+    }
 }

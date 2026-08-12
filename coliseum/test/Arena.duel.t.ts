@@ -41,6 +41,9 @@ async function deploy() {
   const poolSomi    = await hre.viem.deployContract("MockSpotPool");
   const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
+  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
+  // in a linked library, so ArenaUtils has to be deployed alongside it.
+  const arenaUtils = await hre.viem.deployContract("ArenaUtils");
   const arena = await hre.viem.deployContract("Arena", [
     registry.address,
     usdso.address,
@@ -50,7 +53,7 @@ async function deploy() {
     mockPlatform.address,
     1n,
     [18, 18, 18],
-  ], { value: parseEther("33") });
+  ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
 
   // Fund arena with enough STT for 30 requests (each = 0.03 + 0.07*3 = 0.24)
   await hre.network.provider.send("hardhat_setBalance", [
@@ -141,6 +144,32 @@ describe("Arena — Duel lifecycle", function () {
 
     const finalState = await arena.read.duels([duelId]) as unknown[];
     expect(finalState[D.status]).to.equal(DuelStatus.Resolved);
+  });
+
+  // The duel-21 regression, in contract form.
+  //
+  // Every duel begins with both fighters holding only cash and zero base tokens,
+  // so a Sell is impossible on turn one by definition. The deployed contract
+  // still listed "6=SellSOMI" as valid, and the agent's extract-then-clamp rule
+  // turned an echoed price into exactly that 6. The fighter sold a token it did
+  // not hold, the order was rejected, the turn was burned, and the player lost.
+  it("a fighter holding no base is never offered a Sell it cannot execute", async function () {
+    const { arena } = await deploy();
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    for (const fighter of [FIGHTER_A, FIGHTER_B]) {
+      const [prompt, allowed] = await arena.read.previewTurnPrompt([duelId, fighter]) as [string, string[]];
+
+      expect(allowed).to.include("Hold", "Hold is always executable");
+      expect(allowed.filter((a) => a.startsWith("Sell"))).to.have.length(
+        0,
+        `fighter ${fighter} holds no base on turn one, so no Sell may be offered — got ${allowed.join(", ")}`,
+      );
+      // The prompt must not smuggle a number back in either: a digit anywhere is
+      // something the model can echo and the agent can extract.
+      expect(prompt).to.not.match(/\d/, `prompt must carry no numerals, got: ${prompt}`);
+    }
   });
 
   it("records the resolved duel in DuelHistory when the sink is set", async function () {

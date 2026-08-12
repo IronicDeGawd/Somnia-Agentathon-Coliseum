@@ -36,6 +36,9 @@ async function deploy() {
   const poolSomi     = await hre.viem.deployContract("MockSpotPool");
   const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
+  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
+  // in a linked library, so ArenaUtils has to be deployed alongside it.
+  const arenaUtils = await hre.viem.deployContract("ArenaUtils");
   const arena = await hre.viem.deployContract("Arena", [
     registry.address,
     usdso.address,
@@ -45,7 +48,7 @@ async function deploy() {
     mockPlatform.address,
     1n,
     [18, 18, 18],
-  ], { value: parseEther("33") });
+  ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
 
   await hre.network.provider.send("hardhat_setBalance", [
     arena.address,

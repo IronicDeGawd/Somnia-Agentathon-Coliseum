@@ -120,6 +120,10 @@ library ArenaTypes {
     event FighterMoveRequested(uint256 indexed duelId, uint8 indexed fighterId, uint256 indexed requestId);
     event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, FighterAction action, uint128 orderId);
     event FighterMoveFailed(uint256 indexed duelId, uint8 indexed fighterId, string reason);
+    /// @notice The model answered with something the fighter could not execute, so
+    ///         the turn was taken as Hold instead of being burned. `requested` is the
+    ///         raw answer, kept so a coercion can be told apart from a genuine Hold.
+    event FighterMoveCoerced(uint256 indexed duelId, uint8 indexed fighterId, string requested);
     event OrderPlaced(
         address indexed pool,
         uint8   indexed fighterId,

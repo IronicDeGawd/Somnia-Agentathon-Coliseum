@@ -390,12 +390,25 @@ contract Arena is ArenaVault {
             fighterBalances, poolMeta,
             duelMarkSnapshots, duelPrevMarkSnapshots
         );
+        // Ask by NAME, constrained to the actions this fighter can execute.
+        //
+        // `inferNumber` extracts the first integer out of the model's free text and
+        // clamps it into [min,max]. With actions numbered 0..6 that turned any large
+        // number the model echoed from the prompt into 6 — SellSOMI, the highest
+        // index — which is how a fighter came to sell a token it did not hold.
+        // `inferString` with `allowedValues` constrains the answer set structurally
+        // instead, so an inexecutable action is absent rather than merely discouraged.
+        string[] memory allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
+            duelId, fighterId, duels[duelId],
+            mPools[0], mPools[1], mPools[2],
+            fighterBalances, poolMeta
+        ));
         bytes memory payload = abi.encodeWithSelector(
-            ILLMInferenceAgent.inferNumber.selector,
+            ILLMInferenceAgent.inferString.selector,
             marketSummary,
             f.systemPrompt,
-            int256(0), int256(6),
-            false
+            false,
+            allowed
         );
 
         IAgentRequester platform = IAgentRequester(PLATFORM_ADDR);
@@ -447,19 +460,31 @@ contract Arena is ArenaVault {
             emit ArenaTypes.FighterMoveFailed(pt.duelId, pt.fighterId, "no consensus");
             return;
         }
-        if (responses[0].result.length != 32) {
-            duels[pt.duelId].completedCallbacks += 1;
-            emit ArenaTypes.FighterMoveFailed(pt.duelId, pt.fighterId, "bad encoding");
-            return;
-        }
-        int256 raw = abi.decode(responses[0].result, (int256));
-        if (raw < 0 || raw > 6) {
-            duels[pt.duelId].completedCallbacks += 1;
-            emit ArenaTypes.FighterMoveFailed(pt.duelId, pt.fighterId, "out of range");
-            return;
+        // Re-derive what this fighter can execute. Only its own trades move its own
+        // balances, and those happen here, so the set is the same one the request was
+        // built from — recomputing simply avoids trusting a stale copy.
+        address[3] memory cPools = _pools(duels[pt.duelId].simulated);
+        uint8[] memory legal = ArenaUtils.legalActions(
+            pt.duelId, pt.fighterId, duels[pt.duelId],
+            cPools[0], cPools[1], cPools[2],
+            fighterBalances, poolMeta
+        );
+
+        (bool decoded, string memory answer) = ArenaUtils.decodeStringResult(responses[0].result);
+        (bool inSet, uint8 chosen) = decoded
+            ? ArenaUtils.matchAction(legal, answer)
+            : (false, uint8(ArenaTypes.FighterAction.Hold));
+
+        // An answer outside the executable set must not burn the turn. The player
+        // did not choose this fighter's words, and a platform-side miss should not
+        // cost them the duel — take it as Hold and record what was actually asked for.
+        if (!inSet) {
+            emit ArenaTypes.FighterMoveCoerced(
+                pt.duelId, pt.fighterId, decoded ? answer : "undecodable"
+            );
         }
 
-        ArenaTypes.FighterAction action = ArenaTypes.FighterAction(uint8(uint256(raw)));
+        ArenaTypes.FighterAction action = ArenaTypes.FighterAction(chosen);
         (bool ok, uint128 orderId) = _executeFighterAction(pt.duelId, pt.fighterId, action);
         duels[pt.duelId].completedCallbacks += 1;
         if (!ok) {
@@ -658,6 +683,27 @@ contract Arena is ArenaVault {
     function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256) {
         address[3] memory mp = _pools(simulated);
         return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
+    }
+
+    /// @notice The exact prompt and allowed action list a fighter would be asked
+    ///         with right now, without spending an inference.
+    ///
+    ///         Exposed because the central guarantee of the prompt layer — that no
+    ///         digit reaches the model, so nothing can be extracted and clamped into
+    ///         a trade the fighter cannot make — is otherwise unobservable until a
+    ///         duel is already running and the STT is already spent.
+    function previewTurnPrompt(uint256 duelId, uint8 fighterId)
+        external view returns (string memory prompt, string[] memory allowed)
+    {
+        address[3] memory mp = _pools(duels[duelId].simulated);
+        prompt = ArenaUtils.buildMarketSummary(
+            duelId, fighterId, duels[duelId],
+            mp[0], mp[1], mp[2],
+            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots
+        );
+        allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
+            duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], fighterBalances, poolMeta
+        ));
     }
 
     // ─── Debug / test helpers (testnet only) ─────────────────────────────────

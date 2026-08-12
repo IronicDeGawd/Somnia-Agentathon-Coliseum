@@ -22,6 +22,7 @@ import hre from "hardhat";
 import { parseEther, formatEther } from "viem";
 import fs from "fs";
 import path from "path";
+import { deployLinkedArena } from "./lib/deployArena";
 
 const IS_LOCAL = hre.network.name === "localhost" || hre.network.name === "hardhat";
 
@@ -72,13 +73,16 @@ async function main() {
   const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
   const reactivityFund = parseEther("33");
 
-  // ── 1. Arena ─────────────────────────────────────────────────────────────
+  // ── 1. ArenaUtils library + Arena ────────────────────────────────────────
+  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
+  // in a linked library, so the two deploy together. See lib/deployArena.ts.
   console.log(`\nDeploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)}, value=33 STT)`);
-  const arena = await hre.viem.deployContract(
-    "Arena",
+  const { address: arenaAddress, arenaUtils } = await deployLinkedArena(
+    hre,
     [registryAddr, external.usdso, external.poolWeth, external.poolWbtc, external.poolSomi, external.platform, turnIntervalBlocks, baseDecimals],
     { value: reactivityFund }
   );
+  const arena = await hre.viem.getContractAt("Arena", arenaAddress);
   const subId = (await arena.read.subscriptionId()) as bigint;
   console.log(`  Arena:           ${arena.address}  (subscriptionId=${subId})`);
 
@@ -134,7 +138,7 @@ async function main() {
     contracts: {
       ...(prior.contracts ?? {}),  // preserve prior entries (e.g. SwapFallback)
       FighterRegistry: { address: registryAddr },
-      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString() },
+      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils },
       DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },
       Matchmaker: { address: matchmaker.address },

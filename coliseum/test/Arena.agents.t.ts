@@ -46,6 +46,9 @@ describe("Arena — Somnia Agents integration", function () {
     const poolSomi = await hre.viem.deployContract("MockSpotPool");
     const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
+    // Arena exceeds the 24576-byte contract limit unless the prompt builders
+    // live in a linked library, so ArenaUtils has to be deployed alongside it.
+    const arenaUtils = await hre.viem.deployContract("ArenaUtils");
     const arena = await hre.viem.deployContract("Arena", [
       registry.address,
       usdso.address,
@@ -55,7 +58,7 @@ describe("Arena — Somnia Agents integration", function () {
       mockPlatform.address,
       1n,
       [18, 18, 18],
-    ], { value: parseEther("33") });
+    ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
 
     // Fund arena with enough STT for agent deposits (floor 0.03 + topup 0.21 = 0.24; 33 already set via constructor)
     await hre.network.provider.send("hardhat_setBalance", [
@@ -173,6 +176,100 @@ describe("Arena — Somnia Agents integration", function () {
 
     const turn = await arena.read.pendingTurns([requestId]) as [bigint, number, bigint, boolean];
     expect(turn[3]).to.equal(false, "pendingTurn should be deleted after expireTurn");
+  });
+
+  // ── Named-action answers (inferString) ──────────────────────────────────
+  //
+  // Arena asks for an action by NAME against an allow-list built from holdings.
+  // The old integer path let the agent's extract-first-integer-then-clamp rule
+  // turn any number echoed out of the prompt into the highest action index — a
+  // Sell — which is how a fighter sold a token it did not hold and lost a duel.
+  //
+  // Duel 42 was never started, so its poolMask is 0 and Hold is the only
+  // executable action. That makes it the sharpest case: every trade name must be
+  // refused, and none of them may burn the turn.
+
+  async function answerWith(result: string) {
+    const ctx = await deploy();
+    const publicClient = await hre.viem.getPublicClient();
+    await ctx.arena.write.testRequestFighterMove([DUEL_ID, FIGHTER_ID]);
+    const tx = await ctx.mockPlatform.write.dispatchSuccessString([
+      ctx.arena.address,
+      1n,
+      HANDLE_SELECTOR,
+      result,
+    ]);
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx });
+    return { ...ctx, receipt, publicClient };
+  }
+
+  /** Did the callback emit FighterMoveCoerced, and with what requested value? */
+  async function coercion(arena: { abi: readonly unknown[] }, receipt: { logs: unknown[] }) {
+    const { parseEventLogs } = await import("viem");
+    const logs = parseEventLogs({
+      abi: arena.abi as never,
+      eventName: "FighterMoveCoerced",
+      logs: receipt.logs as never,
+    });
+    return logs as unknown as { args: { requested: string } }[];
+  }
+
+  it("an allowed action name is executed and does not coerce", async function () {
+    const { arena, receipt } = await answerWith("Hold");
+    expect(receipt.status).to.equal("success");
+    expect(await coercion(arena, receipt)).to.have.length(0, "Hold is allowed, so nothing to coerce");
+  });
+
+  it("surrounding whitespace and quotes do not cost the fighter its move", async function () {
+    const { arena, receipt } = await answerWith('  "Hold"\n');
+    expect(await coercion(arena, receipt)).to.have.length(0, "answer should be trimmed before matching");
+  });
+
+  it("an action outside the allowed set is taken as Hold, not burned", async function () {
+    const { arena, receipt } = await answerWith("SellSOMI");
+    expect(receipt.status).to.equal("success");
+    const coerced = await coercion(arena, receipt);
+    expect(coerced).to.have.length(1, "an inexecutable answer must be coerced, not executed");
+    expect(coerced[0].args.requested).to.equal("SellSOMI", "the real answer is recorded for audit");
+  });
+
+  it("an answer that is not an action at all is coerced rather than reverting", async function () {
+    const { arena, receipt } = await answerWith("I would sell, since the market looks stretched.");
+    expect(receipt.status).to.equal("success");
+    expect(await coercion(arena, receipt)).to.have.length(1);
+  });
+
+  it("a malformed payload degrades to a coerced Hold instead of stranding the turn", async function () {
+    const { arena, mockPlatform } = await deploy();
+    const publicClient = await hre.viem.getPublicClient();
+    await arena.write.testRequestFighterMove([DUEL_ID, FIGHTER_ID]);
+
+    const tx = await mockPlatform.write.dispatchSuccessBytes([
+      arena.address,
+      1n,
+      HANDLE_SELECTOR,
+      "0xdeadbeef" as `0x${string}`,
+    ]);
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx });
+    expect(receipt.status).to.equal("success");
+
+    const coerced = await coercion(arena, receipt);
+    expect(coerced).to.have.length(1);
+    expect(coerced[0].args.requested).to.equal("undecodable");
+
+    const turn = await arena.read.pendingTurns([1n]) as [bigint, number, bigint, boolean];
+    expect(turn[3]).to.equal(false, "pendingTurn cleared so the duel can still finalize");
+  });
+
+  it("the turn prompt contains no digits, and offers no trade the fighter cannot make", async function () {
+    const { arena } = await deploy();
+    const [prompt, allowed] = await arena.read.previewTurnPrompt([DUEL_ID, FIGHTER_ID]) as [string, string[]];
+
+    // A digit here is the whole failure mode: the model echoes it, the agent
+    // extracts it, and it clamps into an action index nobody chose.
+    expect(prompt).to.not.match(/\d/, `prompt must carry no numerals, got: ${prompt}`);
+    expect(allowed).to.deep.equal(["Hold"], "no pools active, so only Hold is executable");
+    expect(allowed.join(" ")).to.not.match(/\d/, "action names must not be digits");
   });
 
   it("out-of-range raw result (99) clears pendingTurn without revert", async function () {
