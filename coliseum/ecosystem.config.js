@@ -10,8 +10,8 @@
  *   pnpm install                       # installs deps for both workspaces
  *   cd frontend && pnpm build && cd .. # build Next once for prod start
  *
- *   # boot both apps (dev)
- *   pm2 start ecosystem.config.js
+ *   # boot both apps (dev). Safe from any directory — cwd is absolute below.
+ *   pm2 start /path/to/coliseum/ecosystem.config.js
  *
  *   # prod: serves `next start` instead of `next dev`
  *   NODE_ENV=production pm2 start ecosystem.config.js
@@ -33,11 +33,20 @@
  * No secrets are duplicated into this file.
  */
 
+const path = require("path");
+
+// Absolute, derived from this file's own location. PM2 resolves a relative
+// `cwd` against wherever `pm2 start` was invoked, so "./" silently pointed
+// hardhat somewhere without a .env whenever the operator started from
+// anywhere but coliseum/ — the bots then ran without their keys.
+const ROOT = __dirname;
+const FRONTEND = path.join(ROOT, "frontend");
+
 module.exports = {
   apps: [
     {
       name: "coliseum-frontend",
-      cwd: "./frontend",
+      cwd: FRONTEND,
       script: "pnpm",
       args: "start:prod",
       env: {
@@ -55,7 +64,7 @@ module.exports = {
     },
     {
       name: "coliseum-watcher",
-      cwd: "./",
+      cwd: ROOT,
       script: "pnpm",
       args: "exec hardhat run scripts/watcher-bot.ts --network somnia",
       // hardhat.config.ts loads coliseum/.env automatically (dotenv/config).
@@ -75,7 +84,7 @@ module.exports = {
     },
     {
       name: "coliseum-seeder",
-      cwd: "./",
+      cwd: ROOT,
       script: "pnpm",
       args: "exec hardhat run scripts/seeder-bot.ts --network somnia",
       // Runs as SEEDER_PRIVATE_KEY (from coliseum/.env). Posts a resting BID
@@ -94,7 +103,7 @@ module.exports = {
     },
     {
       name: "coliseum-sim-market",
-      cwd: "./",
+      cwd: ROOT,
       script: "pnpm",
       args: "exec hardhat run scripts/sim-market.ts --network somnia",
       // Drives the three MockSpotPool contracts for simulated duels. Updates
@@ -115,7 +124,7 @@ module.exports = {
     },
     {
       name: "coliseum-housematch",
-      cwd: "./",
+      cwd: ROOT,
       script: "pnpm",
       args: "exec hardhat run scripts/house-match-bot.ts --network somnia",
       // Fallback "house" opponent: when a player is waiting alone in the
