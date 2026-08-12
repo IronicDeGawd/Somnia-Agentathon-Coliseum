@@ -95,8 +95,13 @@ const OPENING_ODDS_BPS = 5000;
  */
 const settleGaveUp = new Set<string>();
 
-/** How many recent duel ids the settle sweep inspects each tick. */
-const SETTLE_LOOKBACK = 5;
+/** How many recent duel ids the settle sweep inspects each tick.
+ *  Raised from 5 with concurrency: several duels now resolve close together, and
+ *  anything that scrolls past this window is never settled automatically. */
+const SETTLE_LOOKBACK = 12;
+
+/** Mirrors ArenaTypes.DRAW_SLOT — the duel ended level and every bet is refunded. */
+const ARENA_DRAW_SLOT = 2;
 
 /**
  * settleBets pays every winning bettor in one call. A USDso transfer costs ~95k to
@@ -164,7 +169,17 @@ async function settleResolvedDuels(opts: {
       if (settleGaveUp.has(String(id))) continue;
       const raw = (await pub.readContract({ address: arena, abi: ARENA_DUEL_ABI, functionName: "duels", args: [id] })) as readonly unknown[];
       if (Number(raw[8]) !== 3) continue;              // not resolved
-      if (Number(raw[11]) > 1) { settleGaveUp.add(String(id)); continue; }  // settleBets would revert InvalidWinner
+      // A drawn duel IS settleable — Bookmaker refunds every bettor their stake
+      // (Bookmaker.sol:412). This used to skip anything above slot 1 because
+      // settleBets did revert on a draw back then; the draw work changed that,
+      // and the stale guard meant every drawn duel was permanently abandoned
+      // with its bettors unpaid. Draws are not rare: two fighters that both sit
+      // out end exactly level.
+      const slot = Number(raw[11]);
+      if (slot > 1 && slot !== ARENA_DRAW_SLOT) {
+        settleGaveUp.add(String(id));   // genuinely unsettleable (winner unset)
+        continue;
+      }
       const settled = (await pub.readContract({
         address: bookmaker, abi: BOOKMAKER_ABI, functionName: "duelSettled", args: [id],
       })) as boolean;
