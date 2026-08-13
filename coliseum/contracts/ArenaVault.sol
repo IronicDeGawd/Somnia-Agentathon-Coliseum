@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "./ArenaStorage.sol";
 import "./lib/ArenaTypes.sol";
 import "./interfaces/ISpotPool.sol";
 import "./interfaces/IERC20Minimal.sol";
@@ -11,65 +12,13 @@ import "./interfaces/ISomniaReactivityPrecompile.sol";
 ///         vault recovery, token sweeps, native STT, platform fees, and
 ///         Reactivity subscription management.
 ///         Separated from Arena.sol so fund-custody logic can be audited in isolation.
-abstract contract ArenaVault {
+///
+///         Declares no state of its own — everything it reads and writes lives in
+///         ArenaStorage, so this file can later be deployed as a standalone part
+///         reached by delegatecall without its storage drifting from the router's.
+abstract contract ArenaVault is ArenaStorage {
 
     using ArenaTypes for *;
-
-    // ─── Constants ────────────────────────────────────────────────────────────
-
-    address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
-    uint256 public constant REACTIVITY_FUND_MIN = 33 ether;
-
-    /// @notice Platform fee scales with duel length to track LLM inference cost,
-    ///         which grows with turns (≈0.24 STT/move × 2 fighters × turns). Flat
-    ///         fees over-charge short duels and under-charge long ones, so the fee
-    ///         is hybrid: fee = base + perTurn × turns (18-decimal USDso).
-    ///         e.g. turns=3 → 0.8, turns=6 → 1.1, turns=9 → 1.4, turns=15 → 2.0.
-    uint256 public constant PLATFORM_FEE_BASE     = 0.5e18;
-    uint256 public constant PLATFORM_FEE_PER_TURN = 0.1e18;
-
-    /// @notice Turn-scaled platform fee collected at startDuel.
-    function platformFee(uint16 turns) public pure returns (uint256) {
-        return PLATFORM_FEE_BASE + PLATFORM_FEE_PER_TURN * uint256(turns);
-    }
-
-    // ─── State ────────────────────────────────────────────────────────────────
-
-    address public immutable USDSO;
-    address public immutable POOL_WETH;
-    address public immutable POOL_WBTC;
-    address public immutable POOL_SOMI;
-    // Simulated market pool set — owner-set post-deploy (address(0) until then).
-    // Duels created with simulated == true route here instead of the real pools.
-    address public SIM_POOL_WETH;
-    address public SIM_POOL_WBTC;
-    address public SIM_POOL_SOMI;
-    bool    public simPoolsSet;
-    address public owner;
-    uint256 public subscriptionId;
-    uint256 public accruedFees;
-
-    /// @notice Sum of all un-recovered duel pots currently escrowed in this
-    ///         contract's USDso balance. withdrawFees() never dips below this, so
-    ///         platform-fee withdrawal can never touch depositor principal.
-    ///         Incremented in startDuel, decremented in recoverFunds.
-    uint256 public escrowedPot;
-
-    /// @notice Running total of USDso the OWNER has seeded into pool vaults via
-    ///         fundPools(). Tracked separately from user duel deposits so the
-    ///         owner can withdraw their own seed liquidity without touching
-    ///         depositor funds. Incremented in fundPools, decremented in
-    ///         ownerWithdrawSeed.
-    uint256 public seedLiquidity;
-
-    mapping(address => ArenaTypes.PoolMeta) public poolMeta;
-
-    // ─── Modifier ────────────────────────────────────────────────────────────
-
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert ArenaTypes.NotOwner();
-        _;
-    }
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 

@@ -33,77 +33,8 @@ contract Arena is ArenaVault {
 
     using ArenaUtils for *;
 
-    // ─── Constants ────────────────────────────────────────────────────────────
-
-    uint64  public constant MAX_EXPIRE_OFFSET_SEC          = 7 days;
-    uint256 public constant LLM_AGENT_ID                   = 12847293847561029384;
-    uint256 public constant FIGHTER_DEPOSIT_TOPUP          = 0.07 ether;
-    uint256 public constant FIGHTER_REQUEST_DEADLINE_SEC   = 15 minutes;
-
-    /// @notice If no turn has advanced for this many blocks, owner may call emergencyFinalize.
-    uint256 public constant EMERGENCY_FINALIZE_BLOCKS = 1000;
-
-    /// @notice Hard ceiling on maxActiveDuels. Each running duel burns STT on two
-    ///         inferences per turn out of one shared balance, so the owner is not
-    ///         free to raise the cap arbitrarily — a dry Arena silently produces
-    ///         all-Hold duels, which now resolve as draws.
-    uint16 public constant MAX_ACTIVE_CEILING = 8;
-
-    address public immutable PLATFORM_ADDR;
-    IFighterRegistry public immutable registry;
-    uint256 public TURN_INTERVAL_BLOCKS;
-
-    // ─── State ────────────────────────────────────────────────────────────────
-
-    mapping(uint256 => ArenaTypes.Duel) public duels;
-    uint256 public nextDuelId = 1;
-
-    /// @notice Every duel currently running. Order is not stable — _resolveDuel
-    ///         removes by swap-and-pop, so the last id takes the resolved one's place.
-    ///         Read it through getActiveDuelIds() — kept private so solc does not
-    ///         also emit a per-index auto-getter, which Arena has no room for.
-    uint256[] private activeDuelIds;
-
-    /// @dev duelId → index+1 in activeDuelIds (0 = not active), for O(1) removal.
-    mapping(uint256 => uint256) private _activeIndex;
-
-    /// @notice How many duels may run at once. Owner-settable up to MAX_ACTIVE_CEILING.
-    uint16 public maxActiveDuels = 3;
-
-    /// @notice USDso escrow held for each duel's creator (the pot, fee excluded).
-    ///         Set on startDuel, paid out (and zeroed) on recoverFunds. recoverFunds
-    ///         pays the creator from this contract's OWN balance, capped by duelPot,
-    ///         so one duel can never drain another's deposit or the owner seed.
-    mapping(uint256 => uint256) public duelPot;
-
-    /// @notice The three pools a duel trades on, recorded once at startDuel.
-    ///         Previously derived from duel.simulated against two hard-coded sets,
-    ///         which cannot express a pool set that only exists for one duel (an
-    ///         event window opens at a fresh address every few minutes). Recording
-    ///         per duel also closes audit item M1: a pool's cached trading rules can
-    ///         be refreshed without a redeploy, and running duels keep the set they
-    ///         started on. Order is [WETH, WBTC, SOMI] to match the bit ordering.
-    mapping(uint256 => address[3]) private duelPools;
-
-    // poolAddress → duelId → fighterId → balance
-    mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) public fighterBalances;
-
-    mapping(uint256 => ArenaTypes.PendingTurn) public pendingTurns;  // requestId → turn
-
-    /// @notice Mark price snapshot per duel per pool, written at the start of each turn.
-    ///         emergencyFinalize uses this instead of live prices to prevent owner-timed
-    ///         price manipulation. Normal finalizeDuel still uses live prices (safe because
-    ///         all callbacks are complete — no further trading can move the book).
-    mapping(uint256 => mapping(address => uint256)) public duelMarkSnapshots;
-
-    /// @notice Previous-turn mark price per duel/pool. Carried forward from
-    ///         duelMarkSnapshots before each turn's snapshot overwrites it, so the
-    ///         market summary handed to fighters can show the move since last turn.
-    mapping(uint256 => mapping(address => uint256)) public duelPrevMarkSnapshots;
-
-    /// @notice Optional history sink. When set, _resolveDuel records each duel's
-    ///         outcome here (best-effort). Configured post-deploy via setDuelHistory.
-    address public duelHistory;
+    // Constants and state both live in ArenaStorage, reached through ArenaVault.
+    // Nothing in this file may declare storage — see the note in ArenaStorage.sol.
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 
