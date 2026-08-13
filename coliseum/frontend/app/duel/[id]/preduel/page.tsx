@@ -158,14 +158,17 @@ export default function PreDuelPage() {
 
       <div className="shell-pad col gap-32 ai-c" style={{ paddingTop: 96, paddingBottom: 96 }}>
 
-        {/* Big headline */}
+        {/* Big headline. Uses fp-display — the editorial face every other screen
+            sets a fighter's name in (landing hero, profile, result). This page
+            was the only one still on the smaller t-display scale, which is why
+            it read flatter than the rest of the app. */}
         <div className="col ai-c gap-8">
           <span className="eyebrow" style={{ color: 'var(--text-dim)' }}>YOU ARE IN THE QUEUE</span>
           <h1
-            className="t-display t-up"
+            className="fp-display"
             style={{
-              fontSize: 'clamp(36px, 5vw, 64px)',
-              letterSpacing: '0.06em',
+              fontSize: 'clamp(44px, 7vw, 96px)',
+              letterSpacing: '0.04em',
               lineHeight: 1,
               textAlign: 'center',
               color: 'var(--text)',
@@ -173,7 +176,9 @@ export default function PreDuelPage() {
             }}
           >
             {dataReady ? (
-              <span style={{ color: fighterA!.hex }}>{fighterA!.name}</span>
+              <span style={{ color: fighterA!.hex, textShadow: `0 0 50px ${fighterA!.hex}` }}>
+                {fighterA!.name}
+              </span>
             ) : (
               <span style={{ color: 'var(--text-dim)' }}>LOADING…</span>
             )}
@@ -304,7 +309,14 @@ export default function PreDuelPage() {
           </div>
         </div>
 
-        {/* Duel details card */}
+        {/* Duel details. Every other screen labels its sections with a § header;
+            this page had none, so it sat outside the rest of the app's rhythm. */}
+        <div className="sect-head" style={{ width: '100%', maxWidth: 960 }}>
+          <span className="sect-head-num">§ 01</span>
+          <span className="sect-head-title">YOUR ENTRY</span>
+          <span className="sect-head-meta">escrowed on-chain until the duel starts or you cancel</span>
+        </div>
+
         <div className="card pad-24 row gap-24 ai-c" style={{ width: '100%', maxWidth: 960, flexWrap: 'wrap' }}>
           <div className="col gap-2">
             <span className="eyebrow">TIER</span>

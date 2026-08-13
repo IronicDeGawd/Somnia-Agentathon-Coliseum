@@ -134,6 +134,29 @@ export default function ResultPage() {
   const loserFighterIndex =
     winnerSlotNum === 0 ? fighterBIndex : winnerSlotNum === 1 ? fighterAIndex : undefined;
 
+  /**
+   * Per-fighter move counts, read from the transcript rather than the persona
+   * registry. A "trade" is any move that actually hit the book — HOLD is a
+   * decision, not a trade, and a failed move never reached the pool at all.
+   *
+   * Deliberately NOT reporting best/worst round: FighterMove carries the action
+   * but no portfolio value, and only DuelResolved carries value — so per-round
+   * PnL cannot be derived from chain data here. The persona registry does hold
+   * bestRound/worstRound, but those are fixtures from the design mock and would
+   * be fabricated numbers on a settled duel.
+   */
+  // On a draw there is no winner/loser, and the two cards fall back to slot
+  // order — so the counts must follow the same fallback or both cards report 0.
+  const topCardIndex = isDraw ? fighterAIndex : winnerFighterIndex;
+  const bottomCardIndex = isDraw ? fighterBIndex : loserFighterIndex;
+
+  const movesFor = (idx: number | undefined) =>
+    idx === undefined ? [] : transcript.filter((e) => e.fighterId === idx);
+  const tradeCount = (idx: number | undefined) =>
+    movesFor(idx).filter((e) => !e.failed && e.action !== null && e.action !== 'HOLD').length;
+  const holdCount = (idx: number | undefined) =>
+    movesFor(idx).filter((e) => !e.failed && e.action === 'HOLD').length;
+
   // On a draw there is no winner/loser, so show the two fighters in slot order.
   const drawAVisual = fighterAIndex !== undefined ? FIGHTER_VISUAL_MAP[fighterAIndex] : null;
   const drawBVisual = fighterBIndex !== undefined ? FIGHTER_VISUAL_MAP[fighterBIndex] : null;
@@ -330,7 +353,7 @@ export default function ResultPage() {
                 className="t-display t-up"
                 style={{ fontSize: 18, color: 'var(--text)', letterSpacing: '0.12em' }}
               >
-                {isResolved ? 'PNL on mid mark prices · finalizeDuel' : 'Duel in progress'}
+                {!isResolved ? 'DUEL IN PROGRESS' : isDraw ? 'DREW ON PNL' : 'PNL DECISION'}
               </span>
             </div>
           </div>
@@ -383,17 +406,17 @@ export default function ResultPage() {
             </div>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Final value source</span>
-              <span className="t-num text-win">{isResolved ? 'DuelResolved event' : 'pending'}</span>
+              <span>Trades executed</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>{tradeCount(topCardIndex)}</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Per-round detail</span>
-              <span className="t-num t-dim">via indexer</span>
+              <span>Rounds held</span>
+              <span className="t-num t-dim">{holdCount(topCardIndex)}</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Fighter index</span>
+              <span>Settled by</span>
               <span className="t-num" style={{ color: 'var(--text)' }}>
-                {winnerFighterIndex !== undefined ? `#${winnerFighterIndex}` : '—'}
+                {isResolved ? 'on-chain result' : 'pending'}
               </span>
             </div>
           </div>
@@ -437,17 +460,17 @@ export default function ResultPage() {
             </div>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Final value source</span>
-              <span className="t-num text-win">{isResolved ? 'DuelResolved event' : 'pending'}</span>
+              <span>Trades executed</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>{tradeCount(bottomCardIndex)}</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Per-round detail</span>
-              <span className="t-num t-dim">via indexer</span>
+              <span>Rounds held</span>
+              <span className="t-num t-dim">{holdCount(bottomCardIndex)}</span>
             </div>
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Fighter index</span>
+              <span>Settled by</span>
               <span className="t-num" style={{ color: 'var(--text)' }}>
-                {loserFighterIndex !== undefined ? `#${loserFighterIndex}` : '—'}
+                {isResolved ? 'on-chain result' : 'pending'}
               </span>
             </div>
           </div>
