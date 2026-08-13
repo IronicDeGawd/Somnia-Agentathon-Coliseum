@@ -75,6 +75,56 @@ contract ArenaVaultPart is ArenaStorage {
         simPoolsSet = true;
     }
 
+    /// @notice Register the event-contract pool set, in [WETH, WBTC, SOMI] order.
+    ///         Each slot is normally an EventDesk standing in front of a dreamDEX
+    ///         prediction market, but an ordinary spot pool is equally valid —
+    ///         Arena only needs an address that answers a pool's questions.
+    ///
+    ///         Expected to be called repeatedly, because a prediction window opens
+    ///         at a fresh address every few minutes and the old one stops trading.
+    ///         Safe to call between duels at any time: every duel records its own
+    ///         pool set when it starts, so re-pointing this cannot disturb a fight
+    ///         already underway.
+    ///
+    ///         Re-registering also refreshes each address's cached trading rules,
+    ///         which is how a pool's tick or minimum size can change without a
+    ///         redeploy.
+    function setEventDesks(
+        address[3] memory pools,
+        uint8[3]   memory baseDecimals
+    ) external onlyOwner {
+        for (uint256 i = 0; i < 3; i++) {
+            if (pools[i] == address(0)) revert ArenaTypes.InvalidPool(pools[i]);
+            _cachePoolMeta(pools[i], baseDecimals[i]);
+        }
+        EVENT_POOL_WETH = pools[0];
+        EVENT_POOL_WBTC = pools[1];
+        EVENT_POOL_SOMI = pools[2];
+        eventPoolsSet = true;
+        emit ArenaTypes.EventDesksSet(pools[0], pools[1], pools[2]);
+    }
+
+    /// @notice Re-read the trading rules of pools Arena already knows, without
+    ///         changing which pools they are.
+    ///
+    ///         Closes audit item M1. Those rules — tick size, minimum order size,
+    ///         lot size — were cached once at deploy and never refreshed, so if
+    ///         dreamDEX changed one, Arena kept sizing orders against the stale
+    ///         value and the only cure was a full redeploy. Duels already record
+    ///         their own pool set, so refreshing here cannot disturb a running
+    ///         fight; it only changes how later orders are sized.
+    function refreshPoolMeta(
+        address[] calldata pools,
+        uint8[]   calldata baseDecimals
+    ) external onlyOwner {
+        if (pools.length != baseDecimals.length) revert ArenaTypes.ZeroAmount();
+        for (uint256 i = 0; i < pools.length; i++) {
+            // Only pools Arena already trades on — never an arbitrary address.
+            _requireValidPool(pools[i]);
+            _cachePoolMeta(pools[i], baseDecimals[i]);
+        }
+    }
+
     /// @notice Seed the three simulated pool vaults with equal USDso amounts, so
     ///         simulated-duel fighter buys have quote liquidity to draw on. Mirrors
     ///         fundPools(); caller must have approved usdsoPerPool × 3.

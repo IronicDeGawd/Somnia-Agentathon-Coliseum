@@ -160,6 +160,21 @@ abstract contract ArenaStorage {
     ///         from outside without replaying logs.
     mapping(bytes4 => address) public partOf;
 
+    /// @notice The event-contract pool set, in the same [WETH, WBTC, SOMI] order.
+    ///         These are normally EventDesk adapters standing in front of a
+    ///         dreamDEX prediction market, but any slot may hold an ordinary spot
+    ///         pool — Arena only cares that the address answers a pool's questions.
+    ///
+    ///         Unlike the real and simulated sets, this one is expected to be
+    ///         re-registered often: a prediction window opens at a fresh address
+    ///         every few minutes. That is safe because each duel records its own
+    ///         pool set at the start, so re-pointing this never disturbs a fight
+    ///         already underway.
+    address public EVENT_POOL_WETH;
+    address public EVENT_POOL_WBTC;
+    address public EVENT_POOL_SOMI;
+    bool    public eventPoolsSet;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {
@@ -194,8 +209,14 @@ abstract contract ArenaStorage {
     ///         never be handed a token approval or an order.
     function _requireValidPool(address pool) internal view {
         if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI
-            && pool != SIM_POOL_WETH && pool != SIM_POOL_WBTC && pool != SIM_POOL_SOMI)
+            && pool != SIM_POOL_WETH && pool != SIM_POOL_WBTC && pool != SIM_POOL_SOMI
+            && pool != EVENT_POOL_WETH && pool != EVENT_POOL_WBTC && pool != EVENT_POOL_SOMI)
             revert ArenaTypes.InvalidPool(pool);
+    }
+
+    /// @notice The registered event-contract set, [WETH, WBTC, SOMI].
+    function _eventPools() internal view returns (address[3] memory) {
+        return [EVENT_POOL_WETH, EVENT_POOL_WBTC, EVENT_POOL_SOMI];
     }
 
     /// @notice Record a pool's trading rules — tick, minimum size, lot size and

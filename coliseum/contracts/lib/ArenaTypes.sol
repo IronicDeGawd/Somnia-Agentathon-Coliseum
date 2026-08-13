@@ -198,4 +198,9 @@ library ArenaTypes {
     /// @notice A function was pointed at a part. Emitted once per selector so the
     ///         full routing table can be rebuilt from logs.
     event PartSet(bytes4 indexed selector, address indexed part);
+
+    /// @notice The event-contract pool set was pointed at new addresses. Emitted
+    ///         on every registration because prediction windows are short-lived
+    ///         and the current set is otherwise only visible by polling.
+    event EventDesksSet(address weth, address wbtc, address somi);
 }
