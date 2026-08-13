@@ -140,7 +140,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <span className="sect-head-title">PROFILE</span>
-          <span className="sect-head-meta">on-chain attributes from FighterRegistry</span>
+          <span className="sect-head-meta">style · attributes · career record, all on-chain</span>
         </div>
 
         <div className="row gap-16" style={{ alignItems: 'stretch', flexWrap: 'wrap' }}>
@@ -187,7 +187,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">DOSSIER</span>
-          <span className="sect-head-meta">system prompt from FighterRegistry.getFighter({f.index}).systemPrompt</span>
+          <span className="sect-head-meta">the system prompt, in plain english</span>
         </div>
         <div className="row gap-32 ai-s" style={{ flexWrap: 'wrap' }}>
           <p
@@ -216,7 +216,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
           <span className="sect-head-title">DUEL HISTORY</span>
-          <span className="sect-head-meta">settled duels from DuelHistory contract</span>
+          <span className="sect-head-meta">every bout, settled on-chain</span>
         </div>
 
         {/* Record summary */}

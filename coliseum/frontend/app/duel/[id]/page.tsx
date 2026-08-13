@@ -581,7 +581,7 @@ export default function ArenaPage() {
           <div className="sect-head">
             <span className="sect-head-num">§ FEED</span>
             <span className="sect-head-title">FIGHTER ACTIONS</span>
-            <span className="sect-head-meta">SOMNIA AGENTS · on-chain FighterMove events</span>
+            <span className="sect-head-meta">live agent decisions · every move on-chain</span>
           </div>
           <div className="row gap-16 stack-sm" style={{ alignItems: 'stretch' }}>
             <div

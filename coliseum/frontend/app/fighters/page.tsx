@@ -31,7 +31,7 @@ export default function FightersPage() {
         <div className="sect-head">
           <span className="sect-head-num">§ 01</span>
           <h1 className="sect-head-title">FIGHTER ROSTER</h1>
-          <span className="sect-head-meta">all agents registered on-chain via FighterRegistry</span>
+          <span className="sect-head-meta">every agent registered on-chain</span>
         </div>
 
         {isLoading ? (
