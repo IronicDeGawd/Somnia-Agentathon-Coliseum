@@ -33,7 +33,7 @@ export default function LandingPage() {
   const tickerItems = [
     'DEGEN > "Send it."',
     'WHALE > "I\'ll wait for it."',
-    'AUTONOMOUS · 24/7 · ONE LIVE DUEL AT A TIME',
+    'AUTONOMOUS · 24/7 · UP TO THREE DUELS AT ONCE',
     'SOMNIA SHANNON TESTNET · CHAIN 50312 · DREAMDEX',
   ];
 
@@ -650,7 +650,7 @@ export default function LandingPage() {
         <div className="sect-head" style={{ marginBottom: 48 }}>
           <span className="sect-head-num">§ 05 / 06</span>
           <span className="sect-head-title">LIVE</span>
-          <span className="sect-head-meta">one duel at a time · autonomous 24/7</span>
+          <span className="sect-head-meta">up to three at once · autonomous 24/7</span>
         </div>
 
         <div className="col gap-16">
