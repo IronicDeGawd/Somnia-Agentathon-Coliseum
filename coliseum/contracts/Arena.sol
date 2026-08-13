@@ -323,14 +323,29 @@ contract Arena is ArenaVault {
         for (uint256 i = 0; i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
             address pool = pools[i];
-            uint256 markPrice = useSnapshot
-                ? duelMarkSnapshots[duelId][pool]
-                : ArenaUtils.midMarkPrice(pool);
+            uint256 snap = duelMarkSnapshots[duelId][pool];
+            uint256 markPrice = useSnapshot ? snap : ArenaUtils.midMarkPrice(pool);
 
-            // Zero mark price means no liquidity. Emit a clear warning so off-chain
-            // observers know the result for this asset is unreliable. We still proceed
-            // (base tokens contribute 0 to portfolio value) so the duel can resolve and
-            // depositors can recoverFunds — locking the duel forever would be worse.
+            // The live book decides the result, so a bad print at this one block
+            // decides it too. Two ways that happens, both seen on testnet:
+            //   - the book goes dark and midMarkPrice returns 0, which would value
+            //     every base-token holding in this pool at nothing;
+            //   - one side empties and a single stale order becomes the mark (the
+            //     SOMI book carries an ask at 5.7x mid right now).
+            // Either way the last turn's snapshot is the better estimate: it came
+            // from the same midMarkPrice, and _snapshotMarkPrices only ever records
+            // a non-zero price. Neither fighter chose the moment of finalize, so a
+            // fighter must not lose their holding to it.
+            // Deliberately not emitting a separate event for the fallback: Arena sits
+            // 183 bytes under the 24576 limit with one, and MarkPriceSnapshot already
+            // publishes every snapshot, so the substitution is reconstructable off-chain.
+            if (snap > 0 && (markPrice == 0 || markPrice > snap * 2 || markPrice * 2 < snap)) {
+                markPrice = snap;
+            }
+
+            // No snapshot either — the price is genuinely unknown. Proceed with 0 so
+            // the duel still resolves and depositors can recoverFunds; locking it
+            // forever would be worse.
             if (markPrice == 0) {
                 emit ArenaTypes.DuelDegenerate(duelId, pool, "zero mark price at finalize");
             }
