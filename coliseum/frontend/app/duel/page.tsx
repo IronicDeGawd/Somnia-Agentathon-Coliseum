@@ -432,7 +432,7 @@ export default function LobbyPage() {
             setCreatorExpanded(v => !v);
           }}
         >
-          <span className="sect-head-num">§ 02</span>
+          <span className="sect-head-num">§ 03</span>
           <span className="sect-head-title">{lockedTurns ? `JOIN ${lockedTurns}-ROUND TIER` : 'CREATE NEW DUEL'}</span>
           <span className="sect-head-meta">{creatorExpanded ? '▲ collapse' : '▼ expand to start a duel'}</span>
         </button>
@@ -455,7 +455,7 @@ export default function LobbyPage() {
       {/* ── § 03 STANDINGS ─────────────────────────────────────────── */}
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div className="sect-head">
-          <span className="sect-head-num">§ 03</span>
+          <span className="sect-head-num">§ 04</span>
           <span className="sect-head-title">STANDINGS</span>
           <span className="sect-head-meta"></span>
         </div>
@@ -552,9 +552,9 @@ export default function LobbyPage() {
       {/* ── § 04 YOUR LEDGER ───────────────────────────────────────── */}
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 80 }}>
         <div className="sect-head">
-          <span className="sect-head-num">§ 04</span>
+          <span className="sect-head-num">§ 05</span>
           <span className="sect-head-title">YOUR LEDGER</span>
-          <span className="sect-head-meta">bets placed via Bookmaker (from on-chain events for the connected wallet)</span>
+          <span className="sect-head-meta">your bets, read from chain for the connected wallet</span>
         </div>
 
         <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
