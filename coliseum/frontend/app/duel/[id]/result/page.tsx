@@ -485,7 +485,7 @@ export default function ResultPage() {
           <div className="sect-head">
             <span className="sect-head-num">§ 03</span>
             <span className="sect-head-title">FIGHT TAPE</span>
-            <span className="sect-head-meta">{transcript.length} moves · FighterMove events on-chain</span>
+            <span className="sect-head-meta">{transcript.length} moves · every one on-chain</span>
           </div>
           <div className="card pad-24 col">
             {transcript.map((e, i) => (
