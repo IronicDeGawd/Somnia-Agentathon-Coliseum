@@ -8,6 +8,7 @@ import { Meter } from '@/components/shared/Meter';
 import { BracketButton } from '@/components/shared/OtherHUD';
 import { fighterIdToIndex, fighterIndexToId } from '@/lib/fighters';
 import { DRAW_SLOT } from '@/lib/contracts';
+import { fmtUsd } from '@/lib/format';
 import { useFighters } from '@/hooks/useFighters';
 import { useFighterHistory } from '@/hooks/useFighterHistory';
 import { formatUnits } from 'viem';
@@ -26,6 +27,24 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
 
   const f = fighters.find((x) => x.index === fighterIndex) ?? null;
   const fid = f ? fighterIndexToId(f.index) : id;
+
+  // Career peaks, derived from settled duels only. Each entry stores both sides'
+  // PnL, so which field belongs to this fighter depends on the slot they fought
+  // in — reading pnlA blindly would report the opponent's result half the time.
+  const ownPnls = fightHistory.map((e) => ({
+    duelId: e.duelId.toString(),
+    pnl: parseFloat(formatUnits(e.fighterA === fighterIndex ? e.pnlA : e.pnlB, 18)),
+  }));
+  const bestBout = ownPnls.length
+    ? ownPnls.reduce((a, b) => (b.pnl > a.pnl ? b : a))
+    : null;
+  const worstBout = ownPnls.length
+    ? ownPnls.reduce((a, b) => (b.pnl < a.pnl ? b : a))
+    : null;
+  const careerAvg =
+    fighterRecord && fighterRecord.duels > 0
+      ? parseFloat(formatUnits(fighterRecord.pnl, 18)) / fighterRecord.duels
+      : null;
 
   if (isLoading) {
     return (
@@ -161,22 +180,44 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
             </div>
           </div>
 
+          {/* CAREER PEAKS — every figure here is derived from settled duels in
+              DuelHistory, never from the static persona registry. The registry
+              carries fixture values (record 9-7, bestRound #287) left over from
+              the design mock; showing those as career stats would be inventing
+              a record. When nothing has settled yet, the card says so. */}
           <div className="card flex-1 col gap-12 pad-24">
-            <span className="label-tiny">FIGHTER INDEX</span>
+            <span className="label-tiny">CAREER PEAKS</span>
             <span
               className="t-num"
               style={{ fontSize: 48, color: hex, lineHeight: 1 }}
             >
-              #{f.index}
+              {careerAvg === null ? '—' : fmtUsd(careerAvg)}
             </span>
+            <span className="t-mono t-xs t-faint">AVG PNL PER BOUT</span>
             <hr className="divider" />
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Registry</span>
-              <span className="t-num" style={{ color: 'var(--text)' }}>FighterRegistry.sol</span>
+              <span>Best bout</span>
+              <span className="t-num" style={{ color: bestBout ? 'var(--win)' : 'var(--text-dim)' }}>
+                {bestBout ? `#${bestBout.duelId} · ${fmtUsd(bestBout.pnl)}` : '—'}
+              </span>
             </div>
+            {/* Only shown when it is genuinely a different bout. With two drawn
+                duels the PnLs tie, so best and worst both resolve to the first
+                one — rendering both rows then reads like a bug rather than a
+                fighter who has never had a losing day. */}
+            {worstBout && bestBout && worstBout.duelId !== bestBout.duelId && (
+              <div className="row jc-sb t-mono t-xs t-dim">
+                <span>Worst bout</span>
+                <span className="t-num" style={{ color: 'var(--loss)' }}>
+                  {`#${worstBout.duelId} · ${fmtUsd(worstBout.pnl)}`}
+                </span>
+              </div>
+            )}
             <div className="row jc-sb t-mono t-xs t-dim">
-              <span>Chain</span>
-              <span className="t-num" style={{ color: 'var(--text)' }}>Somnia Shannon</span>
+              <span>Bouts settled</span>
+              <span className="t-num" style={{ color: 'var(--text)' }}>
+                {fighterRecord ? fighterRecord.duels : 0}
+              </span>
             </div>
           </div>
         </div>
@@ -215,7 +256,7 @@ export default function FighterProfilePage({ params }: FighterProfileProps) {
       <section className="shell-pad col gap-16" style={{ paddingTop: 48, paddingBottom: 120 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 03</span>
-          <span className="sect-head-title">DUEL HISTORY</span>
+          <span className="sect-head-title">RECENT BOUTS</span>
           <span className="sect-head-meta">every bout, settled on-chain</span>
         </div>
 
