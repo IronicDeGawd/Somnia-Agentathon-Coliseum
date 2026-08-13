@@ -120,6 +120,68 @@ describe("EventDesk", () => {
     });
   });
 
+  describe("maker blackout, before expiry", () => {
+    // Observed live 2026-08-13: a 15-minute BTC window sat with a completely
+    // empty book for its last ~7.5 minutes while still in Trading status. No
+    // maker quotes a binary about to settle. Without this, Arena reads an empty
+    // book, computes a mark price of zero, and values a real position at
+    // nothing for half the window.
+    it("serves the last known price when the book empties mid-life", async () => {
+      const { desk, pool } = await deploy();
+      await pool.write.setBookLevel([true, 173_000n, 200n]);
+      await pool.write.setBookLevel([false, 198_000n, 200n]);
+      await desk.write.poke();
+
+      await pool.write.clearBook([true]);
+      await pool.write.clearBook([false]);
+
+      const bid = await desk.read.getBookLevels([true, 1n]);
+      const ask = await desk.read.getBookLevels([false, 1n]);
+      expect(bid[0].price).to.equal(173_000n * SCALE);
+      expect(ask[0].price).to.equal(198_000n * SCALE);
+      // Arena's midMarkPrice reads price only, so valuation survives the blackout.
+      expect((bid[0].price + ask[0].price) / 2n).to.equal(185_500n * SCALE);
+    });
+
+    it("reports zero quantity, so Arena rejects the trade instead of sending it", async () => {
+      // The price is knowable; the liquidity is not. Arena's own
+      // `levels[0].quantity == 0` check turns this into a clean "empty book"
+      // rejection rather than an order into a dead market.
+      const { desk, pool } = await deploy();
+      await pool.write.setBookLevel([true, 173_000n, 200n]);
+      await desk.write.poke();
+      await pool.write.clearBook([true]);
+
+      const bid = await desk.read.getBookLevels([true, 1n]);
+      expect(bid[0].quantity).to.equal(0n);
+    });
+
+    it("stays empty when it has never seen a price", async () => {
+      const { desk } = await deploy();
+      expect((await desk.read.getBookLevels([true, 1n])).length).to.equal(0);
+    });
+
+    it("caches the book on every trade, not just on poke", async () => {
+      const ctx = await deploy();
+      await ctx.pool.write.setBookLevel([true, 150_000n, 200n]);
+      await ctx.pool.write.setBookLevel([false, 160_000n, 200n]);
+      await placeAsArena(ctx, true, 160_000n * SCALE, 10n ** 18n);
+      expect(await ctx.desk.read.lastGoodBid()).to.equal(150_000n);
+      expect(await ctx.desk.read.lastGoodAsk()).to.equal(160_000n);
+    });
+
+    it("prefers the settled payout over the cached price once resolved", async () => {
+      const { desk, pool, market } = await deploy();
+      await pool.write.setBookLevel([true, 173_000n, 200n]);
+      await desk.write.poke();
+      await pool.write.clearBook([true]);
+      await market.write.resolve([1n, 0n]);
+
+      const bid = await desk.read.getBookLevels([true, 1n]);
+      expect(bid[0].price).to.equal(10n ** 18n);          // 1.0, not the cached 0.173
+    });
+  });
+
   describe("order translation", () => {
     it("replaces Arena's expiry with the market's, which is the only reason it works", async () => {
       // Arena hard-codes +3600s. The pool reverts OrderExpiryBeyondMarket on

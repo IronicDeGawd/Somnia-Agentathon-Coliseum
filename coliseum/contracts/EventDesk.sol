@@ -38,6 +38,15 @@ import "./interfaces/IBinaryPool.sol";
 ///    firing by design on every duel. Once resolved the desk stops passing the
 ///    question through and answers from `payoutNumerators` instead.
 ///
+///  - THE BOOK ALSO EMPTIES *BEFORE* EXPIRY. Observed live on 2026-08-13: a
+///    15-minute BTC window sat with a completely empty book for the last ~7.5
+///    minutes — half its life — while still in Trading status. No maker wants
+///    to quote a binary about to settle. During that blackout the price is
+///    unknown but the position is real, so the desk serves the last price it
+///    saw with a quantity of ZERO: `midMarkPrice` reads the price and values
+///    the holding correctly, while Arena's own `quantity == 0` check rejects
+///    the trade instead of sending an order into a dead book.
+///
 /// SCALING. Coliseum thinks in 18-decimal USDso; the event pool is 6-decimal.
 /// Everything crossing this boundary is scaled by SCALE (1e12), so Arena sees
 /// prices where 1e18 == one whole contract == one unit of collateral.
@@ -71,9 +80,16 @@ contract EventDesk is ISpotPool {
     error NotOwner();
     error Unsupported();
 
+    /// @notice Last non-empty top-of-book seen, in the pool's own 6 decimals.
+    ///         Refreshed by `poke()` and by every trade. Serves as the price
+    ///         during a maker blackout, when the book is empty but the market
+    ///         has not settled and the position is still worth something.
+    uint256 public lastGoodBid;
+    uint256 public lastGoodAsk;
+
     event DeskFunded(uint256 amount6);
     event ProceedsSwept(uint256 amount6);
-    event ResolvedPriceServed(uint256 price18);
+    event BookCached(uint256 bid6, uint256 ask6);
 
     modifier onlyArena() { if (msg.sender != arena) revert NotArena(); _; }
     modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
@@ -159,11 +175,47 @@ contract EventDesk is ISpotPool {
         }
 
         OrderBookLevel[] memory raw = pool.getBookLevels(isBid, numLevels);
-        OrderBookLevel[] memory out = new OrderBookLevel[](raw.length);
-        for (uint256 i = 0; i < raw.length; i++) {
-            out[i] = OrderBookLevel({ price: raw[i].price * SCALE, quantity: raw[i].quantity * SCALE });
+        if (raw.length > 0) {
+            OrderBookLevel[] memory out = new OrderBookLevel[](raw.length);
+            for (uint256 i = 0; i < raw.length; i++) {
+                out[i] = OrderBookLevel({ price: raw[i].price * SCALE, quantity: raw[i].quantity * SCALE });
+            }
+            return out;
         }
-        return out;
+
+        // Maker blackout: the book is empty but the market has not settled, so
+        // the position is still worth roughly what it was worth a moment ago.
+        // Quantity zero is the honest part — there is a price, but nothing to
+        // trade against, and Arena's own check turns that into a clean reject.
+        uint256 cached = isBid ? lastGoodBid : lastGoodAsk;
+        if (cached > 0) {
+            OrderBookLevel[] memory stale = new OrderBookLevel[](1);
+            stale[0] = OrderBookLevel({ price: cached * SCALE, quantity: 0 });
+            return stale;
+        }
+        return raw;
+    }
+
+    /// @notice Refresh the cached top-of-book. Permissionless and cheap — the
+    ///         watcher calls it each turn so a blackout that starts mid-duel is
+    ///         still backed by a recent price rather than a stale one.
+    function poke() public {
+        _cacheBook();
+    }
+
+    function _cacheBook() internal {
+        uint256 bid;
+        uint256 ask;
+        try pool.getBookLevels(true, 1) returns (OrderBookLevel[] memory b) {
+            if (b.length > 0) bid = b[0].price;
+        } catch {}
+        try pool.getBookLevels(false, 1) returns (OrderBookLevel[] memory a) {
+            if (a.length > 0) ask = a[0].price;
+        } catch {}
+        if (bid == 0 && ask == 0) return;      // nothing better to remember
+        if (bid > 0) lastGoodBid = bid;
+        if (ask > 0) lastGoodAsk = ask;
+        emit BookCached(lastGoodBid, lastGoodAsk);
     }
 
     /// @return baseToken quoteToken makerFee takerFee tickSize minQuantity lotSize
@@ -196,6 +248,10 @@ contract EventDesk is ISpotPool {
         address builder,
         uint96  builderFeeBpsTimes1k
     ) external override onlyArena returns (bool success, uint128 orderId) {
+        // Remember the book we are about to trade into, so a blackout starting
+        // after this turn still has a recent price behind it.
+        _cacheBook();
+
         // The pool rejects any expiry past its own, so Arena's +3600s is replaced
         // rather than forwarded. Taker semantics (IOC) match Arena's intent.
         uint64 expiry = pool.marketExpiryNs();
