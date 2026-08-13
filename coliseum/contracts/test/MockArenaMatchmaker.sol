@@ -61,7 +61,7 @@ contract MockArenaMatchmaker {
     function minDepositFor(uint16) external pure returns (uint256) { return 2e18; }
     function minDepositForMarket(uint16, bool) external pure returns (uint256) { return 2e18; }
 
-    // Mirrors ArenaVault.platformFee: hybrid base + perTurn × turns.
+    // Mirrors ArenaStorage.platformFee: hybrid base + perTurn × turns.
     function platformFee(uint16 turns) public pure returns (uint256) {
         return 0.5e18 + 0.1e18 * uint256(turns);
     }

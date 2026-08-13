@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "./lib/ArenaTypes.sol";
 import "./interfaces/IFighterRegistry.sol";
+import "./interfaces/ISpotPool.sol";
 
 /// @title ArenaStorage
 /// @notice The single declaration of everything Arena remembers.
@@ -56,6 +57,11 @@ abstract contract ArenaStorage {
     ///         free to raise the cap arbitrarily — a dry Arena silently produces
     ///         all-Hold duels, which now resolve as draws.
     uint16 public constant MAX_ACTIVE_CEILING = 8;
+
+    /// @notice The reactivity handler's selector, needed when subscribing. Held as
+    ///         a constant rather than read off the function, because the part that
+    ///         subscribes does not declare onEvent — the router does.
+    bytes4 internal constant ON_EVENT_SELECTOR = bytes4(keccak256("onEvent(address,bytes32[],bytes)"));
 
     // ─── Deployment wiring ────────────────────────────────────────────────────
     // Set once at construction. Ordinary storage rather than immutable — see the
@@ -181,5 +187,42 @@ abstract contract ArenaStorage {
     function _pools(bool simulated) internal view returns (address[3] memory) {
         if (simulated) return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
         return [POOL_WETH, POOL_WBTC, POOL_SOMI];
+    }
+
+    /// @notice Reject any pool address Arena was never told about. Trading and
+    ///         vault withdrawal both gate on this, so an arbitrary address can
+    ///         never be handed a token approval or an order.
+    function _requireValidPool(address pool) internal view {
+        if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI
+            && pool != SIM_POOL_WETH && pool != SIM_POOL_WBTC && pool != SIM_POOL_SOMI)
+            revert ArenaTypes.InvalidPool(pool);
+    }
+
+    /// @notice Record a pool's trading rules — tick, minimum size, lot size and
+    ///         base-token decimals — so order math does not re-read them on every
+    ///         trade. A pool that cannot answer is cached with permissive defaults
+    ///         rather than reverting, so one bad pool cannot block a deployment.
+    ///
+    ///         Lives here because both the router's constructor and the part that
+    ///         registers new pool sets need it.
+    function _cachePoolMeta(address pool, uint8 baseDecimals) internal {
+        try ISpotPool(pool).getPoolParams() returns (
+            address, address, uint256, uint256,
+            uint256 tickSize, uint256 minQty, uint256 lotSize
+        ) {
+            poolMeta[pool] = ArenaTypes.PoolMeta({
+                baseDecimals: baseDecimals,
+                minQuantity:  minQty,
+                lotSize:      lotSize,
+                tickSize:     tickSize
+            });
+        } catch {
+            poolMeta[pool] = ArenaTypes.PoolMeta({
+                baseDecimals: baseDecimals,
+                minQuantity:  0,
+                lotSize:      1,
+                tickSize:     1
+            });
+        }
     }
 }

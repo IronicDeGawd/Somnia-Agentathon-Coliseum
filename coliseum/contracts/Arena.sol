@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "./ArenaVault.sol";
+import "./ArenaStorage.sol";
 import "./lib/ArenaTypes.sol";
 import "./lib/ArenaUtils.sol";
 import "./interfaces/IFighterRegistry.sol";
@@ -29,11 +29,11 @@ import "./interfaces/IDuelHistory.sol";
 ///      after EMERGENCY_FINALIZE_BLOCKS blocks have passed since the last turn,
 ///      without waiting for remaining callbacks. Funds remain recoverable.
 ///    - recoverFunds(): duel creator can always pull their USDso back after resolution.
-contract Arena is ArenaVault {
+contract Arena is ArenaStorage {
 
     using ArenaUtils for *;
 
-    // Constants and state both live in ArenaStorage, reached through ArenaVault.
+    // Constants and state both live in ArenaStorage.
     // Nothing in this file may declare storage — see the note in ArenaStorage.sol.
 
     // ─── Constructor ─────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ contract Arena is ArenaVault {
         address _platform,
         uint256 _turnIntervalBlocks,
         uint8[3] memory _baseDecimals   // [WETH, WBTC, SOMI]
-    ) payable ArenaVault(_usdso, _poolWeth, _poolWbtc, _poolSomi) {
+    ) payable {
         // Reactivity is OPT-IN: call resubscribe() to switch it on.
         //
         // This used to demand 33 STT up front and subscribe in the constructor.
@@ -56,6 +56,12 @@ contract Arena is ArenaVault {
         // the only way to stop one is to let the contract's balance run dry. A
         // fresh deploy therefore started burning immediately and silently. Turns
         // are keeper-driven now, so nothing here needs the subscription.
+        USDSO     = _usdso;
+        POOL_WETH = _poolWeth;
+        POOL_WBTC = _poolWbtc;
+        POOL_SOMI = _poolSomi;
+        owner     = msg.sender;
+
         registry            = IFighterRegistry(_registry);
         PLATFORM_ADDR       = _platform;
         TURN_INTERVAL_BLOCKS = _turnIntervalBlocks;
@@ -65,9 +71,8 @@ contract Arena is ArenaVault {
         _cachePoolMeta(_poolSomi, _baseDecimals[2]);
     }
 
-    function _onEventSelector() internal pure override returns (bytes4) {
-        return this.onEvent.selector;
-    }
+    /// @notice Native STT, used to pay for fighter inference.
+    receive() external payable {}
 
     // ─── Routing ──────────────────────────────────────────────────────────────
 

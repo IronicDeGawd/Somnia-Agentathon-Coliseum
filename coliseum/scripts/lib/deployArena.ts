@@ -25,7 +25,7 @@ import { toFunctionSelector, type Abi } from "viem";
 type Hex = `0x${string}`;
 
 /** Every part, in the order they are deployed and wired. */
-export const ARENA_PARTS = ["ArenaViewPart"] as const;
+export const ARENA_PARTS = ["ArenaVaultPart", "ArenaViewPart"] as const;
 
 /** Function entries a part claims: its own, minus anything the router answers. */
 function claimedSelectors(routerAbi: Abi, partAbi: Abi): Hex[] {
@@ -66,8 +66,14 @@ export async function deployLinkedArena(
   const parts: Record<string, Hex> = {};
 
   for (const name of ARENA_PARTS) {
-    const part = await hre.viem.deployContract(name, [], { libraries } as never);
-    const partAbi = (await hre.artifacts.readArtifact(name)).abi as Abi;
+    const artifact = await hre.artifacts.readArtifact(name);
+    // Only parts that actually call into ArenaUtils may be given the link —
+    // passing it to one that does not is rejected outright.
+    const needsUtils = Object.keys(artifact.linkReferences ?? {}).length > 0;
+    const part = await hre.viem.deployContract(
+      name, [], (needsUtils ? { libraries } : {}) as never,
+    );
+    const partAbi = artifact.abi as Abi;
     const selectors = claimedSelectors(routerAbi, partAbi);
 
     await router.write.setPart([selectors, part.address]);

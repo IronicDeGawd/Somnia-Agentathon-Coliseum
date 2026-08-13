@@ -1,64 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "./ArenaStorage.sol";
-import "./lib/ArenaTypes.sol";
-import "./interfaces/ISpotPool.sol";
-import "./interfaces/IERC20Minimal.sol";
-import "./interfaces/ISomniaReactivityPrecompile.sol";
+import "../ArenaStorage.sol";
+import "../lib/ArenaTypes.sol";
+import "../interfaces/ISpotPool.sol";
+import "../interfaces/IERC20Minimal.sol";
+import "../interfaces/ISomniaReactivityPrecompile.sol";
 
-/// @title ArenaVault
-/// @notice Abstract base for Arena. Handles all fund management: pool seeding,
-///         vault recovery, token sweeps, native STT, platform fees, and
-///         Reactivity subscription management.
-///         Separated from Arena.sol so fund-custody logic can be audited in isolation.
+/// @title ArenaVaultPart
+/// @notice Everything that moves money in or out of Arena: seeding the pool
+///         vaults, registering pool sets, recovering funds, sweeping stray
+///         tokens, withdrawing platform fees, and the reactivity subscription.
+///         Kept in one file so fund-custody logic can be audited in isolation.
 ///
-///         Declares no state of its own — everything it reads and writes lives in
-///         ArenaStorage, so this file can later be deployed as a standalone part
-///         reached by delegatecall without its storage drifting from the router's.
-abstract contract ArenaVault is ArenaStorage {
+///         Deployed on its own and reached through the router by delegatecall, so
+///         every transfer here debits the ROUTER's balance, not this contract's —
+///         this contract never holds anything.
+///
+///         Declares no storage. See ArenaStorage.sol for why that rule is absolute.
+contract ArenaVaultPart is ArenaStorage {
 
     using ArenaTypes for *;
 
-    // ─── Constructor ─────────────────────────────────────────────────────────
-
-    constructor(
-        address _usdso,
-        address _poolWeth,
-        address _poolWbtc,
-        address _poolSomi
-    ) {
-        USDSO     = _usdso;
-        POOL_WETH = _poolWeth;
-        POOL_WBTC = _poolWbtc;
-        POOL_SOMI = _poolSomi;
-        owner     = msg.sender;
-    }
-
-    receive() external payable {}
-
-    // ─── Pool metadata ────────────────────────────────────────────────────────
-
-    function _cachePoolMeta(address pool, uint8 baseDecimals) internal {
-        try ISpotPool(pool).getPoolParams() returns (
-            address, address, uint256, uint256,
-            uint256 tickSize, uint256 minQty, uint256 lotSize
-        ) {
-            poolMeta[pool] = ArenaTypes.PoolMeta({
-                baseDecimals: baseDecimals,
-                minQuantity:  minQty,
-                lotSize:      lotSize,
-                tickSize:     tickSize
-            });
-        } catch {
-            poolMeta[pool] = ArenaTypes.PoolMeta({
-                baseDecimals: baseDecimals,
-                minQuantity:  0,
-                lotSize:      1,
-                tickSize:     1
-            });
-        }
-    }
+    // No constructor and no receive(): both belong to the router. This contract is
+    // deployed with no arguments and never holds a balance of its own.
 
     // ─── Pool seeding (owner-only) ────────────────────────────────────────────
 
@@ -197,7 +162,7 @@ abstract contract ArenaVault is ArenaStorage {
             caller:                  address(0),
             emitter:                 SOMNIA_REACTIVITY_PRECOMPILE,
             handlerContractAddress:  address(this),
-            handlerFunctionSelector: _onEventSelector(),
+            handlerFunctionSelector: ON_EVENT_SELECTOR,
             // Priority fee must be high enough to win the per-block reactivity queue.
             // Testnet baseFee is ~6 gwei; lower-priority subs get indefinitely deferred
             // even though the subscription stays alive. 10 gwei tip puts us above most
@@ -226,21 +191,11 @@ abstract contract ArenaVault is ArenaStorage {
         }
     }
 
-    /// @dev Derived contract must supply its onEvent selector for the subscription.
-    function _onEventSelector() internal pure virtual returns (bytes4);
 
     function resubscribe() external onlyOwner returns (uint256 newId) {
         if (address(this).balance < REACTIVITY_FUND_MIN) revert ArenaTypes.ReactivityUnderfunded();
         newId = _subscribeReactivity();
         subscriptionId = newId;
         emit ArenaTypes.Resubscribed(newId);
-    }
-
-    // ─── Internal helpers ─────────────────────────────────────────────────────
-
-    function _requireValidPool(address pool) internal view {
-        if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI
-            && pool != SIM_POOL_WETH && pool != SIM_POOL_WBTC && pool != SIM_POOL_SOMI)
-            revert ArenaTypes.InvalidPool(pool);
     }
 }
