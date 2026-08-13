@@ -17,9 +17,13 @@ async function deploy() {
   const pool         = await hre.viem.deployContract("MockBinaryPool", [
     collateral.address, outcomeToken.address, market.address, MARKET_EXPIRY_NS,
   ]);
-  const desk = await hre.viem.deployContract("EventDesk", [pool.address, arena.account.address]);
+  const desk = await hre.viem.deployContract("EventDesk", [arena.account.address]);
+  await desk.write.bind([pool.address]);
 
-  return { owner, arena, stranger, collateral, outcomeToken, market, pool, desk };
+  const treasury = await hre.viem.deployContract("EventTreasury", [collateral.address]);
+  await treasury.write.approveDesk([desk.address, true]);
+
+  return { owner, arena, stranger, collateral, outcomeToken, market, pool, desk, treasury };
 }
 
 /** Place an order through the desk as Arena would: 18-dp price/quantity, +1h expiry. */
@@ -50,6 +54,122 @@ describe("EventDesk", () => {
       expect(getAddress(await desk.read.collateral())).to.equal(getAddress(collateral.address));
       expect(getAddress(await desk.read.market())).to.equal(getAddress(market.address));
       expect(getAddress(await desk.read.outcomeToken())).to.equal(getAddress(outcomeToken.address));
+    });
+  });
+
+  describe("re-binding between duels", () => {
+    // One desk serves many duels. Arena keys balances and snapshots by duelId as
+    // well as pool address, so re-pointing BETWEEN duels collides with nothing —
+    // but doing it DURING one would corrupt a live position.
+    async function secondWindow(ctx: Awaited<ReturnType<typeof deploy>>) {
+      const market2 = await hre.viem.deployContract("MockBinaryMarket");
+      const pool2 = await hre.viem.deployContract("MockBinaryPool", [
+        ctx.collateral.address, ctx.outcomeToken.address, market2.address, MARKET_EXPIRY_NS,
+      ]);
+      return { pool2, market2 };
+    }
+
+    it("refuses to move while a duel holds the desk", async () => {
+      const ctx = await deploy();
+      const { pool2 } = await secondWindow(ctx);
+      await ctx.desk.write.setInUse([true]);
+      await expect(ctx.desk.write.bind([pool2.address])).to.be.rejected;
+    });
+
+    it("moves once the duel releases it", async () => {
+      const ctx = await deploy();
+      const { pool2, market2 } = await secondWindow(ctx);
+      await ctx.desk.write.setInUse([true]);
+      await ctx.desk.write.setInUse([false]);
+      await ctx.desk.write.bind([pool2.address]);
+
+      expect(getAddress(await ctx.desk.read.pool())).to.equal(getAddress(pool2.address));
+      expect(getAddress(await ctx.desk.read.market())).to.equal(getAddress(market2.address));
+    });
+
+    it("carries its collateral across to the new window instead of stranding it", async () => {
+      const ctx = await deploy();
+      await ctx.treasury.write.refill([50n * 10n ** 6n]);
+      await ctx.treasury.write.fundDesk([ctx.desk.address, 50n * 10n ** 6n]);
+      const { pool2 } = await secondWindow(ctx);
+
+      await ctx.desk.write.bind([pool2.address]);
+
+      expect(await ctx.pool.read.vault([ctx.desk.address])).to.equal(0n);
+      expect(await pool2.read.vault([ctx.desk.address])).to.equal(50n * 10n ** 6n);
+    });
+
+    it("refuses to abandon an unredeemed position", async () => {
+      // A winning outcome token is real value. Silently walking away from it
+      // would bleed the treasury one duel at a time.
+      const ctx = await deploy();
+      const yesId = await ctx.desk.read.yesId();
+      await ctx.outcomeToken.write.mint([ctx.desk.address, yesId, 1n]);
+      const { pool2 } = await secondWindow(ctx);
+
+      await expect(ctx.desk.write.bind([pool2.address])).to.be.rejected;
+    });
+
+    it("forgets the previous window's cached price", async () => {
+      // A fresh window has its own price history; carrying the old one across
+      // would misvalue the new position during a blackout.
+      const ctx = await deploy();
+      await ctx.pool.write.setBookLevel([true, 173_000n, 200n]);
+      await ctx.desk.write.poke();
+      expect(await ctx.desk.read.lastGoodBid()).to.equal(173_000n);
+
+      const { pool2 } = await secondWindow(ctx);
+      await ctx.desk.write.bind([pool2.address]);
+      expect(await ctx.desk.read.lastGoodBid()).to.equal(0n);
+    });
+
+    it("grants the new pool its own operator rights", async () => {
+      const ctx = await deploy();
+      const { pool2 } = await secondWindow(ctx);
+      await ctx.desk.write.bind([pool2.address]);
+      expect(await ctx.outcomeToken.read.isOperator([ctx.desk.address, pool2.address])).to.equal(true);
+    });
+
+    it("only the owner may bind or claim", async () => {
+      const ctx = await deploy();
+      const { pool2 } = await secondWindow(ctx);
+      await expect(ctx.desk.write.bind([pool2.address], { account: ctx.stranger.account })).to.be.rejected;
+      await expect(ctx.desk.write.setInUse([true], { account: ctx.stranger.account })).to.be.rejected;
+    });
+  });
+
+  describe("EventTreasury", () => {
+    it("refills past the faucet's per-call cap by chunking", async () => {
+      // Measured on testnet: faucet(10000) is the ceiling, faucet(100000) reverts.
+      const { treasury, collateral } = await deploy();
+      await treasury.write.refill([25_000n * 10n ** 6n]);
+      expect(await treasury.read.balance()).to.equal(25_000n * 10n ** 6n);
+      expect(await collateral.read.faucetCalls()).to.equal(3n);      // 10k + 10k + 5k
+    });
+
+    it("will not fund a desk it has not approved", async () => {
+      const { treasury, arena } = await deploy();
+      const rogue = await hre.viem.deployContract("EventDesk", [arena.account.address]);
+      await treasury.write.refill([10n ** 6n]);
+      await expect(treasury.write.fundDesk([rogue.address, 10n ** 6n])).to.be.rejected;
+    });
+
+    it("leaves no standing allowance after funding", async () => {
+      const { treasury, desk, collateral } = await deploy();
+      await treasury.write.refill([10n * 10n ** 6n]);
+      await treasury.write.fundDesk([desk.address, 10n * 10n ** 6n]);
+      expect(await collateral.read.allowance([treasury.address, desk.address])).to.equal(0n);
+    });
+
+    it("only the owner may approve or fund", async () => {
+      const { treasury, desk, stranger } = await deploy();
+      await treasury.write.refill([10n ** 6n]);
+      await expect(
+        treasury.write.approveDesk([desk.address, true], { account: stranger.account }),
+      ).to.be.rejected;
+      await expect(
+        treasury.write.fundDesk([desk.address, 10n ** 6n], { account: stranger.account }),
+      ).to.be.rejected;
     });
   });
 
@@ -186,27 +306,25 @@ describe("EventDesk", () => {
     it("replaces Arena's expiry with the market's, which is the only reason it works", async () => {
       // Arena hard-codes +3600s. The pool reverts OrderExpiryBeyondMarket on
       // anything past its own expiry, so a forwarded value fails every time.
-      const { desk, pool, arena } = await deploy();
+      // Confirmed against the live chain 2026-08-13: tx 0xaf42c76b, where
+      // Arena's expiry sat 2816s beyond the market's and the order still filled.
+      const ctx = await deploy();
       const shortExpiry = BigInt(Math.floor(Date.now() / 1000) + 60) * 1_000_000_000n;
       const nearPool = await hre.viem.deployContract("MockBinaryPool", [
-        (await deploy()).collateral.address,
-        (await deploy()).outcomeToken.address,
-        (await deploy()).market.address,
-        shortExpiry,
+        ctx.collateral.address, ctx.outcomeToken.address, ctx.market.address, shortExpiry,
       ]);
-      const nearDesk = await hre.viem.deployContract("EventDesk", [nearPool.address, arena.account.address]);
+      const nearDesk = await hre.viem.deployContract("EventDesk", [ctx.arena.account.address]);
+      await nearDesk.write.bind([nearPool.address]);
 
       const arenaExpiry = BigInt(Math.floor(Date.now() / 1000) + 3600) * 1_000_000_000n;
       expect(arenaExpiry).to.be.greaterThan(shortExpiry);              // Arena's value would revert
 
       await nearDesk.write.placeOrder(
-        [true, 0n, 200_000n * SCALE, 1n * SCALE * 10n ** 6n, arenaExpiry, 0, 0,
+        [true, 0n, 200_000n * SCALE, 10n ** 18n, arenaExpiry, 0, 0,
          "0x0000000000000000000000000000000000000000", 0n],
-        { account: arena.account },
+        { account: ctx.arena.account },
       );
       expect(await nearPool.read.lastExpiry()).to.equal(shortExpiry);
-
-      void desk; void pool;
     });
 
     it("maps a bid to BUY_YES and an ask to SELL_YES", async () => {
@@ -255,16 +373,25 @@ describe("EventDesk", () => {
   });
 
   describe("funding", () => {
-    it("funds itself from the faucet and reports the balance in 18 decimals", async () => {
-      const { desk, pool, collateral, arena } = await deploy();
-      await desk.write.deposit(["0x0000000000000000000000000000000000000000", 50n * 10n ** 18n]);
+    it("receives collateral from the treasury and reports it in 18 decimals", async () => {
+      const { desk, pool, collateral, treasury, arena } = await deploy();
+      await treasury.write.refill([50n * 10n ** 6n]);
+      await treasury.write.fundDesk([desk.address, 50n * 10n ** 6n]);
 
-      expect(await collateral.read.faucetCalls()).to.equal(1n);
       expect(await pool.read.vault([desk.address])).to.equal(50n * 10n ** 6n);
       // Arena asks about its own address; the desk answers with its vault position.
       expect(
         await desk.read.getWithdrawableBalance([arena.account.address, collateral.address]),
       ).to.equal(50n * 10n ** 18n);
+    });
+
+    it("knows nothing about faucets, so it can fund on mainnet too", async () => {
+      // A faucet call inside the desk would revert against USDso, which has none.
+      const { desk, collateral, owner } = await deploy();
+      await collateral.write.mint([owner.account.address, 10n ** 6n]);
+      await collateral.write.approve([desk.address, 10n ** 6n]);
+      await desk.write.fund([10n ** 6n]);
+      expect(await collateral.read.faucetCalls()).to.equal(0n);
     });
   });
 

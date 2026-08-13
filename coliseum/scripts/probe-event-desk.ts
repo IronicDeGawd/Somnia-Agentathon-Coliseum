@@ -60,8 +60,9 @@ async function main() {
   console.log(`         pool=${m.pool}  expires in ${Number(m.expiry) - now}s`);
 
   // ── 2. deploy the desk, pointing it at this window ────────────────────────
-  const desk = await hre.viem.deployContract("EventDesk", [m.pool, me.account.address]);
-  console.log(`\ndesk deployed: ${desk.address}`);
+  const desk = await hre.viem.deployContract("EventDesk", [me.account.address]);
+  await desk.write.bind([m.pool]);
+  console.log(`\ndesk deployed and bound: ${desk.address}`);
   console.log(`  collateral : ${await desk.read.collateral()}`);
 
   const [base, quote, , , tick, minQty, lot] = await desk.read.getPoolParams();
@@ -69,8 +70,12 @@ async function main() {
   console.log(`  base=${base}\n  quote=${quote}`);
 
   // ── 3. fund it, the way Arena funds a pool ────────────────────────────────
-  console.log("\n-- funding via ISpotPool.deposit (desk faucets its own collateral) --");
-  await desk.write.deposit([quote, 50n * 10n ** 18n]);
+  console.log("\n-- funding via EventTreasury (the desk knows nothing about faucets) --");
+  const treasury = await hre.viem.deployContract("EventTreasury", [quote]);
+  await treasury.write.approveDesk([desk.address, true]);
+  await treasury.write.refill([50n * 10n ** 6n]);
+  const fundHash = await treasury.write.fundDesk([desk.address, 50n * 10n ** 6n]);
+  await pub.waitForTransactionReceipt({ hash: fundHash });   // reads must not overtake the write
   const vault18 = await desk.read.getWithdrawableBalance([me.account.address, quote]);
   console.log(`  vault seen by Arena: ${formatUnits(vault18, 18)} (18dp)`);
 

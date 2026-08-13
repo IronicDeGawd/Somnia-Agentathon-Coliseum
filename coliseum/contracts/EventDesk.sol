@@ -69,16 +69,29 @@ contract EventDesk is ISpotPool {
 
     address public immutable owner;
     address public immutable arena;
-    IBinaryPool public immutable pool;
-    address public immutable collateral;
-    IBinaryMarket public immutable market;
-    IOutcomeToken6909 public immutable outcomeToken;
-    uint256 public immutable yesId;
-    uint256 public immutable oneCollateral;
+
+    // ─── The bound window ─────────────────────────────────────────────────────
+    // Mutable, because one desk serves many duels. Arena keys every balance and
+    // snapshot by duelId as well as pool address, so re-pointing a desk BETWEEN
+    // duels collides with nothing. Re-pointing it DURING one would be corruption,
+    // which is what `inUse` prevents.
+    IBinaryPool public pool;
+    address public collateral;
+    IBinaryMarket public market;
+    IOutcomeToken6909 public outcomeToken;
+    uint256 public yesId;
+    uint256 public oneCollateral;
+
+    /// @notice True while a duel holds this desk. Set by the owner at duel start
+    ///         and cleared at the end; `bind` refuses to move a desk in use.
+    bool public inUse;
 
     error NotArena();
     error NotOwner();
     error Unsupported();
+    error NotBound();
+    error DeskInUse();
+    error PositionOutstanding();
 
     /// @notice Last non-empty top-of-book seen, in the pool's own 6 decimals.
     ///         Refreshed by `poke()` and by every trade. Serves as the price
@@ -87,43 +100,77 @@ contract EventDesk is ISpotPool {
     uint256 public lastGoodBid;
     uint256 public lastGoodAsk;
 
+    event DeskBound(address indexed pool, address indexed market, uint256 yesId);
+    event DeskAcquired(bool inUse);
     event DeskFunded(uint256 amount6);
     event ProceedsSwept(uint256 amount6);
     event BookCached(uint256 bid6, uint256 ask6);
 
     modifier onlyArena() { if (msg.sender != arena) revert NotArena(); _; }
     modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
+    modifier bound()     { if (address(pool) == address(0)) revert NotBound(); _; }
 
-    constructor(address _pool, address _arena) {
+    constructor(address _arena) {
         owner = msg.sender;
         arena = _arena;
-        pool  = IBinaryPool(_pool);
+    }
+
+    // ─── Binding ──────────────────────────────────────────────────────────────
+
+    /// @notice Point this desk at a market window. Called at duel start with
+    ///         whatever window is live — a future one cannot be bound because
+    ///         dreamDEX creates each window only as the previous one expires.
+    /// @dev    Retreats from the previous window first, so collateral is never
+    ///         stranded in the vault of a pool nobody is watching any more.
+    function bind(address _pool) external onlyOwner {
+        if (inUse) revert DeskInUse();
+
+        if (address(pool) != address(0)) {
+            // An unredeemed outcome position is real value. Refusing to move is
+            // better than silently abandoning it; the owner settles it first.
+            if (outcomeToken.balanceOf(address(this), yesId) != 0) revert PositionOutstanding();
+            uint256 left = pool.getWithdrawableBalance(address(this), collateral);
+            if (left > 0) pool.withdraw(collateral, left);
+        }
 
         BinaryPoolParams memory p = IBinaryPool(_pool).getBinaryPoolParams();
+        pool          = IBinaryPool(_pool);
         collateral    = p.collateralToken;
         market        = IBinaryMarket(p.market);
         outcomeToken  = IOutcomeToken6909(p.outcomeToken);
         yesId         = p.yesId;
         oneCollateral = p.oneCollateral;
 
+        // A fresh window has its own price history; carrying the last one's
+        // cached book across would misvalue the new position.
+        lastGoodBid = 0;
+        lastGoodAsk = 0;
+
         // Selling escrows outcome tokens, which the pool pulls under an operator
         // grant on the ERC-6909 singleton. One grant covers every market and both
-        // sides, so it is done once, here.
+        // sides, but each new pool needs its own grant.
         IOutcomeToken6909(p.outcomeToken).setOperator(_pool, true);
+
+        // Whatever we retreated with goes into the new vault.
+        _sweep();
+        emit DeskBound(_pool, p.market, p.yesId);
+    }
+
+    /// @notice Claim/release the desk for a duel. `bind` is refused while held.
+    function setInUse(bool held) external onlyOwner {
+        inUse = held;
+        emit DeskAcquired(held);
     }
 
     // ─── Funding ──────────────────────────────────────────────────────────────
 
-    /// @notice Pull `amount6` of testnet collateral from the open faucet and put
-    ///         it in the pool vault, where orders draw from.
-    function fundFromFaucet(uint256 amount6) public onlyOwner {
-        _fund(amount6);
-    }
-
-    function _fund(uint256 amount6) internal {
-        ITestCollateral(collateral).faucet(amount6);
-        ITestCollateral(collateral).approve(address(pool), amount6);
-        pool.deposit(collateral, amount6);
+    /// @notice Move `amount6` of collateral from the caller into the pool vault,
+    ///         where orders draw from. The caller is an EventTreasury on testnet
+    ///         and Arena's own funding path on mainnet — the desk does not care
+    ///         which, and deliberately knows nothing about faucets.
+    function fund(uint256 amount6) external bound {
+        IERC20Like(collateral).transferFrom(msg.sender, address(this), amount6);
+        _sweep();
         emit DeskFunded(amount6);
     }
 
@@ -131,24 +178,30 @@ contract EventDesk is ISpotPool {
     ///      improvement) goes back into the vault, because Arena's affordability
     ///      check reads the vault and nothing else.
     function _sweep() internal {
-        uint256 loose = ITestCollateral(collateral).balanceOf(address(this));
+        uint256 loose = IERC20Like(collateral).balanceOf(address(this));
         if (loose == 0) return;
-        ITestCollateral(collateral).approve(address(pool), loose);
+        IERC20Like(collateral).approve(address(pool), loose);
         pool.deposit(collateral, loose);
         emit ProceedsSwept(loose);
     }
 
     // ─── ISpotPool: the face Arena sees ───────────────────────────────────────
 
-    /// @notice Arena calls this naming USDso. The desk cannot hold USDso against
-    ///         this market, so it funds the equivalent from the faucet instead
-    ///         and ignores the token argument. See the testnet note above.
-    function deposit(address, uint256 amount) external override {
-        _fund(amount / SCALE);
+    /// @notice Arena funds a spot pool by depositing into it. Here the collateral
+    ///         has already been placed by `fund`, so this only re-sweeps — it
+    ///         exists so Arena's funding path works unchanged against a desk.
+    ///         The token argument is ignored: on testnet the desk's collateral is
+    ///         tUSDC, not the USDso Arena names. See the testnet note above.
+    function deposit(address, uint256) external override bound {
+        _sweep();
     }
 
-    function withdraw(address, uint256 amount) external override onlyOwner {
-        pool.withdraw(collateral, amount / SCALE);
+    /// @notice Pull collateral back out of the vault, to the owner (the treasury
+    ///         on testnet), so an idle desk's balance is never stranded.
+    function withdraw(address, uint256 amount) external override onlyOwner bound {
+        uint256 amount6 = amount / SCALE;
+        pool.withdraw(collateral, amount6);
+        IERC20Like(collateral).transfer(owner, amount6);
     }
 
     function depositNative() external payable override { revert Unsupported(); }

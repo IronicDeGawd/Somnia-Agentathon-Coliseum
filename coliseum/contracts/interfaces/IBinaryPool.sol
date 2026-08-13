@@ -80,9 +80,19 @@ interface IOutcomeToken6909 {
     function setOperator(address spender, bool approved) external returns (bool);
 }
 
-/// @notice Testnet collateral. `faucet` is open, unlimited and unpermissioned.
-interface ITestCollateral {
-    function faucet(uint256 amount) external;
+/// @notice Minimal ERC-20 surface the desk needs from its collateral token.
+///         Deliberately free of anything testnet-specific.
+interface IERC20Like {
     function balanceOf(address account) external view returns (uint256);
     function approve(address spender, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
+/// @notice Testnet collateral only. `faucet` is open and unpermissioned but
+///         **capped at 10,000 per call** (measured on Somnia testnet
+///         2026-08-13). Mainnet collateral is USDso and has no faucet, which is
+///         why this lives behind EventTreasury and never inside EventDesk.
+interface ITestCollateral is IERC20Like {
+    function faucet(uint256 amount) external;
 }
