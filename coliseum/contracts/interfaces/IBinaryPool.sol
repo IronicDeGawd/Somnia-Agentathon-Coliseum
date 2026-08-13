@@ -73,6 +73,22 @@ interface IBinaryMarket {
     function payoutNumerators() external view returns (uint256[] memory);
 }
 
+/// @notice The registry every market is claimed through. Trading happens at the
+///         pool; claiming a settled position happens HERE, and this contract
+///         identifies a market by its `marketId` — which is published only in
+///         the MarketCreated log and is NOT returned by getBinaryPoolParams.
+///         That is why the desk must be told its marketId at bind time.
+interface IBinaryMarketsModule {
+    /// @param outcomeIdx 0 = YES/Up, 1 = NO/Down.
+    function redeem(
+        uint32  operatorId,
+        bytes32 venueId,
+        bytes32 marketId,
+        uint8   outcomeIdx,
+        uint256 amount
+    ) external;
+}
+
 /// @notice ERC-6909 singleton holding every market's YES/NO as token ids.
 interface IOutcomeToken6909 {
     function balanceOf(address owner, uint256 id) external view returns (uint256);

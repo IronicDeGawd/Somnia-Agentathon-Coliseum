@@ -60,8 +60,11 @@ async function main() {
   console.log(`         pool=${m.pool}  expires in ${Number(m.expiry) - now}s`);
 
   // ── 2. deploy the desk, pointing it at this window ────────────────────────
-  const desk = await hre.viem.deployContract("EventDesk", [me.account.address]);
-  await desk.write.bind([m.pool]);
+  // Where settled positions are claimed — a different place from the trading
+  // floor, and it identifies a market by an id only the log carries.
+  const MODULE = "0x3ecC694Cef705358864a646142ac17A90E29e388";
+  const desk = await hre.viem.deployContract("EventDesk", [me.account.address, MODULE]);
+  await desk.write.bind([m.pool, m.marketId]);
   console.log(`\ndesk deployed and bound: ${desk.address}`);
   console.log(`  collateral : ${await desk.read.collateral()}`);
 

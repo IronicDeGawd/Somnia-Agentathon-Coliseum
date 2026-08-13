@@ -92,6 +92,7 @@ contract EventDesk is ISpotPool {
     error NotBound();
     error DeskInUse();
     error PositionOutstanding();
+    error MarketIdRequired();
 
     /// @notice Last non-empty top-of-book seen, in the pool's own 6 decimals.
     ///         Refreshed by `poke()` and by every trade. Serves as the price
@@ -100,19 +101,31 @@ contract EventDesk is ISpotPool {
     uint256 public lastGoodBid;
     uint256 public lastGoodAsk;
 
-    event DeskBound(address indexed pool, address indexed market, uint256 yesId);
+    /// @notice The bound window's identity in the claims registry. Supplied at
+    ///         bind time because it is published only in the MarketCreated log
+    ///         and cannot be read back off the pool — without it a settled
+    ///         position can never be claimed.
+    bytes32 public marketId;
+
+    /// @notice Where settled positions are claimed. Distinct from the pool,
+    ///         which is only where trading happens.
+    IBinaryMarketsModule public immutable module;
+
+    event DeskBound(address indexed pool, bytes32 indexed marketId, uint256 yesId);
     event DeskAcquired(bool inUse);
     event DeskFunded(uint256 amount6);
     event ProceedsSwept(uint256 amount6);
     event BookCached(uint256 bid6, uint256 ask6);
+    event PositionRedeemed(bytes32 indexed marketId, uint256 contracts6, uint256 collected6);
 
     modifier onlyArena() { if (msg.sender != arena) revert NotArena(); _; }
     modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
     modifier bound()     { if (address(pool) == address(0)) revert NotBound(); _; }
 
-    constructor(address _arena) {
-        owner = msg.sender;
-        arena = _arena;
+    constructor(address _arena, address _module) {
+        owner  = msg.sender;
+        arena  = _arena;
+        module = IBinaryMarketsModule(_module);
     }
 
     // ─── Binding ──────────────────────────────────────────────────────────────
@@ -122,18 +135,25 @@ contract EventDesk is ISpotPool {
     ///         dreamDEX creates each window only as the previous one expires.
     /// @dev    Retreats from the previous window first, so collateral is never
     ///         stranded in the vault of a pool nobody is watching any more.
-    function bind(address _pool) external onlyOwner {
+    /// @param _marketId The window's id in the claims registry. Read from the
+    ///        MarketCreated log by the caller — the pool does not expose it, and
+    ///        without it this desk could never claim what it wins.
+    function bind(address _pool, bytes32 _marketId) external onlyOwner {
         if (inUse) revert DeskInUse();
+        if (_marketId == bytes32(0)) revert MarketIdRequired();
 
         if (address(pool) != address(0)) {
-            // An unredeemed outcome position is real value. Refusing to move is
-            // better than silently abandoning it; the owner settles it first.
+            // Try to collect anything already won before walking away. Only if
+            // value is still stuck afterwards do we refuse to move — abandoning
+            // it would bleed the treasury one duel at a time, invisibly.
+            _redeemSettled();
             if (outcomeToken.balanceOf(address(this), yesId) != 0) revert PositionOutstanding();
             uint256 left = pool.getWithdrawableBalance(address(this), collateral);
             if (left > 0) pool.withdraw(collateral, left);
         }
 
         BinaryPoolParams memory p = IBinaryPool(_pool).getBinaryPoolParams();
+        marketId      = _marketId;
         pool          = IBinaryPool(_pool);
         collateral    = p.collateralToken;
         market        = IBinaryMarket(p.market);
@@ -153,7 +173,51 @@ contract EventDesk is ISpotPool {
 
         // Whatever we retreated with goes into the new vault.
         _sweep();
-        emit DeskBound(_pool, p.market, p.yesId);
+        emit DeskBound(_pool, _marketId, p.yesId);
+    }
+
+    // ─── Claiming a settled position ──────────────────────────────────────────
+
+    /// @notice Collect the collateral behind a winning position and put it back
+    ///         in the trading pot. Nothing is pushed to us on settlement — the
+    ///         protocol holds the money until it is asked for.
+    ///
+    ///         Permissionless: it can only ever move OUR own winnings INTO our
+    ///         own vault, so there is nothing to gain by calling it and real
+    ///         value at stake if nobody does. The watcher calls it when a duel
+    ///         ends; `bind` calls it too, so a desk is never stuck behind an
+    ///         uncollected win.
+    /// @return collected6 collateral recovered, in the pool's own decimals.
+    function redeemSettled() external bound returns (uint256 collected6) {
+        return _redeemSettled();
+    }
+
+    function _redeemSettled() internal returns (uint256 collected6) {
+        uint256 held = outcomeToken.balanceOf(address(this), yesId);
+        if (held == 0) return 0;
+
+        // Claiming before the market has settled is meaningless — and the whole
+        // position may still be tradable, so do not disturb it.
+        if (_resolvedPrice18() == type(uint256).max) return 0;
+
+        uint256 before = IERC20Like(collateral).balanceOf(address(this));
+
+        // The claims registry pulls the outcome tokens, so it needs its own
+        // grant — the one given to the pool at bind time does not cover it.
+        if (!outcomeToken.isOperator(address(this), address(module))) {
+            outcomeToken.setOperator(address(module), true);
+        }
+
+        // A losing position is worth nothing and the registry may refuse it
+        // outright; either way there is nothing to collect, so failure here
+        // must not block the caller. Outcome 0 is YES/Up, the only side we hold.
+        try module.redeem(0, bytes32(0), marketId, 0, held) {
+            collected6 = IERC20Like(collateral).balanceOf(address(this)) - before;
+            _sweep();
+            emit PositionRedeemed(marketId, held, collected6);
+        } catch {
+            return 0;
+        }
     }
 
     /// @notice Claim/release the desk for a duel. `bind` is refused while held.

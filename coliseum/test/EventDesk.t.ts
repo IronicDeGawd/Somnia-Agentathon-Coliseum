@@ -8,6 +8,11 @@ const SCALE = 10n ** 12n;
 // A market expiry well in the future, in nanoseconds.
 const MARKET_EXPIRY_NS = 2_000_000_000n * 1_000_000_000n;
 
+// The window's id in the claims registry. Published only in the MarketCreated
+// log, never readable off the pool — which is why bind() must be told it.
+const MARKET_ID = "0x" + "11".repeat(32) as `0x${string}`;
+const MARKET_ID_2 = "0x" + "22".repeat(32) as `0x${string}`;
+
 async function deploy() {
   const [owner, arena, stranger] = await hre.viem.getWalletClients();
 
@@ -17,13 +22,14 @@ async function deploy() {
   const pool         = await hre.viem.deployContract("MockBinaryPool", [
     collateral.address, outcomeToken.address, market.address, MARKET_EXPIRY_NS,
   ]);
-  const desk = await hre.viem.deployContract("EventDesk", [arena.account.address]);
-  await desk.write.bind([pool.address]);
+  const modl = await hre.viem.deployContract("MockMarketsModule", [collateral.address, outcomeToken.address]);
+  const desk = await hre.viem.deployContract("EventDesk", [arena.account.address, modl.address]);
+  await desk.write.bind([pool.address, MARKET_ID]);
 
   const treasury = await hre.viem.deployContract("EventTreasury", [collateral.address]);
   await treasury.write.approveDesk([desk.address, true]);
 
-  return { owner, arena, stranger, collateral, outcomeToken, market, pool, desk, treasury };
+  return { owner, arena, stranger, collateral, outcomeToken, market, pool, desk, treasury, modl };
 }
 
 /** Place an order through the desk as Arena would: 18-dp price/quantity, +1h expiry. */
@@ -73,7 +79,7 @@ describe("EventDesk", () => {
       const ctx = await deploy();
       const { pool2 } = await secondWindow(ctx);
       await ctx.desk.write.setInUse([true]);
-      await expect(ctx.desk.write.bind([pool2.address])).to.be.rejected;
+      await expect(ctx.desk.write.bind([pool2.address, MARKET_ID_2])).to.be.rejected;
     });
 
     it("moves once the duel releases it", async () => {
@@ -81,7 +87,7 @@ describe("EventDesk", () => {
       const { pool2, market2 } = await secondWindow(ctx);
       await ctx.desk.write.setInUse([true]);
       await ctx.desk.write.setInUse([false]);
-      await ctx.desk.write.bind([pool2.address]);
+      await ctx.desk.write.bind([pool2.address, MARKET_ID_2]);
 
       expect(getAddress(await ctx.desk.read.pool())).to.equal(getAddress(pool2.address));
       expect(getAddress(await ctx.desk.read.market())).to.equal(getAddress(market2.address));
@@ -93,7 +99,7 @@ describe("EventDesk", () => {
       await ctx.treasury.write.fundDesk([ctx.desk.address, 50n * 10n ** 6n]);
       const { pool2 } = await secondWindow(ctx);
 
-      await ctx.desk.write.bind([pool2.address]);
+      await ctx.desk.write.bind([pool2.address, MARKET_ID_2]);
 
       expect(await ctx.pool.read.vault([ctx.desk.address])).to.equal(0n);
       expect(await pool2.read.vault([ctx.desk.address])).to.equal(50n * 10n ** 6n);
@@ -107,7 +113,7 @@ describe("EventDesk", () => {
       await ctx.outcomeToken.write.mint([ctx.desk.address, yesId, 1n]);
       const { pool2 } = await secondWindow(ctx);
 
-      await expect(ctx.desk.write.bind([pool2.address])).to.be.rejected;
+      await expect(ctx.desk.write.bind([pool2.address, MARKET_ID_2])).to.be.rejected;
     });
 
     it("forgets the previous window's cached price", async () => {
@@ -119,22 +125,126 @@ describe("EventDesk", () => {
       expect(await ctx.desk.read.lastGoodBid()).to.equal(173_000n);
 
       const { pool2 } = await secondWindow(ctx);
-      await ctx.desk.write.bind([pool2.address]);
+      await ctx.desk.write.bind([pool2.address, MARKET_ID_2]);
       expect(await ctx.desk.read.lastGoodBid()).to.equal(0n);
     });
 
     it("grants the new pool its own operator rights", async () => {
       const ctx = await deploy();
       const { pool2 } = await secondWindow(ctx);
-      await ctx.desk.write.bind([pool2.address]);
+      await ctx.desk.write.bind([pool2.address, MARKET_ID_2]);
       expect(await ctx.outcomeToken.read.isOperator([ctx.desk.address, pool2.address])).to.equal(true);
     });
 
     it("only the owner may bind or claim", async () => {
       const ctx = await deploy();
       const { pool2 } = await secondWindow(ctx);
-      await expect(ctx.desk.write.bind([pool2.address], { account: ctx.stranger.account })).to.be.rejected;
+      await expect(ctx.desk.write.bind([pool2.address, MARKET_ID_2], { account: ctx.stranger.account })).to.be.rejected;
       await expect(ctx.desk.write.setInUse([true], { account: ctx.stranger.account })).to.be.rejected;
+    });
+  });
+
+  describe("claiming a settled position", () => {
+    // Nothing is pushed to us when a market settles — the protocol holds the
+    // money until it is asked for, and the request goes to a different place
+    // than trading does, keyed by an id the pool never exposes.
+    async function withWinningPosition() {
+      const ctx = await deploy();
+      const yesId = await ctx.desk.read.yesId();
+      await ctx.outcomeToken.write.mint([ctx.desk.address, yesId, 5n * 10n ** 6n]);   // 5 contracts
+      await ctx.market.write.resolve([1n, 0n]);                                       // YES wins
+      await ctx.modl.write.setPayout([MARKET_ID, yesId, 10n ** 6n]);                  // 1.0 each
+      return ctx;
+    }
+
+    it("collects the winnings and puts them back in the trading pot", async () => {
+      const ctx = await withWinningPosition();
+      const vaultBefore = await ctx.pool.read.vault([ctx.desk.address]);
+
+      await ctx.desk.write.redeemSettled();
+
+      expect(await ctx.desk.read.yesBalance18()).to.equal(0n);
+      expect(await ctx.pool.read.vault([ctx.desk.address])).to.equal(vaultBefore + 5n * 10n ** 6n);
+      expect(await ctx.collateral.read.balanceOf([ctx.desk.address])).to.equal(0n);   // swept
+    });
+
+    it("grants the claims registry its own permission, which the pool's does not cover", async () => {
+      const ctx = await withWinningPosition();
+      expect(await ctx.outcomeToken.read.isOperator([ctx.desk.address, ctx.modl.address])).to.equal(false);
+      await ctx.desk.write.redeemSettled();
+      expect(await ctx.outcomeToken.read.isOperator([ctx.desk.address, ctx.modl.address])).to.equal(true);
+    });
+
+    it("leaves a still-trading position alone", async () => {
+      // Claiming early is meaningless and the position may still be sellable.
+      const ctx = await deploy();
+      const yesId = await ctx.desk.read.yesId();
+      await ctx.outcomeToken.write.mint([ctx.desk.address, yesId, 10n ** 6n]);
+      await ctx.modl.write.setPayout([MARKET_ID, yesId, 10n ** 6n]);
+
+      await ctx.desk.write.redeemSettled();
+      expect(await ctx.desk.read.yesBalance18()).to.equal(10n ** 18n);                // untouched
+    });
+
+    it("does nothing when there is no position", async () => {
+      const ctx = await deploy();
+      await ctx.market.write.resolve([1n, 0n]);
+      await ctx.desk.write.redeemSettled();                                            // must not revert
+    });
+
+    it("burns a losing position without collecting anything", async () => {
+      const ctx = await deploy();
+      const yesId = await ctx.desk.read.yesId();
+      await ctx.outcomeToken.write.mint([ctx.desk.address, yesId, 3n * 10n ** 6n]);
+      await ctx.market.write.resolve([0n, 1n]);                                        // YES loses
+      await ctx.modl.write.setPayout([MARKET_ID, yesId, 0n]);
+
+      const vaultBefore = await ctx.pool.read.vault([ctx.desk.address]);
+      await ctx.desk.write.redeemSettled();
+      expect(await ctx.desk.read.yesBalance18()).to.equal(0n);
+      expect(await ctx.pool.read.vault([ctx.desk.address])).to.equal(vaultBefore);
+    });
+
+    it("survives a registry that refuses the claim", async () => {
+      // An unknown or already-claimed market must not brick the desk.
+      const ctx = await deploy();
+      const yesId = await ctx.desk.read.yesId();
+      await ctx.outcomeToken.write.mint([ctx.desk.address, yesId, 10n ** 6n]);
+      await ctx.market.write.resolve([1n, 0n]);
+      // No setPayout — the registry does not know this market.
+      await ctx.desk.write.redeemSettled();                                            // must not revert
+      expect(await ctx.desk.read.yesBalance18()).to.equal(10n ** 18n);
+    });
+
+    it("is permissionless, because it can only move our own money inward", async () => {
+      const ctx = await withWinningPosition();
+      await ctx.desk.write.redeemSettled({ account: ctx.stranger.account });
+      expect(await ctx.desk.read.yesBalance18()).to.equal(0n);
+    });
+
+    it("frees a desk that would otherwise be stuck behind an uncollected win", async () => {
+      // This is the capacity leak: without collection the desk refuses to move
+      // to a new window, and with six desks you lose a slot at a time.
+      const ctx = await withWinningPosition();
+      const market2 = await hre.viem.deployContract("MockBinaryMarket");
+      const pool2 = await hre.viem.deployContract("MockBinaryPool", [
+        ctx.collateral.address, ctx.outcomeToken.address, market2.address, MARKET_EXPIRY_NS,
+      ]);
+
+      // bind collects first, so the move succeeds instead of reverting.
+      await ctx.desk.write.bind([pool2.address, MARKET_ID_2]);
+      expect(getAddress(await ctx.desk.read.pool())).to.equal(getAddress(pool2.address));
+      expect(await pool2.read.vault([ctx.desk.address])).to.equal(5n * 10n ** 6n);   // winnings came along
+    });
+
+    it("refuses to bind without a market id, which would make claiming impossible", async () => {
+      const ctx = await deploy();
+      const market2 = await hre.viem.deployContract("MockBinaryMarket");
+      const pool2 = await hre.viem.deployContract("MockBinaryPool", [
+        ctx.collateral.address, ctx.outcomeToken.address, market2.address, MARKET_EXPIRY_NS,
+      ]);
+      const ZERO32 = ("0x" + "00".repeat(32)) as `0x${string}`;
+      await expect(ctx.desk.write.bind([pool2.address, ZERO32])).to.be.rejected;
     });
   });
 
@@ -149,7 +259,7 @@ describe("EventDesk", () => {
 
     it("will not fund a desk it has not approved", async () => {
       const { treasury, arena } = await deploy();
-      const rogue = await hre.viem.deployContract("EventDesk", [arena.account.address]);
+      const rogue = await hre.viem.deployContract("EventDesk", [arena.account.address, treasury.address]);
       await treasury.write.refill([10n ** 6n]);
       await expect(treasury.write.fundDesk([rogue.address, 10n ** 6n])).to.be.rejected;
     });
@@ -313,8 +423,8 @@ describe("EventDesk", () => {
       const nearPool = await hre.viem.deployContract("MockBinaryPool", [
         ctx.collateral.address, ctx.outcomeToken.address, ctx.market.address, shortExpiry,
       ]);
-      const nearDesk = await hre.viem.deployContract("EventDesk", [ctx.arena.account.address]);
-      await nearDesk.write.bind([nearPool.address]);
+      const nearDesk = await hre.viem.deployContract("EventDesk", [ctx.arena.account.address, ctx.modl.address]);
+      await nearDesk.write.bind([nearPool.address, MARKET_ID]);
 
       const arenaExpiry = BigInt(Math.floor(Date.now() / 1000) + 3600) * 1_000_000_000n;
       expect(arenaExpiry).to.be.greaterThan(shortExpiry);              // Arena's value would revert

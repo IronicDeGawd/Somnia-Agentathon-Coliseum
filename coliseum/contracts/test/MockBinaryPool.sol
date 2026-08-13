@@ -138,6 +138,37 @@ contract MockBinaryMarket {
     function payoutNumerators() external view returns (uint256[] memory) { return _payouts; }
 }
 
+/// @notice Test double for the claims registry. Deliberately keyed by marketId,
+///         which the pool never exposes — the whole reason a desk must be told
+///         its marketId at bind time.
+contract MockMarketsModule {
+    address public collateral;
+    address public outcomeToken;
+    mapping(bytes32 => uint256) public payoutPerContract;   // 0 = losing side
+    mapping(bytes32 => uint256) public yesIdOf;
+    mapping(bytes32 => bool) public known;
+
+    constructor(address _collateral, address _outcomeToken) {
+        collateral = _collateral;
+        outcomeToken = _outcomeToken;
+    }
+
+    function setPayout(bytes32 marketId, uint256 yesId, uint256 perContract) external {
+        payoutPerContract[marketId] = perContract;
+        yesIdOf[marketId] = yesId;
+        known[marketId] = true;
+    }
+
+    function redeem(uint32, bytes32, bytes32 marketId, uint8 outcomeIdx, uint256 amount) external {
+        require(known[marketId], "unknown market");
+        require(outcomeIdx == 0, "only YES held");
+        // The registry pulls the outcome tokens under its operator grant.
+        MockOutcomeToken(outcomeToken).burnFrom(msg.sender, yesIdOf[marketId], amount);
+        uint256 owed = (amount * payoutPerContract[marketId]) / 1e6;
+        if (owed > 0) IMintableCollateral(collateral).mint(msg.sender, owed);
+    }
+}
+
 /// @notice Test double for the ERC-6909 outcome-token singleton.
 contract MockOutcomeToken {
     mapping(address => mapping(uint256 => uint256)) public balanceOf;
@@ -148,6 +179,12 @@ contract MockOutcomeToken {
         return true;
     }
     function mint(address to, uint256 id, uint256 amount) external { balanceOf[to][id] += amount; }
+
+    /// @dev Used by the claims registry, which must hold an operator grant.
+    function burnFrom(address owner_, uint256 id, uint256 amount) external {
+        require(isOperator[owner_][msg.sender], "not operator");
+        balanceOf[owner_][id] -= amount;
+    }
 }
 
 /// @notice tUSDC stand-in with the open faucet the real testnet token has.
