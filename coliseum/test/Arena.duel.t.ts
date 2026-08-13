@@ -524,4 +524,66 @@ describe("Arena — Duel lifecycle", function () {
     expect(parseInt(resolved!.topics[2]!, 16)).to.equal(FIGHTER_A, "A traded into a lead and should win");
     expect(finRc.logs.find((l) => l.topics[0] === DUEL_DRAWN_SIG), "not a draw").to.be.undefined;
   });
+
+  // finalizeDuel reads the live book, so whatever it prints at that one block decides
+  // the duel. Neither fighter chose that moment, so a bad print must not decide it.
+  // Both tests below put A in base tokens and B in cash at an unchanged price of 100,
+  // which is level — then break the book and require that it stays level.
+
+  async function duelWithAHoldingBase() {
+    const ctx = await deploy(true);
+    const { arena, mockPlatform, poolSomi } = ctx;
+    const publicClient = await hre.viem.getPublicClient();
+    await arena.write.fundPools([parseEther("1000")]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+    await mineBlock();
+
+    const tx = await arena.write.turn([duelId]);
+    const rc = await publicClient.getTransactionReceipt({ hash: tx });
+    const reqIds = rc.logs.filter((l) => l.topics.length === 4).map((l) => BigInt(l.topics[3]!));
+    await mineBlock();
+    await mockPlatform.write.dispatchSuccessString([arena.address, reqIds[0], HANDLE_SELECTOR, "BuySOMI"]);
+    await mockPlatform.write.dispatchSuccessString([arena.address, reqIds[1], HANDLE_SELECTOR, "Hold"]);
+    for (let i = 1; i < 3; i++) await runOneTurn(arena, mockPlatform, reqIds[1] + BigInt(i * 2 - 1));
+
+    return { arena, poolSomi, duelId, publicClient };
+  }
+
+  it("a dark book at finalize does not hand the duel to the fighter holding cash", async function () {
+    const { arena, poolSomi, duelId, publicClient } = await duelWithAHoldingBase();
+
+    // Both sides of the book vanish. Without a fallback A's SOMI is valued at zero
+    // and B wins on cash alone, having done nothing but hold.
+    await poolSomi.write.setBookLevel([true, 0n, 0n]);
+    await poolSomi.write.setBookLevel([false, 0n, 0n]);
+
+    const finTx = await arena.write.finalizeDuel([duelId]);
+    const finRc = await publicClient.getTransactionReceipt({ hash: finTx });
+    const resolved = finRc.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
+    expect(resolved, "duel must still resolve").to.not.be.undefined;
+    expect(parseInt(resolved!.topics[2]!, 16)).to.not.equal(
+      FIGHTER_B,
+      "B must not win purely because the book went dark at the finalize block",
+    );
+  });
+
+  it("a single stale order at finalize does not hand the duel to the fighter holding base", async function () {
+    const { arena, poolSomi, duelId, publicClient } = await duelWithAHoldingBase();
+
+    // The bid side empties and one stale ask sits 100x above the market — exactly the
+    // shape of the live SOMI book, which carries an ask at 5.7x mid. Unclamped, that
+    // print becomes the mark and A's holding is revalued 100x.
+    await poolSomi.write.setBookLevel([true, 0n, 0n]);
+    await poolSomi.write.setBookLevel([false, 10_000n * 10n ** 18n, 10n ** 18n]);
+
+    const finTx = await arena.write.finalizeDuel([duelId]);
+    const finRc = await publicClient.getTransactionReceipt({ hash: finTx });
+    const resolved = finRc.logs.find((l) => l.topics[0] === DUEL_RESOLVED_SIG);
+    expect(resolved, "duel must still resolve").to.not.be.undefined;
+    expect(parseInt(resolved!.topics[2]!, 16)).to.not.equal(
+      FIGHTER_A,
+      "A must not win on a single stale order 100x away from the market",
+    );
+  });
 });
