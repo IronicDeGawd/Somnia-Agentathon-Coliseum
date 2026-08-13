@@ -69,6 +69,53 @@ contract Arena is ArenaVault {
         return this.onEvent.selector;
     }
 
+    // ─── Routing ──────────────────────────────────────────────────────────────
+
+    /// @notice Point a set of functions at a part. Rewiring is only allowed while
+    ///         nothing is at stake, so the rules of a duel already underway cannot
+    ///         change and escrowed deposits cannot be reached by new code.
+    /// @param  part address(0) unroutes the selectors, which then revert.
+    function setPart(bytes4[] calldata selectors, address part) external onlyOwner {
+        if (activeDuelIds.length != 0 || escrowedPot != 0) revert ArenaTypes.ArenaNotEmpty();
+        // A delegatecall to an address holding no code succeeds and returns
+        // nothing, so an unchecked typo here would answer every routed call with
+        // empty data instead of failing loudly.
+        if (part != address(0) && part.code.length == 0) revert ArenaTypes.PartHasNoCode(part);
+        for (uint256 i = 0; i < selectors.length; i++) {
+            partOf[selectors[i]] = part;
+            emit ArenaTypes.PartSet(selectors[i], part);
+        }
+    }
+
+    /// @notice Hand a call this contract does not implement to the part that claims
+    ///         it. The part's code runs against THIS contract's storage and balance,
+    ///         so from the outside there is still one Arena at one address.
+    ///
+    ///         An unclaimed selector reverts. Falling through quietly would let a
+    ///         caller believe a duel started, or a deposit landed, when neither
+    ///         happened.
+    fallback() external payable {
+        address part = partOf[msg.sig];
+        if (part == address(0)) revert ArenaTypes.NoPart(msg.sig);
+        // Scratch space is taken from above the free-memory pointer rather than
+        // from offset 0, purely so this block can be declared memory-safe. The
+        // compiler's IR pipeline switches off a whole-contract optimisation when
+        // it sees assembly that might scribble on Solidity's own memory, and
+        // losing it costs about 2.6 KB across the rest of Arena — far more than
+        // this function contains. Nothing is written back to the pointer because
+        // every path ends in return or revert.
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            calldatacopy(ptr, 0, calldatasize())
+            let ok := delegatecall(gas(), part, ptr, calldatasize(), 0, 0)
+            let len := returndatasize()
+            returndatacopy(ptr, 0, len)
+            switch ok
+            case 0 { revert(ptr, len) }
+            default { return(ptr, len) }
+        }
+    }
+
     // ─── Reactivity callback ─────────────────────────────────────────────────
 
     function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
@@ -669,42 +716,6 @@ contract Arena is ArenaVault {
         activeDuelIds.pop();
         _activeIndex[duelId] = 0;
     }
-
-    /// @notice Every running duel id.
-    function getActiveDuelIds() external view returns (uint256[] memory) {
-        return activeDuelIds;
-    }
-
-    /// @notice True when another duel can be started. Matchmaker gates on this.
-    function hasCapacity() external view returns (bool) {
-        return activeDuelIds.length < maxActiveDuels;
-    }
-
-    /// @notice Deprecated single-duel view, kept so older consumers still read
-    ///         something sane. Returns the first running duel, or 0 if none.
-    ///         Use getActiveDuelIds() — this cannot see the others.
-    function activeDuelId() external view returns (uint256) {
-        return activeDuelIds.length > 0 ? activeDuelIds[0] : 0;
-    }
-
-    /// @notice Running duels whose turn interval has elapsed and which still have
-    ///         moves outstanding. The keeper calls this once per tick and then
-    ///         turn(id) on each, instead of polling every duel separately.
-    function duelsReadyForTurn() external view returns (uint256[] memory ready) {
-        uint256[] memory ids = activeDuelIds;
-        uint256 n = 0;
-        uint256[] memory buf = new uint256[](ids.length);
-        for (uint256 i = 0; i < ids.length; i++) {
-            ArenaTypes.Duel storage d = duels[ids[i]];
-            if (d.status != ArenaTypes.DuelStatus.Active) continue;
-            if (block.number < d.lastTurnBlock + TURN_INTERVAL_BLOCKS) continue;
-            if (d.completedCallbacks >= d.turns * 2) continue;
-            buf[n++] = ids[i];
-        }
-        ready = new uint256[](n);
-        for (uint256 i = 0; i < n; i++) ready[i] = buf[i];
-    }
-
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     function _poolBit(address pool) internal view returns (uint8) {
@@ -713,22 +724,6 @@ contract Arena is ArenaVault {
         if (pool == POOL_SOMI || pool == SIM_POOL_SOMI) return ArenaTypes.POOL_BIT_SOMI;
         return 0;
     }
-
-    /// @notice Resolve the active pool set for a duel: the real pools, or the
-    ///         simulated mock set when the duel was created with simulated == true.
-    ///         Returned order is [WETH, WBTC, SOMI] to match the bit ordering.
-    /// @notice The pool set a duel is bound to. Kept as a function rather than a
-    ///         bare mapping read so the three-slot load is emitted once instead of
-    ///         at all seven call sites — Arena has no room for the inlined copies.
-    function _duelPools(uint256 duelId) internal view returns (address[3] memory) {
-        return duelPools[duelId];
-    }
-
-    function _pools(bool simulated) internal view returns (address[3] memory) {
-        if (simulated) return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
-        return [POOL_WETH, POOL_WBTC, POOL_SOMI];
-    }
-
     /// @dev Single OrderRejected emit site. Folding the ~10 rejection paths through
     ///      one helper keeps the event ABI encoded once in bytecode instead of at
     ///      every call site (meaningful contract-size saving).
@@ -738,41 +733,6 @@ contract Arena is ArenaVault {
     ) internal {
         emit ArenaTypes.OrderRejected(pool, fighterId, duelId, isBid, price, quantity, orderType, reason);
     }
-
-    /// @notice Returns the minimum USDso deposit (excluding platform fee) for a turn
-    ///         tier on the REAL pool set. Kept for backward compatibility.
-    function minDepositFor(uint16 turns) external view returns (uint256) {
-        return ArenaUtils.minDepositFor(turns, POOL_WETH, POOL_WBTC, POOL_SOMI, poolMeta);
-    }
-
-    /// @notice Minimum USDso deposit for a turn tier on the chosen market (real or
-    ///         simulated). Matchmaker uses this so simulated queues price correctly.
-    function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256) {
-        address[3] memory mp = _pools(simulated);
-        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
-    }
-
-    /// @notice The exact prompt and allowed action list a fighter would be asked
-    ///         with right now, without spending an inference.
-    ///
-    ///         Exposed because the central guarantee of the prompt layer — that no
-    ///         digit reaches the model, so nothing can be extracted and clamped into
-    ///         a trade the fighter cannot make — is otherwise unobservable until a
-    ///         duel is already running and the STT is already spent.
-    function previewTurnPrompt(uint256 duelId, uint8 fighterId)
-        external view returns (string memory prompt, string[] memory allowed)
-    {
-        address[3] memory mp = _duelPools(duelId);
-        prompt = ArenaUtils.buildMarketSummary(
-            duelId, fighterId, duels[duelId],
-            mp[0], mp[1], mp[2],
-            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots
-        );
-        allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
-            duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], fighterBalances, poolMeta
-        ));
-    }
-
     // ─── Debug / test helpers (testnet only) ─────────────────────────────────
 
     function testRequestFighterMove(uint256 duelId, uint8 fighterId) external onlyOwner {

@@ -2,6 +2,7 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { parseEther, getAddress, maxUint256, keccak256, toBytes } from "viem";
 
+import { deployArenaWithParts } from "./helpers/arena";
 const HANDLE_SELECTOR = "0xc4e34fdd" as `0x${string}`;
 
 // keccak256("DuelResolved(uint256,uint8,uint256,uint256)")
@@ -60,10 +61,8 @@ async function deploy(tradableSomi = false) {
     await poolSomi.write.setBookLevel([true, 100n * ONE, ONE]);
   }
 
-  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
-  // in a linked library, so ArenaUtils has to be deployed alongside it.
-  const arenaUtils = await hre.viem.deployContract("ArenaUtils");
-  const arena = await hre.viem.deployContract("Arena", [
+  // Arena is a router plus parts; the helper deploys and wires them.
+  const { arena } = await deployArenaWithParts(hre, [
     registry.address,
     usdso.address,
     poolWeth.address,
@@ -72,7 +71,7 @@ async function deploy(tradableSomi = false) {
     mockPlatform.address,
     1n,
     [18, 18, 18],
-  ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
+  ], { value: parseEther("33") });
 
   // Fund arena with enough STT for 30 requests (each = 0.03 + 0.07*3 = 0.24)
   await hre.network.provider.send("hardhat_setBalance", [

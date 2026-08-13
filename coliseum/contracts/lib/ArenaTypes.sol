@@ -113,6 +113,19 @@ library ArenaTypes {
     error AlreadyRecovered();
     error CannotSweepUSDso();
 
+    /// @notice A call arrived for a function no part has claimed. Reverting is
+    ///         deliberate: an unrouted selector must never look like a success.
+    error NoPart(bytes4 selector);
+    /// @notice Parts may only be rewired while nothing is at stake — no duel
+    ///         running and no deposit escrowed — so the rules of a fight already
+    ///         underway cannot be changed and money in flight cannot be touched.
+    error ArenaNotEmpty();
+    /// @notice Refuses a part address with no code. A delegatecall to an address
+    ///         holding no code SUCCEEDS and returns nothing, so wiring a selector
+    ///         to a plain wallet by mistake would silently answer every call with
+    ///         empty data instead of failing.
+    error PartHasNoCode(address part);
+
     // ─── Events ──────────────────────────────────────────────────────────────
 
     event DuelStarted(
@@ -181,4 +194,8 @@ library ArenaTypes {
     event MarkPriceSnapshot(uint256 indexed duelId, address indexed pool, uint256 markPrice, uint16 turnNum);
     /// @notice The owner changed how many duels may run at once.
     event MaxActiveDuelsSet(uint16 maxActiveDuels);
+
+    /// @notice A function was pointed at a part. Emitted once per selector so the
+    ///         full routing table can be rebuilt from logs.
+    event PartSet(bytes4 indexed selector, address indexed part);
 }

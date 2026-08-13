@@ -2,6 +2,7 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { parseEther, maxUint256 } from "viem";
 
+import { deployArenaWithParts } from "./helpers/arena";
 // duels() tuple field indices — Solidity auto-getter for struct-in-mapping skips
 // fixed-size arrays (lastAction uint8[2]), so the returned tuple is:
 // 0 fighterA, 1 fighterB, 2 creator, 3 startBlock, 4 lastTurnBlock,
@@ -36,10 +37,8 @@ async function deploy() {
   const poolSomi     = await hre.viem.deployContract("MockSpotPool");
   const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
-  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
-  // in a linked library, so ArenaUtils has to be deployed alongside it.
-  const arenaUtils = await hre.viem.deployContract("ArenaUtils");
-  const arena = await hre.viem.deployContract("Arena", [
+  // Arena is a router plus parts; the helper deploys and wires them.
+  const { arena } = await deployArenaWithParts(hre, [
     registry.address,
     usdso.address,
     poolWeth.address,
@@ -48,7 +47,7 @@ async function deploy() {
     mockPlatform.address,
     1n,
     [18, 18, 18],
-  ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
+  ], { value: parseEther("33") });
 
   await hre.network.provider.send("hardhat_setBalance", [
     arena.address,

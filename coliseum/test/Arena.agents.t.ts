@@ -2,6 +2,7 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { parseEther, encodeFunctionData } from "viem";
 
+import { deployArenaWithParts } from "./helpers/arena";
 // ResponseStatus enum from ISomniaAgents.sol
 const RS = {
   None: 0,
@@ -46,10 +47,8 @@ describe("Arena — Somnia Agents integration", function () {
     const poolSomi = await hre.viem.deployContract("MockSpotPool");
     const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
-    // Arena exceeds the 24576-byte contract limit unless the prompt builders
-    // live in a linked library, so ArenaUtils has to be deployed alongside it.
-    const arenaUtils = await hre.viem.deployContract("ArenaUtils");
-    const arena = await hre.viem.deployContract("Arena", [
+    // Arena is a router plus parts; the helper deploys and wires them.
+    const { arena } = await deployArenaWithParts(hre, [
       registry.address,
       usdso.address,
       poolWeth.address,
@@ -58,7 +57,7 @@ describe("Arena — Somnia Agents integration", function () {
       mockPlatform.address,
       1n,
       [18, 18, 18],
-    ], { value: parseEther("33"), libraries: { ArenaUtils: arenaUtils.address } });
+    ], { value: parseEther("33") });
 
     // Fund arena with enough STT for agent deposits (floor 0.03 + topup 0.21 = 0.24; 33 already set via constructor)
     await hre.network.provider.send("hardhat_setBalance", [

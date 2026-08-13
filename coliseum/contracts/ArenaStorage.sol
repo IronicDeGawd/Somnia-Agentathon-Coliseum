@@ -148,6 +148,12 @@ abstract contract ArenaStorage {
     ///         outcome here (best-effort). Configured post-deploy via setDuelHistory.
     address public duelHistory;
 
+    /// @notice Which part answers each function. The router looks a call's
+    ///         selector up here and hands the work to that part, which runs
+    ///         against this contract's storage. Public so the wiring is auditable
+    ///         from outside without replaying logs.
+    mapping(bytes4 => address) public partOf;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {
@@ -159,5 +165,21 @@ abstract contract ArenaStorage {
     ///         Matchmaker before it quotes a player, so it stays reachable directly.
     function platformFee(uint16 turns) public pure returns (uint256) {
         return PLATFORM_FEE_BASE + PLATFORM_FEE_PER_TURN * uint256(turns);
+    }
+
+    /// @notice The pool set a duel is bound to. Kept as a function rather than a
+    ///         bare mapping read so the three-slot load is emitted once instead of
+    ///         at every call site — Arena has no room for the inlined copies.
+    function _duelPools(uint256 duelId) internal view returns (address[3] memory) {
+        return duelPools[duelId];
+    }
+
+    /// @notice Resolve a pool set from the real/simulated flag alone. Only correct
+    ///         where no duel exists yet — quoting a deposit before one is created.
+    ///         Anything holding a duel must use _duelPools instead.
+    ///         Returned order is [WETH, WBTC, SOMI] to match the bit ordering.
+    function _pools(bool simulated) internal view returns (address[3] memory) {
+        if (simulated) return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
+        return [POOL_WETH, POOL_WBTC, POOL_SOMI];
     }
 }
