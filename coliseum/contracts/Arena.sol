@@ -76,6 +76,15 @@ contract Arena is ArenaVault {
     ///         so one duel can never drain another's deposit or the owner seed.
     mapping(uint256 => uint256) public duelPot;
 
+    /// @notice The three pools a duel trades on, recorded once at startDuel.
+    ///         Previously derived from duel.simulated against two hard-coded sets,
+    ///         which cannot express a pool set that only exists for one duel (an
+    ///         event window opens at a fresh address every few minutes). Recording
+    ///         per duel also closes audit item M1: a pool's cached trading rules can
+    ///         be refreshed without a redeploy, and running duels keep the set they
+    ///         started on. Order is [WETH, WBTC, SOMI] to match the bit ordering.
+    mapping(uint256 => address[3]) private duelPools;
+
     // poolAddress → duelId → fighterId → balance
     mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) public fighterBalances;
 
@@ -182,7 +191,7 @@ contract Arena is ArenaVault {
     }
 
     function _snapshotMarkPrices(uint256 duelId, ArenaTypes.Duel storage duel) internal {
-        address[3] memory pools = _pools(duel.simulated);
+        address[3] memory pools = _duelPools(duelId);
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
         uint16 turnNum = duel.completedCallbacks / 2 + 1;
         for (uint256 i = 0; i < 3; i++) {
@@ -274,6 +283,10 @@ contract Arena is ArenaVault {
         activeDuelIds.push(duelId);
         _activeIndex[duelId] = activeDuelIds.length; // index+1; 0 means "not active"
 
+        // Freeze this duel's pool set. Every later read goes through here, so a
+        // duel keeps the markets it started on even if the registered sets change.
+        duelPools[duelId] = mPools;
+
         // Escrow the real pot in this contract's USDso balance. recoverFunds pays
         // the creator from here (capped by duelPot) — never from the shared seed
         // vault — so duels can't drain each other or the owner's liquidity.
@@ -315,7 +328,7 @@ contract Arena is ArenaVault {
     function _resolveDuel(uint256 duelId, ArenaTypes.Duel storage duel, bool useSnapshot) internal {
         duel.status = ArenaTypes.DuelStatus.Finalizing;
 
-        address[3] memory pools = _pools(duel.simulated);
+        address[3] memory pools = _duelPools(duelId);
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
         uint256 valueA = 0;
         uint256 valueB = 0;
@@ -406,7 +419,7 @@ contract Arena is ArenaVault {
         if (duel.creator != msg.sender) revert ArenaTypes.NotDuelCreator();
         if (duel.fundsRecovered) revert ArenaTypes.AlreadyRecovered();
 
-        address[3] memory pools = _pools(duel.simulated);
+        address[3] memory pools = _duelPools(duelId);
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
 
         // Per-duel entitlement = sum of both fighters' tracked quote balances across
@@ -446,7 +459,7 @@ contract Arena is ArenaVault {
     ///      failure from atomically reverting the whole turn and stalling the duel.
     function _requestFighterMove(uint256 duelId, uint8 fighterId) internal {
         IFighterRegistry.Fighter memory f = registry.getFighter(fighterId);
-        address[3] memory mPools = _pools(duels[duelId].simulated);
+        address[3] memory mPools = _duelPools(duelId);
         string memory marketSummary = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2],
@@ -526,7 +539,7 @@ contract Arena is ArenaVault {
         // Re-derive what this fighter can execute. Only its own trades move its own
         // balances, and those happen here, so the set is the same one the request was
         // built from — recomputing simply avoids trusting a stale copy.
-        address[3] memory cPools = _pools(duels[pt.duelId].simulated);
+        address[3] memory cPools = _duelPools(pt.duelId);
         uint8[] memory legal = ArenaUtils.legalActions(
             pt.duelId, pt.fighterId, duels[pt.duelId],
             cPools[0], cPools[1], cPools[2],
@@ -583,10 +596,10 @@ contract Arena is ArenaVault {
         address pool;
         bool isBid;
 
-        // Resolve the action to a pool in this duel's set (real or simulated).
+        // Resolve the action to a pool in this duel's own recorded set.
         // mp[0]=WETH, mp[1]=WBTC, mp[2]=SOMI.
         ArenaTypes.Duel storage duel = duels[duelId];
-        address[3] memory mp = _pools(duel.simulated);
+        address[3] memory mp = _duelPools(duelId);
 
         if      (action == ArenaTypes.FighterAction.BuyWBTC)  { pool = mp[1]; isBid = true;  }
         else if (action == ArenaTypes.FighterAction.SellWBTC) { pool = mp[1]; isBid = false; }
@@ -773,6 +786,13 @@ contract Arena is ArenaVault {
     /// @notice Resolve the active pool set for a duel: the real pools, or the
     ///         simulated mock set when the duel was created with simulated == true.
     ///         Returned order is [WETH, WBTC, SOMI] to match the bit ordering.
+    /// @notice The pool set a duel is bound to. Kept as a function rather than a
+    ///         bare mapping read so the three-slot load is emitted once instead of
+    ///         at all seven call sites — Arena has no room for the inlined copies.
+    function _duelPools(uint256 duelId) internal view returns (address[3] memory) {
+        return duelPools[duelId];
+    }
+
     function _pools(bool simulated) internal view returns (address[3] memory) {
         if (simulated) return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
         return [POOL_WETH, POOL_WBTC, POOL_SOMI];
@@ -811,7 +831,7 @@ contract Arena is ArenaVault {
     function previewTurnPrompt(uint256 duelId, uint8 fighterId)
         external view returns (string memory prompt, string[] memory allowed)
     {
-        address[3] memory mp = _pools(duels[duelId].simulated);
+        address[3] memory mp = _duelPools(duelId);
         prompt = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
             mp[0], mp[1], mp[2],
