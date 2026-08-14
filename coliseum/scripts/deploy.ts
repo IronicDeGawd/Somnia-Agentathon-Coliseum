@@ -368,6 +368,12 @@ async function main() {
         address: arena.address,
         subscriptionId: subId.toString(),
         turnIntervalBlocks: turnIntervalBlocks.toString(),
+        // This write replaces the Arena entry wholesale, so the library and part
+        // addresses have to be repeated here or they are lost. Both are needed
+        // later: verifying or re-linking needs the library, and swapping a part
+        // needs to know what is currently wired.
+        arenaUtils,
+        parts: arenaParts,
       },
       DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },

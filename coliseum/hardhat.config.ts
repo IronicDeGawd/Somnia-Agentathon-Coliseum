@@ -1,7 +1,17 @@
-import { HardhatUserConfig } from "hardhat/config";
+import { HardhatUserConfig, task } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomicfoundation/hardhat-viem";
 import "dotenv/config";
+
+import { mergeArenaAbi } from "./scripts/lib/mergeArenaAbi";
+
+// Arena is a router plus parts sharing one address. The compiler only sees the
+// router's own four functions, so without this every script and bot that asks
+// the toolchain what Arena can do would fail to encode a call to startDuel.
+task("compile", async (args, hre, runSuper) => {
+  await runSuper(args);
+  mergeArenaAbi(hre.config.paths.artifacts);
+});
 
 const config: HardhatUserConfig = {
   solidity: {

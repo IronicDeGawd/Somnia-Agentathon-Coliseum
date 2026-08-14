@@ -22,6 +22,8 @@
 import type { HardhatRuntimeEnvironment } from "hardhat/types";
 import { toFunctionSelector, type Abi } from "viem";
 
+import { routerOwnAbi } from "./mergeArenaAbi";
+
 type Hex = `0x${string}`;
 
 /** Every part, in the order they are deployed and wired. */
@@ -75,7 +77,10 @@ export async function deployLinkedArena(
   } as never);
   log(`  Arena:           ${router.address}  (router)`);
 
-  const routerAbi = routerLink.artifact.abi as Abi;
+  // What the router's own bytecode dispatches — NOT the widened interface that
+  // consumers see, which already lists every part's functions and would make it
+  // look as though nothing needed routing.
+  const routerAbi = routerOwnAbi(hre.config.paths.artifacts) as unknown as Abi;
   const parts: Record<string, Hex> = {};
 
   for (const name of ARENA_PARTS) {
