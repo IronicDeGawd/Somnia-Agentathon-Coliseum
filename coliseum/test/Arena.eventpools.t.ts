@@ -4,6 +4,8 @@ import { parseEther, maxUint256, toFunctionSelector } from "viem";
 
 import { deployArenaWithParts } from "./helpers/arena";
 
+const HANDLE_SELECTOR = "0xc4e34fdd" as `0x${string}`;
+
 /**
  * Arena can be pointed at a third pool set: the event-contract desks.
  *
@@ -205,6 +207,65 @@ describe("Arena — event-contract pool set", function () {
       .to.be.greaterThan(0n);
     expect((await arena.read.fighterBalances([poolSomi.address, event, 2]) as unknown[])[1])
       .to.equal(0n);
+  });
+
+  it("a fighter can actually trade on an event desk", async function () {
+    // Regression: the tier check used to recognise a market by looking its
+    // address up in the sets Arena was deployed or configured with. An event
+    // desk is registered per prediction window and changes every few minutes, so
+    // it came back as "not a market at all" and EVERY trade in an event duel was
+    // rejected with "pool not in tier". Both fighters would sit on their opening
+    // cash for the whole fight and every event duel would end a draw — with no
+    // error anywhere, because a rejected move is a normal outcome.
+    const { arena, usdso, deskSomi } = await deploy();
+    const mockPlatform = await hre.viem.getContractAt(
+      "MockPlatform",
+      (await arena.read.PLATFORM_ADDR()) as `0x${string}`,
+    );
+    const publicClient = await hre.viem.getPublicClient();
+    const ONE = 10n ** 18n;
+
+    // Give the desk a working book so a buy has something to hit.
+    await deskSomi.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await deskSomi.write.setMarkPrice([100n * ONE]);
+    await deskSomi.write.setBookLevel([false, 100n * ONE, ONE]);
+    await deskSomi.write.setBookLevel([true, 100n * ONE, ONE]);
+    // A real desk is funded by its own treasury, so Arena sees quote liquidity
+    // at the desk that it never deposited itself.
+    await deskSomi.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
+
+    await arena.write.setEventDesks([
+      [deskSomi.address, deskSomi.address, deskSomi.address], [18, 18, 18],
+    ]);
+    await hre.network.provider.send("hardhat_setBalance", [
+      arena.address, "0x" + parseEther("100").toString(16),
+    ]);
+
+    await arena.write.startEventDuel([0, 1, 3]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+    await hre.network.provider.send("evm_mine", []);
+
+    const openingQuote = (await arena.read.fighterBalances(
+      [deskSomi.address, duelId, 0],
+    ) as unknown[])[1];
+
+    const tx = await arena.write.turn([duelId]);
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx });
+    const requestIds = receipt.logs
+      .filter((l) => l.topics.length === 4)
+      .map((l) => BigInt(l.topics[3]!));
+    expect(requestIds.length, "both fighters were asked for a move").to.equal(2);
+
+    // Fighters answer by name, never by number — a digit in the prompt was once
+    // read back as a move index and executed as the wrong trade.
+    await hre.network.provider.send("evm_mine", []);
+    await mockPlatform.write.dispatchSuccessString([
+      arena.address, requestIds[0], HANDLE_SELECTOR, "BuySOMI",
+    ]);
+
+    const bal = await arena.read.fighterBalances([deskSomi.address, duelId, 0]) as unknown[];
+    expect(bal[0], "the fighter now holds base tokens bought on the desk").to.be.greaterThan(0n);
+    expect(bal[1], "and spent quote to get them").to.be.lessThan(openingQuote as bigint);
   });
 
   it("refreshPoolMeta re-reads rules for a pool Arena already knows", async function () {

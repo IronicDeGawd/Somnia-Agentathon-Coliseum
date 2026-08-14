@@ -46,6 +46,15 @@ contract MockSpotPool {
         revert("not implemented");
     }
 
+    /// @notice Credit a vault balance without anyone depositing.
+    ///
+    ///         Models an EventDesk, which reports the balance its own treasury
+    ///         funded rather than one Arena paid in — so Arena sees quote
+    ///         liquidity it never deposited. Test-only.
+    function creditVault(address user, address token, uint256 amount) external {
+        _balances[user][token] += amount;
+    }
+
     function withdraw(address token, uint256 amount) external {
         require(_balances[msg.sender][token] >= amount, "MockSpotPool: insufficient");
         _balances[msg.sender][token] -= amount;

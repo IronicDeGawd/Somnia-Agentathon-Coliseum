@@ -329,17 +329,28 @@ contract Arena is ArenaStorage {
         ArenaTypes.Duel storage duel = duels[duelId];
         address[3] memory mp = _duelPools(duelId);
 
-        if      (action == ArenaTypes.FighterAction.BuyWBTC)  { pool = mp[1]; isBid = true;  }
-        else if (action == ArenaTypes.FighterAction.SellWBTC) { pool = mp[1]; isBid = false; }
-        else if (action == ArenaTypes.FighterAction.BuyWETH)  { pool = mp[0]; isBid = true;  }
-        else if (action == ArenaTypes.FighterAction.SellWETH) { pool = mp[0]; isBid = false; }
-        else if (action == ArenaTypes.FighterAction.BuySOMI)  { pool = mp[2]; isBid = true;  }
-        else if (action == ArenaTypes.FighterAction.SellSOMI) { pool = mp[2]; isBid = false; }
+        uint8 slot;
+        if      (action == ArenaTypes.FighterAction.BuyWBTC)  { slot = 1; isBid = true;  }
+        else if (action == ArenaTypes.FighterAction.SellWBTC) { slot = 1; isBid = false; }
+        else if (action == ArenaTypes.FighterAction.BuyWETH)  { slot = 0; isBid = true;  }
+        else if (action == ArenaTypes.FighterAction.SellWETH) { slot = 0; isBid = false; }
+        else if (action == ArenaTypes.FighterAction.BuySOMI)  { slot = 2; isBid = true;  }
+        else if (action == ArenaTypes.FighterAction.SellSOMI) { slot = 2; isBid = false; }
         else return (false, 0);
+        pool = mp[slot];
 
         // Reject trades on pools not active for this duel's tier.
-        uint8 bit = _poolBit(pool);
-        if (bit == 0 || duel.poolMask & bit == 0) {
+        //
+        // The tier bit comes from the slot the action already picked, not from
+        // looking the address back up in the registered pool sets. The lookup
+        // could only recognise addresses Arena was deployed or configured with,
+        // so an event desk — which is registered per window and changes every few
+        // minutes — came back as "not a pool at all" and every trade in an event
+        // duel was rejected. Reading the slot directly cannot fail that way, and
+        // the address is still checked against the known sets before any order is
+        // placed (see _requireValidPool in _placeOrderForFighter).
+        uint8 bit = uint8(1) << slot;   // 0x01 WETH, 0x02 WBTC, 0x04 SOMI
+        if (duel.poolMask & bit == 0) {
             _reject(pool, fighterId, duelId, isBid, 0, 0, 1, "pool not in tier");
             return (false, 0);
         }
@@ -447,14 +458,6 @@ contract Arena is ArenaStorage {
         emit ArenaTypes.OrderPlaced(pool, fighterId, duelId, orderId, isBid, price, quantity, orderType);
         // FOK orders (orderType=1) from _executeFighterAction update fighter balances
         // at the call site — this function only places the order and emits.
-    }
-    // ─── Helpers ──────────────────────────────────────────────────────────────
-
-    function _poolBit(address pool) internal view returns (uint8) {
-        if (pool == POOL_WETH || pool == SIM_POOL_WETH) return ArenaTypes.POOL_BIT_WETH;
-        if (pool == POOL_WBTC || pool == SIM_POOL_WBTC) return ArenaTypes.POOL_BIT_WBTC;
-        if (pool == POOL_SOMI || pool == SIM_POOL_SOMI) return ArenaTypes.POOL_BIT_SOMI;
-        return 0;
     }
     /// @dev Single OrderRejected emit site. Folding the ~10 rejection paths through
     ///      one helper keeps the event ABI encoded once in bytecode instead of at
