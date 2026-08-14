@@ -5,7 +5,8 @@ import { formatUnits, parseAbiItem } from 'viem';
 import { useAccount, useChainId, useSwitchChain, usePublicClient } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
-import { useQueueState } from '@/hooks/useQueueState';
+import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
+import { useQueueState, queueKey } from '@/hooks/useQueueState';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, SIM_MARKET_ENABLED } from '@/lib/contracts';
 import { getWsClient } from '@/lib/wsClient';
@@ -15,6 +16,8 @@ const MATCH_STARTED_EVENT = parseAbiItem(
   'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
 );
 
+/** What each tier trades, per market. Mixed swaps the two costly coins for
+ *  prediction questions, which is what makes the long tiers affordable. */
 const TIER_POOLS: Record<number, string[]> = {
   3:  ['SOMI'],
   6:  ['SOMI', 'WETH'],
@@ -22,18 +25,59 @@ const TIER_POOLS: Record<number, string[]> = {
   15: ['SOMI', 'WETH', 'WBTC'],
 };
 
-// Tier 3 is deliberately not offered: it trades SOMI only, so both fighters have
-// the same single choice every turn and the duel converges to a near-tie with no
-// story. The contracts still accept turns == 3 for duels already on chain.
+const TIER_POOLS_MIXED: Record<number, string[]> = {
+  3:  ['SOMI'],
+  6:  ['SOMI', 'ETH?'],
+  9:  ['SOMI', 'ETH?', 'BTC?'],
+  15: ['SOMI', 'ETH?', 'BTC?'],
+};
+
+const MARKET_CHOICES: ReadonlyArray<{
+  kind: MarketKind; label: string; accent: string; hint: string;
+}> = [
+  {
+    kind: MarketKind.Mixed,
+    label: '◆ MIXED',
+    accent: 'var(--gold)',
+    hint: 'SOMI plus two prediction questions. Cheap entry — the long tiers cost a couple of USDso.',
+  },
+  {
+    kind: MarketKind.Spot,
+    label: '⚡ SPOT',
+    accent: '#5eead4',
+    hint: 'Real WETH and WBTC order books. Far larger deposit, because one minimum BTC order costs dollars.',
+  },
+  ...(SIM_MARKET_ENABLED
+    ? [{
+        kind: MarketKind.Practice,
+        label: '🧪 PRACTICE',
+        accent: '#a78bfa',
+        hint: 'Mock books. No real market risk.',
+      }]
+    : []),
+];
+
+function poolsFor(turns: number, market: MarketKind): string[] {
+  return market === MarketKind.Mixed ? TIER_POOLS_MIXED[turns] : TIER_POOLS[turns];
+}
+
+/** Round counts the lobby offers on a given market. */
+function tiersFor(market: MarketKind): TurnOption[] {
+  if (market === MarketKind.Practice) return [6, 9, 15];
+  return LOBBY_MENU.filter((r) => r.market === market).map((r) => r.turns as TurnOption);
+}
+
+// Which rounds are offered on which market now comes from LOBBY_MENU in
+// lib/contracts, so the menu can change without touching this component.
 //
-// TEMPORARY — LOCAL VERIFICATION ONLY. Tier 3 is re-enabled here so a live
-// end-to-end run costs ~1.34 USDso instead of ~24.67. Revert to [6, 9, 15]
-// before this is built for the public site.
-const TURN_OPTIONS = [3, 6, 9, 15] as const;
+// CAVEAT on the 3-round row: it trades SOMI alone on every market, so both
+// fighters face the same single choice every turn and the fight tends to a
+// near-tie — duel #1 did exactly that. It is cheap and it is a fair first fight,
+// but it is not a good story. Drop its row from LOBBY_MENU to hide it again.
 /**
  * Any tier a duel can have, which still includes 3 — duels already on chain use it
- * and a locked join has to be able to name it. TURN_OPTIONS is the narrower set a
- * user may pick from.
+ * and a locked join has to be able to name it. tiersFor(market) is the narrower
+ * set a user may pick from.
  */
 type TurnOption = 3 | 6 | 9 | 15;
 
@@ -48,21 +92,21 @@ interface DuelCreatorProps {
 function QueueInner({
   fighter,
   turns,
-  simulated,
+  market,
   locked,
   onMatchFound,
   onFighterChange,
   onTurnsChange,
-  onSimulatedChange,
+  onMarketChange,
 }: {
   fighter: number;
   turns: TurnOption;
-  simulated: boolean;
+  market: MarketKind;
   locked: boolean;
   onMatchFound?: (duelId: bigint) => void;
   onFighterChange: (idx: number) => void;
   onTurnsChange: (t: TurnOption) => void;
-  onSimulatedChange: (s: boolean) => void;
+  onMarketChange: (m: MarketKind) => void;
 }) {
   const {
     halfDeposit,
@@ -73,7 +117,7 @@ function QueueInner({
     isPending,
     isSuccess,
     error,
-  } = useQueue(fighter, turns, simulated);
+  } = useQueue(fighter, turns, market);
 
   const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
 
@@ -186,7 +230,7 @@ function QueueInner({
 
   const balanceFormatted = Number(formatUnits(usdsoBalance, 18)).toFixed(2);
 
-  const currentSlot = slots[turns] ?? null;
+  const currentSlot = slots[queueKey(turns, market)] ?? null;
   const fighterVisual = FIGHTER_VISUAL_MAP[fighter];
   const fighterRoster = ROSTER[fighter];
 
@@ -266,7 +310,7 @@ function QueueInner({
             {fighterRoster?.name ?? `FIGHTER ${fighter}`}
           </div>
           <div className="t-sm t-dim">
-            {turns}-round tier · {TIER_POOLS[turns].join(' + ')}
+            {turns}-round tier · {poolsFor(turns, market).join(' + ')}
           </div>
 
           {/* Animated pulse indicator */}
@@ -317,50 +361,47 @@ function QueueInner({
         </span>
       </div>
 
-      {/* Market toggle — only shown when SIM_MARKET_ENABLED is true */}
-      {SIM_MARKET_ENABLED && (
-        <div className="col gap-12">
-          <div className="eyebrow">MARKET</div>
-          <div className="row gap-8">
-            <button
-              onClick={() => onSimulatedChange(false)}
-              style={{
-                flex: 1,
-                padding: '10px',
-                border: `1px solid ${!simulated ? 'var(--gold)' : 'var(--border)'}`,
-                background: !simulated ? 'var(--gold-soft, rgba(200,168,107,0.12))' : 'transparent',
-                borderRadius: '2px',
-                cursor: 'pointer',
-                color: !simulated ? 'var(--gold)' : 'var(--text-dim)',
-                fontSize: '12px',
-                fontWeight: 700,
-                letterSpacing: '0.06em',
-                transition: 'border-color 0.15s, background 0.15s, color 0.15s',
-              }}
-            >
-              ⚡ dreamDEX
-            </button>
-            <button
-              onClick={() => onSimulatedChange(true)}
-              style={{
-                flex: 1,
-                padding: '10px',
-                border: `1px solid ${simulated ? '#a78bfa' : 'var(--border)'}`,
-                background: simulated ? 'rgba(167,139,250,0.1)' : 'transparent',
-                borderRadius: '2px',
-                cursor: 'pointer',
-                color: simulated ? '#a78bfa' : 'var(--text-dim)',
-                fontSize: '12px',
-                fontWeight: 700,
-                letterSpacing: '0.06em',
-                transition: 'border-color 0.15s, background 0.15s, color 0.15s',
-              }}
-            >
-              🧪 Simulated
-            </button>
-          </div>
+      {/* Market picker. Mixed and spot are different games, not a display
+          setting: mixed swaps the two costly coins for prediction questions, so
+          a nine-round fight costs about two USDso instead of about ninety-four.
+          Each market has its own waiting line. */}
+      <div className="col gap-12">
+        <div className="eyebrow">MARKET</div>
+        <div className="row gap-8">
+          {MARKET_CHOICES.map(({ kind, label, accent, hint }) => {
+            const selected = market === kind;
+            return (
+              <button
+                key={kind}
+                onClick={() => onMarketChange(kind)}
+                disabled={locked}
+                aria-pressed={selected}
+                title={hint}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: '10px 6px',
+                  border: `1px solid ${selected ? accent : 'var(--border)'}`,
+                  background: selected ? `${accent}1f` : 'transparent',
+                  borderRadius: '2px',
+                  cursor: locked ? 'not-allowed' : 'pointer',
+                  opacity: locked && !selected ? 0.4 : 1,
+                  color: selected ? accent : 'var(--text-dim)',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  transition: 'border-color 0.15s, background 0.15s, color 0.15s',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
-      )}
+        <div className="t-xs" style={{ color: 'var(--text-dim)' }}>
+          {MARKET_CHOICES.find((m) => m.kind === market)?.hint}
+        </div>
+      </div>
 
       {/* Fighter picker */}
       <div className="col gap-12">
@@ -447,9 +488,9 @@ function QueueInner({
             gap: '8px',
           }}
         >
-          {TURN_OPTIONS.map((t) => {
+          {tiersFor(market).map((t) => {
             const selected = turns === t;
-            const pools = TIER_POOLS[t];
+            const pools = poolsFor(t, market);
             return (
               <button
                 key={t}
@@ -614,9 +655,9 @@ function QueueInner({
 export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
   const [fighter, setFighter] = useState(0);
   const [turns, setTurns] = useState<TurnOption>(lockedTurns ?? 6);
-  // simulated is forced false when SIM_MARKET_ENABLED is false, so today's
-  // behavior is unchanged. It becomes user-selectable after the flag is flipped.
-  const [simulated, setSimulated] = useState(false);
+  // Mixed is the default: it is the affordable game, and the one every tier is
+  // offered on.
+  const [market, setMarket] = useState<MarketKind>(MarketKind.Mixed);
 
   // Sync the tier when the user opens a different locked tier while the
   // creator is already mounted (e.g. clicking JOIN on another card).
@@ -624,10 +665,14 @@ export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
     if (lockedTurns != null) setTurns(lockedTurns);
   }, [lockedTurns]);
 
-  const handleSimulatedChange = (s: boolean) => {
-    // Guard: only allow switching to simulated when the feature is enabled.
-    if (s && !SIM_MARKET_ENABLED) return;
-    setSimulated(s);
+  const handleMarketChange = (m: MarketKind) => {
+    if (m === MarketKind.Practice && !SIM_MARKET_ENABLED) return;
+    setMarket(m);
+    // Not every round count is offered on every market, so a switch that would
+    // leave an unavailable tier selected snaps to one that exists rather than
+    // silently queueing for a line the lobby does not list.
+    const available = tiersFor(m);
+    if (!available.includes(turns)) setTurns(available[0]);
   };
 
   return (
@@ -635,12 +680,12 @@ export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
       <QueueInner
         fighter={fighter}
         turns={turns}
-        simulated={SIM_MARKET_ENABLED ? simulated : false}
+        market={market}
         locked={lockedTurns != null}
         onMatchFound={onMatchFound}
         onFighterChange={setFighter}
         onTurnsChange={setTurns}
-        onSimulatedChange={handleSimulatedChange}
+        onMarketChange={handleMarketChange}
       />
     </div>
   );

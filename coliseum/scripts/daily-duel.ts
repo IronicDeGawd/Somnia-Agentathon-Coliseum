@@ -49,9 +49,11 @@ function fmtU(v: bigint, decimals = 18): string {
 // ---------------------------------------------------------------------------
 
 const TURNS = 3;
-// Run the daily duel on the simulated market (livelier book → visible PnL).
-// The Matchmaker/Arena key every queue/deposit by (turns, simulated).
-const SIMULATED = true;
+// Run the daily duel on the practice market (livelier book → visible PnL).
+// The Matchmaker/Arena key every queue/deposit by (turns, market), so this has
+// to be the same value everywhere below or the two house players never pair.
+// 0 spot coins, 1 practice, 2 mixed.
+const MARKET = 1;
 const TOTAL_CALLBACKS = TURNS * 2; // 6
 const TURN_INTERVAL_BLOCKS = 600;
 const EMERGENCY_FINALIZE_BLOCKS = 1000;
@@ -107,7 +109,7 @@ const MATCHMAKER_ABI = [
     name: "halfDeposit",
     type: "function",
     stateMutability: "view",
-    inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }],
+    inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }],
     outputs: [{ type: "uint256" }],
   },
   {
@@ -117,7 +119,7 @@ const MATCHMAKER_ABI = [
     inputs: [
       { name: "fighter", type: "uint8" },
       { name: "turns", type: "uint16" },
-      { name: "simulated", type: "bool" },
+      { name: "marketKind", type: "uint8" },
     ],
     outputs: [],
   },
@@ -125,7 +127,7 @@ const MATCHMAKER_ABI = [
     name: "triggerPendingMatch",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }],
+    inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }],
     outputs: [],
   },
   {
@@ -410,9 +412,9 @@ async function main() {
     address: matchmkAddr,
     abi: MATCHMAKER_ABI,
     functionName: "halfDeposit",
-    args: [TURNS, SIMULATED],
+    args: [TURNS, MARKET],
   })) as bigint;
-  log(`halfDeposit(${TURNS}, sim=${SIMULATED}): ${fmtU(halfDeposit)} USDso`);
+  log(`halfDeposit(${TURNS}, market=${MARKET}): ${fmtU(halfDeposit)} USDso`);
 
   // p1UsdBal / p2UsdBal are reassigned by the top-up below.
   let [p1UsdBal, p2UsdBal] = [BigInt(0), BigInt(0)];
@@ -553,12 +555,12 @@ async function main() {
     log(`P1 allowance sufficient (${fmtU(p1Allowance)})`);
   }
 
-  log(`P1 queue(fighter=${fighterA}, turns=${TURNS}, sim=${SIMULATED})...`);
+  log(`P1 queue(fighter=${fighterA}, turns=${TURNS}, market=${MARKET})...`);
   const p1QueueTx = await p1Wallet.writeContract({
     address: matchmkAddr,
     abi: MATCHMAKER_ABI,
     functionName: "queue",
-    args: [fighterA, TURNS, SIMULATED],
+    args: [fighterA, TURNS, MARKET],
   });
   const p1QueueReceipt = await publicClient.waitForTransactionReceipt({
     hash: p1QueueTx,
@@ -603,12 +605,12 @@ async function main() {
     log(`P2 allowance sufficient (${fmtU(p2Allowance)})`);
   }
 
-  log(`P2 queue(fighter=${fighterB}, turns=${TURNS}, sim=${SIMULATED})...`);
+  log(`P2 queue(fighter=${fighterB}, turns=${TURNS}, market=${MARKET})...`);
   const p2QueueTx = await p2Wallet.writeContract({
     address: matchmkAddr,
     abi: MATCHMAKER_ABI,
     functionName: "queue",
-    args: [fighterB, TURNS, SIMULATED],
+    args: [fighterB, TURNS, MARKET],
   });
   const p2QueueReceipt = await publicClient.waitForTransactionReceipt({
     hash: p2QueueTx,
@@ -638,7 +640,7 @@ async function main() {
         address: matchmkAddr,
         abi: MATCHMAKER_ABI,
         functionName: "triggerPendingMatch",
-        args: [TURNS, SIMULATED],
+        args: [TURNS, MARKET],
       });
       const triggerReceipt = await publicClient.waitForTransactionReceipt({
         hash: triggerTx,

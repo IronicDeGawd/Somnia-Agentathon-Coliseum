@@ -10,7 +10,8 @@ import { DuelCreator } from '@/components/shared/DuelCreator';
 import DuelCard from '@/components/shared/DuelCard';
 import { useActiveDuels } from '@/hooks/useActiveDuels';
 import { useDuelState } from '@/hooks/useDuelState';
-import { useQueueState, type QueueTier } from '@/hooks/useQueueState';
+import { useQueueState, queueKey, type QueueTier } from '@/hooks/useQueueState';
+import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
 import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
@@ -337,14 +338,16 @@ export default function LobbyPage() {
         </div>
 
         <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
-          {([6, 9, 15] as QueueTier[]).map((turns) => {
-            const TIER_POOL_LABELS: Record<QueueTier, string> = {
-              3:  'SOMI',
-              6:  'SOMI · WETH',
-              9:  'SOMI · WETH · WBTC',
-              15: 'ALL POOLS',
-            };
-            const slot = queueSlots[turns];
+          {LOBBY_MENU.map(({ turns: turnsRaw, market }) => {
+            const turns = turnsRaw as QueueTier;
+            // One card per WAITING LINE, not per round count: a nine-round spot
+            // player and a nine-round mixed player never match each other, so
+            // showing them as one card would promise a pairing that cannot happen.
+            const TIER_POOL_LABELS: Record<QueueTier, string> = market === MarketKind.Mixed
+              ? { 3: 'SOMI', 6: 'SOMI · ETH?', 9: 'SOMI · ETH? · BTC?', 15: 'SOMI · ETH? · BTC?' }
+              : { 3: 'SOMI', 6: 'SOMI · WETH', 9: 'SOMI · WETH · WBTC', 15: 'ALL POOLS' };
+            const key = queueKey(turns, market);
+            const slot = queueSlots[key];
             const fighterName = slot
               ? (ROSTER.find(r => r.id === fighterIndexToId(slot.fighter))?.name ?? `FIGHTER #${slot.fighter}`)
               : null;
@@ -354,7 +357,7 @@ export default function LobbyPage() {
 
             return (
               <div
-                key={turns}
+                key={key}
                 className="card pad-16 col gap-12 flex-1"
                 style={{ minWidth: 'min(100%, 200px)', flex: '1 1 200px' }}
               >
@@ -362,6 +365,16 @@ export default function LobbyPage() {
                 <div className="row jc-sb ai-c">
                   <span className="t-display t-up" style={{ fontSize: 18, letterSpacing: '0.08em', color: 'var(--text)' }}>
                     {turns} ROUNDS
+                    <span
+                      className="t-mono t-xs"
+                      style={{
+                        marginLeft: 8,
+                        letterSpacing: '0.1em',
+                        color: market === MarketKind.Mixed ? 'var(--gold)' : '#5eead4',
+                      }}
+                    >
+                      {MARKET_LABEL[market]}
+                    </span>
                   </span>
                   {slot ? (
                     <Chip variant="live"><Dot variant="a" pulse /> WAITING</Chip>
@@ -374,8 +387,8 @@ export default function LobbyPage() {
                     in arrival order as running duels finish. */}
                 <div className="row jc-sb ai-c">
                   <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>QUEUED PAIRS</span>
-                  <span className="t-mono t-xs t-num" style={{ color: (pendingCounts[turns] ?? 0) > 0 ? 'var(--text)' : 'var(--text-faint)' }}>
-                    {pendingCounts[turns] ?? 0}
+                  <span className="t-mono t-xs t-num" style={{ color: (pendingCounts[key] ?? 0) > 0 ? 'var(--text)' : 'var(--text-faint)' }}>
+                    {pendingCounts[key] ?? 0}
                   </span>
                 </div>
 

@@ -3,10 +3,21 @@
 import { useState, useCallback } from 'react';
 import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { maxUint256 } from 'viem';
-import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, MarketKind } from '@/lib/contracts';
 import { config, somniaTestnet } from '@/lib/chain';
 
-export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = false) {
+/**
+ * Join the waiting line for one round count on one market.
+ *
+ * The market is part of the line's identity: you only ever match someone who
+ * chose the same one, because a spot fight and a mixed fight are priced
+ * differently and could not share a pot.
+ */
+export function useQueue(
+  fighter: number,
+  turns: 3 | 6 | 9 | 15,
+  market: MarketKind = MarketKind.Mixed,
+) {
   const { address, chainId } = useAccount();
   const publicClient = usePublicClient({ config });
   const { writeContractAsync } = useWriteContract();
@@ -22,7 +33,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = fal
     address: CONTRACT_ADDRESSES.Matchmaker,
     abi: ABIS.Matchmaker,
     functionName: 'halfDeposit',
-    args: [turns, simulated],
+    args: [turns, market],
     query: { enabled: true },
   });
 
@@ -128,7 +139,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = fal
           address: CONTRACT_ADDRESSES.Matchmaker,
           abi: ABIS.Matchmaker,
           functionName: 'queue',
-          args: [fighter, turns, simulated],
+          args: [fighter, turns, market],
           account: address,
         }),
       );
@@ -137,7 +148,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = fal
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'queue',
-        args: [fighter, turns, simulated],
+        args: [fighter, turns, market],
         gasPrice,
         gas: queueGas,
       });
@@ -150,7 +161,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = fal
     } finally {
       setIsPending(false);
     }
-  }, [address, chainId, fighter, turns, simulated, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
+  }, [address, chainId, fighter, turns, market, halfDeposit, publicClient, writeContractAsync, switchChainAsync, refetchAllowance]);
 
   const cancelQueue = useCallback(async (): Promise<void> => {
     if (!address) {
@@ -173,7 +184,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = fal
         address: CONTRACT_ADDRESSES.Matchmaker,
         abi: ABIS.Matchmaker,
         functionName: 'cancelQueue',
-        args: [turns, simulated],
+        args: [turns, market],
         gasPrice,
         gas: BigInt(200000),
       });
@@ -187,7 +198,7 @@ export function useQueue(fighter: number, turns: 3 | 6 | 9 | 15, simulated = fal
     } finally {
       setIsPending(false);
     }
-  }, [address, chainId, turns, simulated, publicClient, writeContractAsync, switchChainAsync, refetchHalfDeposit]);
+  }, [address, chainId, turns, market, publicClient, writeContractAsync, switchChainAsync, refetchHalfDeposit]);
 
   const claimWinnings = useCallback(async (duelId: bigint): Promise<void> => {
     if (!address) {

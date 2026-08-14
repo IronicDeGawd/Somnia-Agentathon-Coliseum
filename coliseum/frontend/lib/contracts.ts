@@ -92,6 +92,43 @@ export function POOLS_FOR(simulated: boolean): typeof POOLS | typeof SIM_POOLS {
   return simulated ? SIM_POOLS : POOLS;
 }
 
+/**
+ * Which markets a fight trades on. Mirrors ArenaTypes.MarketKind.
+ *
+ * Spot is the real coin books — a nine-round fight there needs about 150 USDso,
+ * because one minimum WBTC order alone costs a few dollars and the deposit must
+ * cover every fighter trading every round. Mixed keeps the cheap SOMI coin book
+ * and puts a prediction question in each of the two costly slots, which brings
+ * the same fight under two. Both are offered; neither replaced the other.
+ */
+export enum MarketKind {
+  Spot = 0,
+  Practice = 1,
+  Mixed = 2,
+}
+
+/**
+ * The lobby menu: which round counts are offered on which market.
+ *
+ * Two players match only if they pick the same row, so every row is a separate
+ * waiting line and adding rows thins them. At three rounds only SOMI trades, so
+ * spot and mixed would be the identical fight — it is listed once.
+ */
+export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
+  { turns: 3,  market: MarketKind.Mixed },
+  { turns: 6,  market: MarketKind.Mixed },
+  { turns: 9,  market: MarketKind.Mixed },
+  { turns: 9,  market: MarketKind.Spot },
+  { turns: 15, market: MarketKind.Mixed },
+  { turns: 15, market: MarketKind.Spot },
+] as const;
+
+export const MARKET_LABEL: Record<MarketKind, string> = {
+  [MarketKind.Spot]: 'SPOT',
+  [MarketKind.Practice]: 'PRACTICE',
+  [MarketKind.Mixed]: 'MIXED',
+};
+
 /** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
 export const FIGHTER_ACTIONS = [
   'HOLD', 'BUY WBTC', 'SELL WBTC', 'BUY WETH', 'SELL WETH', 'BUY SOMI', 'SELL SOMI',
@@ -158,9 +195,11 @@ export const ABIS = {
     'function maxActiveDuels() view returns (uint16)',
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
+    'function minDepositForKind(uint16 turns, uint8 marketKind) view returns (uint256)',
     'function nextDuelId() view returns (uint256)',
     'function platformFee(uint16 turns) view returns (uint256)',
     'function TURN_INTERVAL_BLOCKS() view returns (uint256)',
+    'function startDuelOn(uint8 fighterA, uint8 fighterB, uint16 turns, uint8 marketKind) returns (uint256)',
     'function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated) external returns (uint256)',
     'function finalizeDuel(uint256 duelId) external',
     'function recoverFunds(uint256 duelId) external',
@@ -236,18 +275,18 @@ export const ABIS = {
   ]),
 
   Matchmaker: parseAbi([
-    'function queue(uint8 fighter, uint16 turns, bool simulated) external',
-    'function cancelQueue(uint16 turns, bool simulated) external',
-    'function triggerPendingMatch(uint16 turns, bool simulated) external',
+    'function queue(uint8 fighter, uint16 turns, uint8 marketKind) external',
+    'function cancelQueue(uint16 turns, uint8 marketKind) external',
+    'function triggerPendingMatch(uint16 turns, uint8 marketKind) external',
     'function claimWinnings(uint256 duelId) external',
-    'function halfDeposit(uint16 turns, bool simulated) view returns (uint256)',
-    'function getSlot(uint16 turns, bool simulated) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
+    'function halfDeposit(uint16 turns, uint8 marketKind) view returns (uint256)',
+    'function getSlot(uint16 turns, uint8 marketKind) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
     'function arenaFree() view returns (bool)',
     'function slots(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
     // Matched pairs waiting for a free ring, oldest first.
-    'function pendingCount(uint16 turns, bool simulated) view returns (uint256)',
-    'function getPendingPositions(uint16 turns, bool simulated) view returns (uint256[])',
-    'function cancelPending(uint16 turns, bool simulated, uint256 position) external',
+    'function pendingCount(uint16 turns, uint8 marketKind) view returns (uint256)',
+    'function getPendingPositions(uint16 turns, uint8 marketKind) view returns (uint256[])',
+    'function cancelPending(uint16 turns, uint8 marketKind, uint256 position) external',
     'function matches(uint256 duelId) view returns (address playerA, address playerB, uint256 totalPot, bool recovered, bool settledA, bool settledB)',
     'event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit)',
     'event QueueCancelled(address indexed player, uint16 turns, uint256 refund)',
