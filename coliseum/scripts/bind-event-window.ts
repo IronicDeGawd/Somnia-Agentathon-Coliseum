@@ -11,15 +11,15 @@
 //
 // Env:
 //   MIN_LIFE_SEC — window must outlive this, in seconds (default 1200).
-//   INTERVALS    — acceptable window lengths in minutes, preferred first
-//                  (default "60,240"). The shortest acceptable one wins, because
-//                  a shorter window's odds move more over a fight.
+//   INTERVALS    — acceptable window lengths in minutes (default "60,240").
+//                  Among these, the window priced NEAREST EVEN MONEY wins — see
+//                  the note on pickWindow for why that beats picking by length.
 //   FUND_EACH    — collateral per desk, whole tokens; default from the manifest.
 //   RELEASE      — set to 1 to mark every desk free and exit, without binding.
 // ============================================================================
 
 import hre from "hardhat";
-import { formatUnits, parseAbiItem } from "viem";
+import { formatUnits, parseAbi, parseAbiItem } from "viem";
 import fs from "fs";
 import path from "path";
 
@@ -76,23 +76,42 @@ async function main() {
     (w) => w.expiry > now + minLife && intervals.includes(w.intervalSec),
   );
 
-  const pick = (asset: string): Window => {
-    const forAsset = live
-      .filter((w) => w.asset.toUpperCase() === asset)
-      // Shortest acceptable interval first; among equals, the one expiring last.
-      .sort((a, b) => intervals.indexOf(a.intervalSec) - intervals.indexOf(b.intervalSec) || b.expiry - a.expiry);
+  /**
+   * Choose the window priced NEAREST EVEN MONEY.
+   *
+   * The obvious rule — take the shortest window, its odds move more — is wrong,
+   * and measurably so. A question drifts toward certainty as its deadline nears,
+   * so a live hourly window part-way through its hour was quoting 0.014 while the
+   * four-hour question on the same asset sat at 0.462. At 0.014 the answer is
+   * effectively already known: the odds barely move, and a fighter offered it
+   * declines every round, which is the right call and a dead fight.
+   *
+   * What makes a slot worth trading is that the answer is genuinely in doubt. So
+   * pick on the price itself rather than on the window's length, and let the
+   * length matter only through the requirement that it outlive the fight.
+   */
+  const pickWindow = async (asset: string): Promise<Window> => {
+    const forAsset = live.filter((w) => w.asset.toUpperCase() === asset);
     if (!forAsset.length) {
       throw new Error(
         `no ${asset} window of ${intervals.map((i) => i / 60).join("/")}min with >${minLife}s left. ` +
-        `Hourly windows are only this long for part of each hour — wait, lower MIN_LIFE_SEC, or add 240 to INTERVALS.`,
+        `Wait, lower MIN_LIFE_SEC, or widen INTERVALS.`,
       );
     }
-    return forAsset[0];
+    const priced = await Promise.all(forAsset.map(async (w) => ({ w, mid: await midPrice(pub, w.pool) })));
+    // A window with no book at all cannot be traded and cannot be priced; treat
+    // it as maximally undesirable rather than as a perfect zero.
+    priced.sort((a, b) => distanceFromEven(a.mid) - distanceFromEven(b.mid));
+    return priced[0].w;
   };
 
-  const chosen = { ETH: pick("ETH"), BTC: pick("BTC") };
+  const chosen = { ETH: await pickWindow("ETH"), BTC: await pickWindow("BTC") };
   for (const [asset, w] of Object.entries(chosen)) {
-    console.log(`${asset}: ${w.intervalSec / 60}min window, ${w.expiry - now}s left  pool ${w.pool}`);
+    const mid = await midPrice(pub, w.pool);
+    console.log(
+      `${asset}: ${w.intervalSec / 60}min window priced at ${mid === null ? "no book" : mid.toFixed(3)}, ` +
+      `${w.expiry - now}s left  pool ${w.pool}`,
+    );
   }
 
   // ── claim two idle desks ──────────────────────────────────────────────────
@@ -153,6 +172,29 @@ async function main() {
   };
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
   console.log(`Recorded the binding under contracts.EventDesks.bound`);
+}
+
+/** Top-of-book midpoint as a probability in [0,1], or null when nothing is quoted. */
+async function midPrice(pub: any, pool: `0x${string}`): Promise<number | null> {
+  const book = parseAbi([
+    "function getBookLevels(bool isBid, uint64 numLevels) view returns ((uint256 price, uint256 quantity)[])",
+  ]);
+  const read = async (isBid: boolean) => {
+    try {
+      const levels = await pub.readContract({ address: pool, abi: book, functionName: "getBookLevels", args: [isBid, 1n] });
+      return levels.length ? (levels[0].price as bigint) : 0n;
+    } catch { return 0n; }
+  };
+  const [bid, ask] = await Promise.all([read(true), read(false)]);
+  const mid = bid && ask ? (bid + ask) / 2n : bid || ask;
+  if (mid === 0n) return null;
+  // The pool quotes in its collateral's six decimals; one whole unit is certainty.
+  return Number(mid) / 1e6;
+}
+
+/** How far from a genuine coin-flip. An unpriced window sorts last. */
+function distanceFromEven(mid: number | null): number {
+  return mid === null ? Number.POSITIVE_INFINITY : Math.abs(mid - 0.5);
 }
 
 async function scanWindows(pub: any): Promise<Window[]> {
