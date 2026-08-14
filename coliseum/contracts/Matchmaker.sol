@@ -22,13 +22,13 @@ pragma solidity ^0.8.24;
 ///   - Owner emergency rescue for stuck funds (zero-value recovery path only).
 
 interface IArena {
-    function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated)
+    function startDuelOn(uint8 fighterA, uint8 fighterB, uint16 turns, uint8 marketKind)
         external returns (uint256 duelId);
 
     /// True while Arena can accept another concurrent duel.
     function hasCapacity() external view returns (bool);
     function minDepositFor(uint16 turns) external view returns (uint256);
-    function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256);
+    function minDepositForKind(uint16 turns, uint8 marketKind) external view returns (uint256);
     function recoverFunds(uint256 duelId) external;
     function platformFee(uint16 turns) external view returns (uint256);
 
@@ -97,9 +97,9 @@ contract Matchmaker {
         uint64  queuedBlock; // block.number when player queued (cancel rate-limit)
     }
 
-    // (turns ∈ {3,6,9,15}, simulated) → open queue slot. Keying by market as well
+    // (turns ∈ {3,6,9,15}, marketKind) → open queue slot. Keying by market as well
     // means a real-market player only ever matches another real-market player.
-    mapping(uint16 => mapping(bool => Slot)) public slots;
+    mapping(uint16 => mapping(uint8 => Slot)) public slots;
 
     // ─── Pending matches (FIFO queue per tier + market) ───────────────────────
     //
@@ -120,13 +120,13 @@ contract Matchmaker {
         uint16  turns;
         uint256 totalPot;  // combined deposit held; may be refunded if price drift
         bool    exists;    // false once started or cancelled — a tombstone
-        bool    simulated; // which market this pending match will start on
+        uint8   marketKind; // which market this pending match will start on
     }
 
-    // (turns, simulated, position) → queued match. Positions run head..tail-1.
-    mapping(uint16 => mapping(bool => mapping(uint256 => PendingMatch))) public pendingQueue;
-    mapping(uint16 => mapping(bool => uint256)) public pendingHead;
-    mapping(uint16 => mapping(bool => uint256)) public pendingTail;
+    // (turns, marketKind, position) → queued match. Positions run head..tail-1.
+    mapping(uint16 => mapping(uint8 => mapping(uint256 => PendingMatch))) public pendingQueue;
+    mapping(uint16 => mapping(uint8 => uint256)) public pendingHead;
+    mapping(uint16 => mapping(uint8 => uint256)) public pendingTail;
 
     // ─── Match records ────────────────────────────────────────────────────────
 
@@ -163,6 +163,7 @@ contract Matchmaker {
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     error InvalidTier();
+    error InvalidMarket();
     error InvalidFighter();
     error MatchYourself();
     error SameFighter();
@@ -189,25 +190,32 @@ contract Matchmaker {
     // ─── Queue ────────────────────────────────────────────────────────────────
 
     /// @notice Enter the matchmaking queue.
-    /// @param fighter  Your FighterRegistry index (0 to FIGHTER_COUNT-1).
-    /// @param turns    Tier: 3, 6, 9, or 15 rounds.
+    /// @param fighter    Your FighterRegistry index (0 to FIGHTER_COUNT-1).
+    /// @param turns      Tier: 3, 6, 9, or 15 rounds.
+    /// @param marketKind 0 spot coins, 1 practice, 2 mixed (SOMI plus two
+    ///        prediction questions). Queues are kept separate per market, so you
+    ///        only ever match someone who chose the same one — a spot fight and a
+    ///        mixed fight cost wildly different amounts and could not share a pot.
     ///
-    /// Approve this contract for halfDeposit(turns) USDso before calling.
-    function queue(uint8 fighter, uint16 turns, bool simulated) external {
+    /// Approve this contract for halfDeposit(turns, marketKind) USDso first.
+    function queue(uint8 fighter, uint16 turns, uint8 marketKind) external {
         if (turns != 3 && turns != 6 && turns != 9 && turns != 15)
             revert InvalidTier();
+        // Arena would reject an unknown market anyway, but only after both
+        // deposits had been taken and the pair matched.
+        if (marketKind > 2) revert InvalidMarket();
 
         // Validate fighter index against the FighterRegistry (M-1 fix).
         // NOTE: FIGHTER_COUNT lives on the registry, not on Arena.
         if (fighter >= registry.FIGHTER_COUNT()) revert InvalidFighter();
 
-        uint256 half = halfDeposit(turns, simulated);
+        uint256 half = halfDeposit(turns, marketKind);
 
         // Pull deposit before touching state (CEI: funds in first)
         if (!usdso.transferFrom(msg.sender, address(this), half))
             revert TransferFailed();
 
-        Slot storage slot = slots[turns][simulated];
+        Slot storage slot = slots[turns][marketKind];
 
         if (slot.player == address(0)) {
             // ── Slot empty: first player in ──────────────────────────────────
@@ -227,18 +235,18 @@ contract Matchmaker {
             uint256 dA  = slot.deposit;
 
             // CEI: clear slot before any external calls
-            delete slots[turns][simulated];
+            delete slots[turns][marketKind];
 
             uint256 total = dA + half;
 
             // Only start immediately when there is a pre-existing queue to skip
             // AND a free Arena slot. Otherwise take a ticket at the back, so a
             // pair that arrives later can never overtake one already waiting.
-            if (_arenaFree() && pendingCount(turns, simulated) == 0) {
-                _startOrRefund(pA, msg.sender, fA, fighter, turns, total, simulated);
+            if (_arenaFree() && pendingCount(turns, marketKind) == 0) {
+                _startOrRefund(pA, msg.sender, fA, fighter, turns, total, marketKind);
             } else {
-                uint256 pos = pendingTail[turns][simulated];
-                pendingQueue[turns][simulated][pos] = PendingMatch({
+                uint256 pos = pendingTail[turns][marketKind];
+                pendingQueue[turns][marketKind][pos] = PendingMatch({
                     playerA:  pA,
                     playerB:  msg.sender,
                     fighterA: fA,
@@ -246,9 +254,9 @@ contract Matchmaker {
                     turns:    turns,
                     totalPot: total,
                     exists:   true,
-                    simulated: simulated
+                    marketKind: marketKind
                 });
-                pendingTail[turns][simulated] = pos + 1;
+                pendingTail[turns][marketKind] = pos + 1;
                 emit MatchPending(pA, msg.sender, turns);
             }
         }
@@ -259,24 +267,24 @@ contract Matchmaker {
     /// @notice Start the pair at the head of a tier's queue, once Arena has a free
     ///         slot. Permissionless — anyone can call this.
     /// @param turns  The tier whose queue head to start.
-    function triggerPendingMatch(uint16 turns, bool simulated) external {
+    function triggerPendingMatch(uint16 turns, uint8 marketKind) external {
         if (!_arenaFree()) revert ArenaStillBusy();
 
         // Walk past any cancelled entries (tombstones) to the real head.
-        uint256 head = pendingHead[turns][simulated];
-        uint256 tail = pendingTail[turns][simulated];
-        while (head < tail && !pendingQueue[turns][simulated][head].exists) head++;
+        uint256 head = pendingHead[turns][marketKind];
+        uint256 tail = pendingTail[turns][marketKind];
+        while (head < tail && !pendingQueue[turns][marketKind][head].exists) head++;
         if (head >= tail) {
-            pendingHead[turns][simulated] = head;
+            pendingHead[turns][marketKind] = head;
             revert NoPendingMatch();
         }
 
         // CEI: copy to memory and clear state before any external call.
-        PendingMatch memory m = pendingQueue[turns][simulated][head];
-        delete pendingQueue[turns][simulated][head];
-        pendingHead[turns][simulated] = head + 1;
+        PendingMatch memory m = pendingQueue[turns][marketKind][head];
+        delete pendingQueue[turns][marketKind][head];
+        pendingHead[turns][marketKind] = head + 1;
 
-        _startOrRefund(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot, m.simulated);
+        _startOrRefund(m.playerA, m.playerB, m.fighterA, m.fighterB, m.turns, m.totalPot, m.marketKind);
     }
 
     /// @notice Withdraw a queued pair and refund both players. Either player of
@@ -286,13 +294,13 @@ contract Matchmaker {
     ///         covers the un-matched slot, so once two players paired into a full
     ///         Arena their deposits had no exit at all.
     /// @param position  Queue position, as returned by getPending / pendingHead.
-    function cancelPending(uint16 turns, bool simulated, uint256 position) external {
-        PendingMatch memory m = pendingQueue[turns][simulated][position];
+    function cancelPending(uint16 turns, uint8 marketKind, uint256 position) external {
+        PendingMatch memory m = pendingQueue[turns][marketKind][position];
         if (!m.exists) revert NoPendingMatch();
         if (msg.sender != m.playerA && msg.sender != m.playerB) revert NotYourMatch();
 
         // Effects before interaction: leave a tombstone the queue walk skips.
-        delete pendingQueue[turns][simulated][position];
+        delete pendingQueue[turns][marketKind][position];
 
         uint256 eachRefund = m.totalPot / 2;
         if (!usdso.transfer(m.playerA, eachRefund)) revert TransferFailed();
@@ -305,14 +313,14 @@ contract Matchmaker {
 
     /// @notice Leave the queue and reclaim your deposit.
     ///         Only callable ≥ CANCEL_DELAY_BLOCKS after queueing.
-    function cancelQueue(uint16 turns, bool simulated) external {
-        Slot storage slot = slots[turns][simulated];
+    function cancelQueue(uint16 turns, uint8 marketKind) external {
+        Slot storage slot = slots[turns][marketKind];
         if (slot.player != msg.sender) revert NotQueued();
         // Rate-limit cancels to prevent same-block queue-grief (M-3 fix)
         if (block.number < slot.queuedBlock + CANCEL_DELAY_BLOCKS) revert CancelTooSoon();
 
         uint256 refund = slot.deposit;
-        delete slots[turns][simulated]; // effect before transfer (CEI)
+        delete slots[turns][marketKind]; // effect before transfer (CEI)
 
         if (!usdso.transfer(msg.sender, refund)) revert TransferFailed();
         emit QueueCancelled(msg.sender, turns, refund);
@@ -399,44 +407,44 @@ contract Matchmaker {
     // ─── Views ────────────────────────────────────────────────────────────────
 
     /// @notice USDso amount each player must approve before calling queue().
-    function halfDeposit(uint16 turns, bool simulated) public view returns (uint256) {
-        uint256 minDep = arena.minDepositForMarket(turns, simulated);
+    function halfDeposit(uint16 turns, uint8 marketKind) public view returns (uint256) {
+        uint256 minDep = arena.minDepositForKind(turns, marketKind);
         if (minDep == 0) minDep = 2e18;
         uint256 total  = minDep + arena.platformFee(turns);
         total += (total * DEPOSIT_BUFFER_BPS) / 10_000; // headroom for price drift
         return (total + 1) / 2; // ceil — ensures combined >= required + buffer
     }
 
-    function getSlot(uint16 turns, bool simulated)
+    function getSlot(uint16 turns, uint8 marketKind)
         external view
         returns (address player, uint8 fighter, uint256 deposit, uint64 queuedBlock)
     {
-        Slot storage s = slots[turns][simulated];
+        Slot storage s = slots[turns][marketKind];
         return (s.player, s.fighter, s.deposit, s.queuedBlock);
     }
 
     function arenaFree() external view returns (bool) { return _arenaFree(); }
 
     /// @notice How many pairs are waiting in a tier's queue (tombstones excluded).
-    function pendingCount(uint16 turns, bool simulated) public view returns (uint256 n) {
-        uint256 tail = pendingTail[turns][simulated];
-        for (uint256 i = pendingHead[turns][simulated]; i < tail; i++) {
-            if (pendingQueue[turns][simulated][i].exists) n++;
+    function pendingCount(uint16 turns, uint8 marketKind) public view returns (uint256 n) {
+        uint256 tail = pendingTail[turns][marketKind];
+        for (uint256 i = pendingHead[turns][marketKind]; i < tail; i++) {
+            if (pendingQueue[turns][marketKind][i].exists) n++;
         }
     }
 
     /// @notice The queue positions still waiting in a tier, in start order.
     ///         Use these as the `position` argument to cancelPending.
-    function getPendingPositions(uint16 turns, bool simulated)
+    function getPendingPositions(uint16 turns, uint8 marketKind)
         external view returns (uint256[] memory positions)
     {
-        uint256 head = pendingHead[turns][simulated];
-        uint256 tail = pendingTail[turns][simulated];
-        uint256 n = pendingCount(turns, simulated);
+        uint256 head = pendingHead[turns][marketKind];
+        uint256 tail = pendingTail[turns][marketKind];
+        uint256 n = pendingCount(turns, marketKind);
         positions = new uint256[](n);
         uint256 k = 0;
         for (uint256 i = head; i < tail; i++) {
-            if (pendingQueue[turns][simulated][i].exists) positions[k++] = i;
+            if (pendingQueue[turns][marketKind][i].exists) positions[k++] = i;
         }
     }
 
@@ -454,10 +462,10 @@ contract Matchmaker {
     function _startOrRefund(
         address pA, address pB,
         uint8 fA, uint8 fB,
-        uint16 turns, uint256 total, bool simulated
+        uint16 turns, uint256 total, uint8 marketKind
     ) internal {
         // Re-query required amount at match time (market prices may have moved)
-        uint256 minDep = arena.minDepositForMarket(turns, simulated);
+        uint256 minDep = arena.minDepositForKind(turns, marketKind);
         if (minDep == 0) minDep = 2e18;
         uint256 required = minDep + arena.platformFee(turns);
 
@@ -479,7 +487,7 @@ contract Matchmaker {
         usdso.approve(address(arena), 0);
         if (!usdso.approve(address(arena), required)) revert ApproveFailed();
 
-        uint256 duelId = arena.startDuel(fA, fB, turns, simulated);
+        uint256 duelId = arena.startDuelOn(fA, fB, turns, marketKind);
 
         // H-4 fix: reset approval to zero after startDuel consumed it
         usdso.approve(address(arena), 0);

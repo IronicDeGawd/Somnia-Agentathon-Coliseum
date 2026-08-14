@@ -96,6 +96,15 @@ contract ArenaViewPart is ArenaStorage {
         return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
     }
 
+    /// @notice Minimum USDso deposit for a turn tier on any of the three markets.
+    ///         One call the lobby can use for every row of its menu, instead of a
+    ///         different function per market.
+    function minDepositForKind(uint16 turns, uint8 marketKind) external view returns (uint256) {
+        if (marketKind > uint8(ArenaTypes.MarketKind.Mixed)) revert ArenaTypes.InvalidMarketKind();
+        address[3] memory mp = _poolsFor(ArenaTypes.MarketKind(marketKind));
+        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
+    }
+
     /// @notice The question a pool asks, or empty if it is an ordinary asset.
     ///
     ///         Lives here rather than being a public variable because the router is

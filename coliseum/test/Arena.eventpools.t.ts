@@ -455,4 +455,88 @@ describe("Arena — event-contract pool set", function () {
     expect(fifteen, "more rounds cost more").to.be.greaterThan(three);
     expect(fifteen, "but still trivially small").to.be.lessThan(parseEther("1"));
   });
+
+  it("startDuelOn picks the market, and each kind lands on its own pools", async function () {
+    const { arena, deskWeth, deskWbtc, deskSomi, poolSomi } = await deploy();
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), NO_LABEL],
+    ]);
+
+    const SPOT = 0, MIXED = 2;
+
+    // A spot fight and a mixed fight, running at the same time. Each records its
+    // own three markets, which is what lets an expensive real-asset game and a
+    // cheap one coexist instead of one replacing the other.
+    await arena.write.startDuelOn([0, 1, 3, SPOT]);
+    const spotId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+    await arena.write.startDuelOn([2, 3, 3, MIXED]);
+    const mixedId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+    expect(mixedId, "both fights are running").to.not.equal(spotId);
+
+    const spotOnReal = await arena.read.fighterBalances([poolSomi.address, spotId, 0]) as unknown[];
+    const spotOnDesk = await arena.read.fighterBalances([deskSomi.address, spotId, 0]) as unknown[];
+    expect(spotOnReal[1], "the spot fight is funded on the real coin book").to.be.greaterThan(0n);
+    expect(spotOnDesk[1], "and not on the desks").to.equal(0n);
+
+    const mixedOnDesk = await arena.read.fighterBalances([deskSomi.address, mixedId, 2]) as unknown[];
+    const mixedOnReal = await arena.read.fighterBalances([poolSomi.address, mixedId, 2]) as unknown[];
+    expect(mixedOnDesk[1], "the mixed fight is funded on the desks").to.be.greaterThan(0n);
+    expect(mixedOnReal[1], "and not on the real book").to.equal(0n);
+  });
+
+  it("startDuelOn refuses a market that was never registered", async function () {
+    const { arena } = await deploy();
+    // No desks registered yet, so the mixed market does not exist.
+    let caught: unknown;
+    await arena.write.startDuelOn([0, 1, 3, 2]).catch((e: unknown) => { caught = e; });
+    expect(caught, "a fight cannot start on three empty addresses").to.not.be.undefined;
+    expect(String(caught)).to.include("InvalidPool");
+  });
+
+  it("startDuelOn rejects a market kind that is not one of the three", async function () {
+    const { arena } = await deploy();
+    let caught: unknown;
+    await arena.write.startDuelOn([0, 1, 3, 7]).catch((e: unknown) => { caught = e; });
+    expect(caught, "an unknown market must not start a fight").to.not.be.undefined;
+
+    // And nothing was created by the attempt.
+    expect((await arena.read.getActiveDuelIds() as bigint[]).length).to.equal(0);
+  });
+
+  it("minDepositForKind prices every market from one call", async function () {
+    const { arena, usdso, poolWeth, poolWbtc, poolSomi, deskWeth, deskWbtc, deskSomi } = await deploy();
+    const ONE = 10n ** 18n;
+
+    // The real books priced like real coins: a whole unit costs thousands.
+    for (const pool of [poolWeth, poolWbtc, poolSomi]) {
+      await pool.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 1000n, 1n]);
+      await pool.write.setBookLevel([false, 2000n * ONE, ONE]);
+      await pool.write.setBookLevel([true, 2000n * ONE, ONE]);
+    }
+    // Arena caches each pool's trading rules, so a pool whose rules changed after
+    // deployment is priced from the stale copy until it is told to re-read them.
+    await arena.write.refreshPoolMeta([
+      [poolWeth.address, poolWbtc.address, poolSomi.address], [18, 18, 18],
+    ]);
+
+    // The questions priced as probabilities: a whole contract is worth under one.
+    for (const desk of [deskWeth, deskWbtc, deskSomi]) {
+      await desk.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+      await desk.write.setBookLevel([false, (ONE * 30n) / 100n, ONE]);
+      await desk.write.setBookLevel([true, (ONE * 30n) / 100n, ONE]);
+    }
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), NO_LABEL],
+    ]);
+
+    const spot = await arena.read.minDepositForKind([9, 0]) as bigint;
+    const mixed = await arena.read.minDepositForKind([9, 2]) as bigint;
+    expect(mixed, "the mixed market is the cheap one").to.be.lessThan(spot);
+    expect(await arena.read.minDepositForKind([9, 2]), "and agrees with the event view")
+      .to.equal(await arena.read.minDepositForEvent([9]));
+  });
 });

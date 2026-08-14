@@ -219,6 +219,21 @@ abstract contract ArenaStorage {
         return [POOL_WETH, POOL_WBTC, POOL_SOMI];
     }
 
+    /// @notice The same, for the three-way market choice. Reverts if the chosen
+    ///         set was never registered, rather than quietly starting a fight on
+    ///         three zero addresses that can never be traded.
+    function _poolsFor(ArenaTypes.MarketKind kind) internal view returns (address[3] memory) {
+        if (kind == ArenaTypes.MarketKind.Practice) {
+            if (!simPoolsSet) revert ArenaTypes.InvalidPool(address(0));
+            return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
+        }
+        if (kind == ArenaTypes.MarketKind.Mixed) {
+            if (!eventPoolsSet) revert ArenaTypes.InvalidPool(address(0));
+            return [EVENT_POOL_WETH, EVENT_POOL_WBTC, EVENT_POOL_SOMI];
+        }
+        return [POOL_WETH, POOL_WBTC, POOL_SOMI];
+    }
+
     /// @notice Reject any pool address Arena was never told about. Trading and
     ///         vault withdrawal both gate on this, so an arbitrary address can
     ///         never be handed a token approval or an order.

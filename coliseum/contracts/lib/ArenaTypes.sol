@@ -42,6 +42,24 @@ library ArenaTypes {
     uint8 internal constant TIER_9_MASK  = POOL_BIT_SOMI | POOL_BIT_WETH | POOL_BIT_WBTC;
     uint8 internal constant TIER_15_MASK = POOL_BIT_SOMI | POOL_BIT_WETH | POOL_BIT_WBTC;
 
+    /// @notice Which set of markets a fight trades on.
+    ///
+    ///         `Spot` is the real coin books. `Mixed` keeps the cheap SOMI coin
+    ///         book but puts a prediction question in each of the two costly
+    ///         slots, which is what takes a nine-round fight from about 150 USDso
+    ///         to under two. `Practice` is the mock books.
+    ///
+    ///         The two real kinds coexist rather than replace each other: every
+    ///         fight records its own three markets at the start, so a spot fight
+    ///         and a mixed fight run side by side without touching each other.
+    ///
+    /// @dev    Numbering is deliberate. The old flag was `bool simulated`, and
+    ///         false/true land on Spot/Practice, so every stored value and every
+    ///         caller that has not been updated still means what it used to.
+    ///         At three turns only SOMI trades, so Spot and Mixed are the same
+    ///         fight there — the difference begins at six.
+    enum MarketKind { Spot, Practice, Mixed }
+
     // ─── Structs ─────────────────────────────────────────────────────────────
 
     struct Duel {
@@ -113,6 +131,7 @@ library ArenaTypes {
     error InvalidFighterPair();
     error ReactivityUnderfunded();
     error InvalidTurnCount();        // turns not in {3, 6, 9, 15}
+    error InvalidMarketKind();       // not one of Spot, Practice, Mixed
     error DepositTooLow(uint256 required, uint256 provided);
     error NotDuelCreator();
     error DuelNotResolved();

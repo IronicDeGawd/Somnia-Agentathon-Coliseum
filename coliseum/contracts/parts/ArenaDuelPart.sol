@@ -46,9 +46,49 @@ contract ArenaDuelPart is ArenaStorage {
         uint16 turns,
         bool   simulated
     ) external returns (uint256 duelId) {
-        // Simulated duels can only start once the mock pool set is registered.
-        if (simulated && !simPoolsSet) revert ArenaTypes.InvalidPool(address(0));
-        return _start(fighterA, fighterB, turns, simulated, _pools(simulated));
+        return _startOn(
+            fighterA, fighterB, turns,
+            simulated ? ArenaTypes.MarketKind.Practice : ArenaTypes.MarketKind.Spot
+        );
+    }
+
+    /// @notice Start a duel on a chosen market: the real coin books, the mock
+    ///         books, or the mixed set that trades SOMI plus two prediction
+    ///         questions.
+    ///
+    ///         Spot and mixed fights coexist. Each fight records its own three
+    ///         markets when it starts, so an expensive real-asset fight and a
+    ///         cheap mixed one run side by side and neither can disturb the
+    ///         other's prices, balances or payout.
+    ///
+    ///         Every turn count is accepted on every market. Which combinations
+    ///         are actually offered is a lobby decision, not a contract one, so
+    ///         the menu can change without redeploying anything. Note that at
+    ///         three turns only SOMI trades, making spot and mixed the same
+    ///         fight — they diverge from six turns up.
+    function startDuelOn(
+        uint8  fighterA,
+        uint8  fighterB,
+        uint16 turns,
+        uint8  marketKind
+    ) external returns (uint256 duelId) {
+        if (marketKind > uint8(ArenaTypes.MarketKind.Mixed)) revert ArenaTypes.InvalidMarketKind();
+        return _startOn(fighterA, fighterB, turns, ArenaTypes.MarketKind(marketKind));
+    }
+
+    function _startOn(
+        uint8  fighterA,
+        uint8  fighterB,
+        uint16 turns,
+        ArenaTypes.MarketKind kind
+    ) internal returns (uint256 duelId) {
+        // `simulated` on the duel record still means only "the mock books", which
+        // is what every consumer reading that flag has always assumed.
+        return _start(
+            fighterA, fighterB, turns,
+            kind == ArenaTypes.MarketKind.Practice,
+            _poolsFor(kind)
+        );
     }
 
     /// @notice Start a duel on the registered event-contract desks.
@@ -67,8 +107,7 @@ contract ArenaDuelPart is ArenaStorage {
         uint8  fighterB,
         uint16 turns
     ) external onlyOwner returns (uint256 duelId) {
-        if (!eventPoolsSet) revert ArenaTypes.InvalidPool(address(0));
-        return _start(fighterA, fighterB, turns, false, _eventPools());
+        return _startOn(fighterA, fighterB, turns, ArenaTypes.MarketKind.Mixed);
     }
 
     /// @dev The one place a duel is created. Both entry points come through here

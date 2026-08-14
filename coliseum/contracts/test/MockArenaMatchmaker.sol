@@ -59,14 +59,18 @@ contract MockArenaMatchmaker {
 
     function FIGHTER_COUNT() external pure returns (uint8) { return 6; }
     function minDepositFor(uint16) external pure returns (uint256) { return 2e18; }
-    function minDepositForMarket(uint16, bool) external pure returns (uint256) { return 2e18; }
+    function minDepositForKind(uint16, uint8) external pure returns (uint256) { return 2e18; }
 
     // Mirrors ArenaStorage.platformFee: hybrid base + perTurn × turns.
     function platformFee(uint16 turns) public pure returns (uint256) {
         return 0.5e18 + 0.1e18 * uint256(turns);
     }
 
-    function startDuel(uint8 fA, uint8 fB, uint16 turns, bool /* simulated */) external returns (uint256 duelId) {
+    /// @notice Records the market each duel was started on, so a test can prove a
+    ///         mixed queue really did start a mixed fight and not a spot one.
+    mapping(uint256 => uint8) public duelMarketKind;
+
+    function startDuelOn(uint8 fA, uint8 fB, uint16 turns, uint8 marketKind) external returns (uint256 duelId) {
         require(!busy && activeCount < maxActive, "arena full");
         uint256 fee = platformFee(turns);
         uint256 required = 2e18 + fee;
@@ -75,6 +79,7 @@ contract MockArenaMatchmaker {
         activeDuelId = duelId;
         activeCount++;
         _duels[duelId] = DuelRecord(fA, fB, msg.sender, 1, 255, required - fee);
+        duelMarketKind[duelId] = marketKind;
     }
 
     function recoverFunds(uint256 duelId) external {
