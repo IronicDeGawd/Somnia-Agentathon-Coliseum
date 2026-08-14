@@ -79,10 +79,29 @@ contract ArenaViewPart is ArenaStorage {
         prompt = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
             mp[0], mp[1], mp[2],
-            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots
+            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel
         );
         allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
             duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], fighterBalances, poolMeta
-        ));
+        ), ArenaUtils.vocabFor(mp, poolLabel));
+    }
+
+    /// @notice Minimum USDso deposit for a turn tier on the event-contract set.
+    ///
+    ///         Exists so a lobby can price an event fight before one is started.
+    ///         The other two views cover the real and simulated sets only, which
+    ///         left the cheapest market the one nobody could quote.
+    function minDepositForEvent(uint16 turns) external view returns (uint256) {
+        address[3] memory mp = _eventPools();
+        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
+    }
+
+    /// @notice The question a pool asks, or empty if it is an ordinary asset.
+    ///
+    ///         Lives here rather than being a public variable because the router is
+    ///         never redeployed, so it has no compiled getter for anything appended
+    ///         to storage after it shipped.
+    function poolQuestion(address pool) external view returns (bytes8) {
+        return poolLabel[pool];
     }
 }

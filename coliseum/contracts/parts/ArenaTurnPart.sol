@@ -92,7 +92,7 @@ contract ArenaTurnPart is ArenaStorage {
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2],
             fighterBalances, poolMeta,
-            duelMarkSnapshots, duelPrevMarkSnapshots
+            duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel
         );
         // Ask by NAME, constrained to the actions this fighter can execute.
         //
@@ -102,11 +102,14 @@ contract ArenaTurnPart is ArenaStorage {
         // index — which is how a fighter came to sell a token it did not hold.
         // `inferString` with `allowedValues` constrains the answer set structurally
         // instead, so an inexecutable action is absent rather than merely discouraged.
+        // The vocabulary comes from the duel's own recorded pools, and the reply
+        // path below rebuilds it the same way. They must agree, or a named answer
+        // lands outside the set and every event trade becomes a silent Hold.
         string[] memory allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2],
             fighterBalances, poolMeta
-        ));
+        ), ArenaUtils.vocabFor(mPools, poolLabel));
         bytes memory payload = abi.encodeWithSelector(
             ILLMInferenceAgent.inferString.selector,
             marketSummary,
@@ -177,7 +180,7 @@ contract ArenaTurnPart is ArenaStorage {
 
         (bool decoded, string memory answer) = ArenaUtils.decodeStringResult(responses[0].result);
         (bool inSet, uint8 chosen) = decoded
-            ? ArenaUtils.matchAction(legal, answer)
+            ? ArenaUtils.matchAction(legal, answer, ArenaUtils.vocabFor(cPools, poolLabel))
             : (false, uint8(ArenaTypes.FighterAction.Hold));
 
         // An answer outside the executable set must not burn the turn. The player

@@ -6,6 +6,12 @@ import { deployArenaWithParts } from "./helpers/arena";
 
 const HANDLE_SELECTOR = "0xc4e34fdd" as `0x${string}`;
 
+/// A slot with an empty label is an ordinary asset; a labelled one is a question.
+const NO_LABEL = "0x0000000000000000" as `0x${string}`;
+const NO_LABELS = [NO_LABEL, NO_LABEL, NO_LABEL] as [`0x${string}`, `0x${string}`, `0x${string}`];
+const label = (s: string) =>
+  ("0x" + Buffer.from(s, "ascii").toString("hex").padEnd(16, "0")) as `0x${string}`;
+
 /**
  * Arena can be pointed at a third pool set: the event-contract desks.
  *
@@ -59,6 +65,7 @@ describe("Arena — event-contract pool set", function () {
     await arena.write.setEventDesks([
       [deskWeth.address, deskWbtc.address, deskSomi.address],
       [18, 8, 18],
+      NO_LABELS,
     ]);
 
     expect(await arena.read.eventPoolsSet()).to.equal(true);
@@ -75,6 +82,8 @@ describe("Arena — event-contract pool set", function () {
     expect(meta[1], "minimum size read from the desk").to.equal(9n);
     expect(meta[2], "lot size read from the desk").to.equal(11n);
     expect(meta[3], "tick size read from the desk").to.equal(7n);
+    expect(await arena.read.poolQuestion([deskWbtc.address]), "an unlabelled slot asks nothing")
+      .to.equal(NO_LABEL);
   });
 
   it("rejects a zero address in any slot", async function () {
@@ -85,7 +94,7 @@ describe("Arena — event-contract pool set", function () {
       const set = [deskWeth.address, deskWbtc.address, deskWeth.address];
       set[slot] = ZERO;
       let caught: unknown;
-      await arena.write.setEventDesks([set, [18, 18, 18]])
+      await arena.write.setEventDesks([set, [18, 18, 18], NO_LABELS])
         .catch((e: unknown) => { caught = e; });
       expect(caught, `slot ${slot} must reject a zero address`).to.not.be.undefined;
       expect(String(caught)).to.include("InvalidPool");
@@ -99,7 +108,7 @@ describe("Arena — event-contract pool set", function () {
 
     let caught: unknown;
     await arena.write.setEventDesks(
-      [[deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18]],
+      [[deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18], NO_LABELS],
       { account: stranger.account },
     ).catch((e: unknown) => { caught = e; });
     expect(caught).to.not.be.undefined;
@@ -110,7 +119,7 @@ describe("Arena — event-contract pool set", function () {
     const { arena, deskWeth, deskWbtc, deskSomi, poolWeth } = await deploy();
 
     await arena.write.setEventDesks([
-      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18], NO_LABELS,
     ]);
 
     // A duel on the REAL set. It recorded its own pools when it started.
@@ -122,7 +131,7 @@ describe("Arena — event-contract pool set", function () {
     const nextWbtc = await hre.viem.deployContract("MockSpotPool");
     const nextSomi = await hre.viem.deployContract("MockSpotPool");
     await arena.write.setEventDesks([
-      [nextWeth.address, nextWbtc.address, nextSomi.address], [18, 18, 18],
+      [nextWeth.address, nextWbtc.address, nextSomi.address], [18, 18, 18], NO_LABELS,
     ]);
 
     expect((await arena.read.EVENT_POOL_WETH() as string).toLowerCase())
@@ -141,7 +150,7 @@ describe("Arena — event-contract pool set", function () {
   it("startEventDuel binds the duel to the desks, not the real pools", async function () {
     const { arena, deskWeth, deskWbtc, deskSomi, poolSomi } = await deploy();
     await arena.write.setEventDesks([
-      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18], NO_LABELS,
     ]);
 
     await arena.write.startEventDuel([0, 1, 3]);
@@ -175,7 +184,7 @@ describe("Arena — event-contract pool set", function () {
     const { arena, deskWeth, deskWbtc, deskSomi } = await deploy();
     const [, stranger] = await hre.viem.getWalletClients();
     await arena.write.setEventDesks([
-      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18], NO_LABELS,
     ]);
 
     let caught: unknown;
@@ -188,7 +197,7 @@ describe("Arena — event-contract pool set", function () {
   it("an event duel and an ordinary duel run side by side without crossing", async function () {
     const { arena, deskWeth, deskWbtc, deskSomi, poolSomi } = await deploy();
     await arena.write.setEventDesks([
-      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18], NO_LABELS,
     ]);
 
     await arena.write.startDuel([0, 1, 3, false]);
@@ -235,7 +244,7 @@ describe("Arena — event-contract pool set", function () {
     await deskSomi.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
 
     await arena.write.setEventDesks([
-      [deskSomi.address, deskSomi.address, deskSomi.address], [18, 18, 18],
+      [deskSomi.address, deskSomi.address, deskSomi.address], [18, 18, 18], NO_LABELS,
     ]);
     await hre.network.provider.send("hardhat_setBalance", [
       arena.address, "0x" + parseEther("100").toString(16),
@@ -301,5 +310,149 @@ describe("Arena — event-contract pool set", function () {
     await arena.write.refreshPoolMeta([[poolWbtc.address, poolSomi.address], [8]])
       .catch((e: unknown) => { caught = e; });
     expect(caught, "one decimals entry per pool").to.not.be.undefined;
+  });
+
+  it("a labelled slot is marked as an event and keeps its label when refreshed", async function () {
+    const { arena, usdso, deskWeth, deskWbtc, deskSomi } = await deploy();
+
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), NO_LABEL],
+    ]);
+
+    expect(await arena.read.poolQuestion([deskWeth.address]), "the slot carries its question")
+      .to.equal(label("ETHUP"));
+    expect(await arena.read.poolQuestion([deskSomi.address]), "the unlabelled slot stays an asset")
+      .to.equal(NO_LABEL);
+
+    // Refreshing trading rules must not quietly turn a question back into an
+    // asset — the fighter would start reading odds as a price.
+    await deskWeth.write.setPoolParams([usdso.address, usdso.address, 42n, 5n, 3n]);
+    await arena.write.refreshPoolMeta([[deskWeth.address], [18]]);
+
+    const after = await arena.read.poolMeta([deskWeth.address]) as unknown[];
+    expect(after[3], "new tick picked up").to.equal(42n);
+    expect(await arena.read.poolQuestion([deskWeth.address]), "question survived the refresh")
+      .to.equal(label("ETHUP"));
+  });
+
+  it("an event slot is described as odds, with no digit anywhere in the prompt", async function () {
+    const { arena, usdso, deskSomi } = await deploy();
+    const ONE = 10n ** 18n;
+
+    // A prediction's mark lives between zero and one: this is 30% likely.
+    await deskSomi.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await deskSomi.write.setMarkPrice([(ONE * 30n) / 100n]);
+    await deskSomi.write.setBookLevel([false, (ONE * 31n) / 100n, ONE]);
+    await deskSomi.write.setBookLevel([true, (ONE * 29n) / 100n, ONE]);
+    await deskSomi.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
+
+    await arena.write.setEventDesks([
+      [deskSomi.address, deskSomi.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), label("SOMIUP")],
+    ]);
+    await arena.write.startEventDuel([0, 1, 3]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    const [prompt, allowed] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+
+    // The guarantee the whole prompt layer exists for: the inference agent pulls
+    // the first integer out of the model's reply, and a model echoes numbers it
+    // was shown. One digit in the prompt is one way to lose a duel.
+    expect(/[0-9]/.test(prompt), `no digit may reach the model: ${prompt}`).to.equal(false);
+
+    // A probability is not a price, and it does not "rise".
+    expect(prompt).to.include("SOMIUP");
+    expect(prompt).to.match(/unlikely|leaning|about even|likely/);
+    expect(prompt, "a question is not held like a coin").to.include("hold this position");
+    expect(prompt, "no asset name for a slot that holds a question").to.not.include("SOMI ");
+
+    // Actions read as backing or dropping the question.
+    expect(allowed).to.include("Hold");
+    expect(allowed.some((a) => a.startsWith("Back")), `got ${allowed}`).to.equal(true);
+    expect(allowed.some((a) => a.startsWith("Buy")), "no coin-buying words").to.equal(false);
+  });
+
+  it("a fighter's answer in question words actually trades", async function () {
+    // The asking side and the reply-matching side build the action names
+    // independently. If they ever disagree, every answer falls outside the
+    // allowed set and becomes a silent Hold — a bug that looks exactly like a
+    // fighter choosing not to trade, which is why it is asserted here.
+    const { arena, usdso, deskSomi } = await deploy();
+    const mockPlatform = await hre.viem.getContractAt(
+      "MockPlatform",
+      (await arena.read.PLATFORM_ADDR()) as `0x${string}`,
+    );
+    const publicClient = await hre.viem.getPublicClient();
+    const ONE = 10n ** 18n;
+
+    await deskSomi.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await deskSomi.write.setMarkPrice([(ONE * 40n) / 100n]);
+    await deskSomi.write.setBookLevel([false, (ONE * 41n) / 100n, ONE]);
+    await deskSomi.write.setBookLevel([true, (ONE * 39n) / 100n, ONE]);
+    await deskSomi.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
+
+    await arena.write.setEventDesks([
+      [deskSomi.address, deskSomi.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), label("SOMIUP")],
+    ]);
+    await hre.network.provider.send("hardhat_setBalance", [
+      arena.address, "0x" + parseEther("100").toString(16),
+    ]);
+
+    await arena.write.startEventDuel([0, 1, 3]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+    await hre.network.provider.send("evm_mine", []);
+
+    const [, allowed] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+    const backing = allowed.find((a) => a.startsWith("Back"));
+    expect(backing, `a backable question was offered: ${allowed}`).to.equal("BackSOMIUP");
+
+    const openingQuote = (await arena.read.fighterBalances(
+      [deskSomi.address, duelId, 0],
+    ) as unknown[])[1];
+
+    const tx = await arena.write.turn([duelId]);
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx });
+    const requestIds = receipt.logs
+      .filter((l) => l.topics.length === 4)
+      .map((l) => BigInt(l.topics[3]!));
+
+    await hre.network.provider.send("evm_mine", []);
+    await mockPlatform.write.dispatchSuccessString([
+      arena.address, requestIds[0], HANDLE_SELECTOR, backing!,
+    ]);
+
+    const bal = await arena.read.fighterBalances([deskSomi.address, duelId, 0]) as unknown[];
+    expect(bal[0], "the answer was accepted and the position opened").to.be.greaterThan(0n);
+    expect(bal[1], "and quote was spent doing it").to.be.lessThan(openingQuote as bigint);
+  });
+
+  it("minDepositForEvent prices a tier on the event set", async function () {
+    const { arena, usdso, deskWeth, deskWbtc, deskSomi } = await deploy();
+    const ONE = 10n ** 18n;
+
+    for (const desk of [deskWeth, deskWbtc, deskSomi]) {
+      await desk.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+      await desk.write.setBookLevel([false, (ONE * 30n) / 100n, ONE]);
+      await desk.write.setBookLevel([true, (ONE * 30n) / 100n, ONE]);
+    }
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), NO_LABEL],
+    ]);
+
+    // A question priced at three tenths, a hundredth of a contract minimum, two
+    // fighters: the smallest order is worth a fraction of a cent, which is the
+    // whole reason these slots replaced the spot books.
+    const three = await arena.read.minDepositForEvent([3]) as bigint;
+    const fifteen = await arena.read.minDepositForEvent([15]) as bigint;
+    expect(three, "a tier has a real price").to.be.greaterThan(0n);
+    expect(fifteen, "more rounds cost more").to.be.greaterThan(three);
+    expect(fifteen, "but still trivially small").to.be.lessThan(parseEther("1"));
   });
 });

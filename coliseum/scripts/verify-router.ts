@@ -43,7 +43,8 @@ async function main() {
     "startDuel(uint8,uint8,uint16,bool)", "startEventDuel(uint8,uint8,uint16)",
     "finalizeDuel(uint256)", "recoverFunds(uint256)", "turn(uint256)",
     "fundPools(uint256)", "setSimPools(address,address,address,uint8[3])",
-    "setEventDesks(address[3],uint8[3])", "withdrawFromPool(address,address,uint256)",
+    "setEventDesks(address[3],uint8[3],bytes8[3])", "minDepositForEvent(uint16)",
+    "withdrawFromPool(address,address,uint256)",
   ];
   console.log("\nRouting:");
   let unrouted = 0;

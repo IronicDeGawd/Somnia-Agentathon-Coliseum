@@ -69,6 +69,13 @@ library ArenaTypes {
     }
 
     /// @notice Per-pool ABI metadata cached at construction.
+    /// @dev DO NOT add fields. Arena's router is deployed once and kept at its
+    ///      address while its parts are replaced, so the router's bytecode holds
+    ///      the auto-generated `poolMeta` getter compiled against THIS shape. A new
+    ///      field would make the live getter return fewer values than every
+    ///      consumer's description promises, and every read of it would fail to
+    ///      decode. Per-pool additions go in their own appended mapping instead —
+    ///      see `poolLabel` in ArenaStorage.
     struct PoolMeta {
         uint8   baseDecimals;
         uint256 minQuantity;

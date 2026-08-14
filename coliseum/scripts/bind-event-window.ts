@@ -33,6 +33,12 @@ const MARKET_CREATED = parseAbiItem(
 const SCAN_CHUNKS = 200;
 const CHUNK = 1000n;
 
+/// A slot's question in a few characters. It becomes part of the action name the
+/// model answers with, so it must contain no spaces and no digits.
+const NO_LABEL = "0x0000000000000000" as `0x${string}`;
+const label = (s: string) =>
+  ("0x" + Buffer.from(s, "ascii").toString("hex").padEnd(16, "0")) as `0x${string}`;
+
 type Window = {
   asset: string; pool: `0x${string}`; marketId: `0x${string}`;
   expiry: number; intervalSec: number;
@@ -127,8 +133,16 @@ async function main() {
   // ── register with Arena ───────────────────────────────────────────────────
   // The slots are [WETH, WBTC, SOMI]; the SOMI slot keeps the real spot pool,
   // which is already cheap enough. Both desks present 18 decimals to Arena.
+  //
+  // The labels become the words a fighter reads and answers with, so the SOMI
+  // slot is deliberately left unlabelled — it really is a coin, and calling it a
+  // question would describe its price as a probability.
   const somi = (await arena.read.POOL_SOMI()) as `0x${string}`;
-  const hash = await arena.write.setEventDesks([[bound.ETH, bound.BTC, somi], [18, 18, 18]]);
+  const hash = await arena.write.setEventDesks([
+    [bound.ETH, bound.BTC, somi],
+    [18, 18, 18],
+    [label("ETHUP"), label("BTCUP"), NO_LABEL],
+  ]);
   await pub.waitForTransactionReceipt({ hash });
   console.log(`\nArena event slots: ETH-Q ${bound.ETH}  BTC-Q ${bound.BTC}  SOMI ${somi}`);
 

@@ -89,13 +89,20 @@ contract ArenaVaultPart is ArenaStorage {
     ///         Re-registering also refreshes each address's cached trading rules,
     ///         which is how a pool's tick or minimum size can change without a
     ///         redeploy.
+    /// @param labels the question each slot asks, in a few characters and with no
+    ///        spaces ("BTCUP"). A slot with an empty label is treated as an
+    ///        ordinary asset — which is how the SOMI slot keeps its spot book — and
+    ///        a slot with one is described to fighters as a question about odds
+    ///        rather than as a price. The label becomes part of the action name the
+    ///        model answers with, so changing it changes the fighter's vocabulary.
     function setEventDesks(
         address[3] memory pools,
-        uint8[3]   memory baseDecimals
+        uint8[3]   memory baseDecimals,
+        bytes8[3]  memory labels
     ) external onlyOwner {
         for (uint256 i = 0; i < 3; i++) {
             if (pools[i] == address(0)) revert ArenaTypes.InvalidPool(pools[i]);
-            _cachePoolMeta(pools[i], baseDecimals[i]);
+            _cachePoolMeta(pools[i], baseDecimals[i], labels[i]);
         }
         EVENT_POOL_WETH = pools[0];
         EVENT_POOL_WBTC = pools[1];

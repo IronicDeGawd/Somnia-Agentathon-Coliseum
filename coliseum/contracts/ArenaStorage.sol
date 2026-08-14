@@ -175,6 +175,21 @@ abstract contract ArenaStorage {
     address public EVENT_POOL_SOMI;
     bool    public eventPoolsSet;
 
+    /// @notice The question a slot asks, in a few characters and with no spaces
+    ///         ("BTCUP"). Empty means the address is an ordinary asset, which is
+    ///         what every spot pool is and what an unlabelled slot stays.
+    ///
+    ///         A prediction contract's mark is a probability between zero and one,
+    ///         not a price, so a labelled pool is described to fighters in odds and
+    ///         its trades read as backing or dropping the question. The label
+    ///         becomes part of the action name the model answers with.
+    ///
+    ///         Deliberately its own mapping rather than a field on PoolMeta: the
+    ///         router is never redeployed, so its compiled `poolMeta` getter cannot
+    ///         grow. Appending here changes no existing slot. Read it through
+    ///         ArenaViewPart, since the router has no getter for it either.
+    mapping(address => bytes8) internal poolLabel;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {
@@ -226,6 +241,9 @@ abstract contract ArenaStorage {
     ///
     ///         Lives here because both the router's constructor and the part that
     ///         registers new pool sets need it.
+    ///         Leaves the pool's question label alone, so refreshing a desk's
+    ///         trading rules cannot silently turn it back into a plain asset and
+    ///         start describing odds as a price.
     function _cachePoolMeta(address pool, uint8 baseDecimals) internal {
         try ISpotPool(pool).getPoolParams() returns (
             address, address, uint256, uint256,
@@ -245,5 +263,12 @@ abstract contract ArenaStorage {
                 tickSize:     1
             });
         }
+    }
+
+    /// @param label the question in a few characters for an event desk, or empty to
+    ///        return the slot to being an ordinary asset.
+    function _cachePoolMeta(address pool, uint8 baseDecimals, bytes8 label) internal {
+        _cachePoolMeta(pool, baseDecimals);
+        poolLabel[pool] = label;
     }
 }
