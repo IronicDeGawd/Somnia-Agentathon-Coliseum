@@ -25,7 +25,11 @@ const TIER_POOLS: Record<number, string[]> = {
 // Tier 3 is deliberately not offered: it trades SOMI only, so both fighters have
 // the same single choice every turn and the duel converges to a near-tie with no
 // story. The contracts still accept turns == 3 for duels already on chain.
-const TURN_OPTIONS = [6, 9, 15] as const;
+//
+// TEMPORARY — LOCAL VERIFICATION ONLY. Tier 3 is re-enabled here so a live
+// end-to-end run costs ~1.34 USDso instead of ~24.67. Revert to [6, 9, 15]
+// before this is built for the public site.
+const TURN_OPTIONS = [3, 6, 9, 15] as const;
 /**
  * Any tier a duel can have, which still includes 3 — duels already on chain use it
  * and a locked join has to be able to name it. TURN_OPTIONS is the narrower set a
