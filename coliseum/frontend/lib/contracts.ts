@@ -25,7 +25,7 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0xea808eac9798e2eda1a937d3d2be8541258e3802' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0xecd7b88bb6c8298d0c9f140fec2bd8fa224c5619' as const,
+  Matchmaker: '0x6b7e255a3420c7846a15e963589ffd5504773b0a' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0x11Ac9B65b05dfb1406618Bda649b410B8e8F7108' as `0x${string}`,
 };
