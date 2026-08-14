@@ -51,7 +51,7 @@ async function deploy() {
   const poolSomi     = await hre.viem.deployContract("MockSpotPool");
   const mockPlatform = await hre.viem.deployContract("MockPlatform");
 
-  const { arena, viewPart, router } = await deployArenaWithParts(hre, [
+  const { arena, viewPart, router, parts } = await deployArenaWithParts(hre, [
     registry.address,
     usdso.address,
     poolWeth.address,
@@ -69,7 +69,7 @@ async function deploy() {
   await usdso.write.mint([owner.account.address, parseEther("100000")]);
   await usdso.write.approve([arena.address, maxUint256]);
 
-  return { arena, viewPart, router, usdso, owner };
+  return { arena, viewPart, router, parts, usdso, owner };
 }
 
 describe("Arena — routing to parts", function () {
@@ -194,6 +194,30 @@ describe("Arena — routing to parts", function () {
     await arena.read.hasCapacity().catch((e: unknown) => { caught = e; });
     expect(caught, "an unrouted selector must revert").to.not.be.undefined;
     expect(String(caught)).to.include("NoPart");
+  });
+
+  it("events raised by a part are emitted from Arena's own address", async function () {
+    // The frontend and the indexer watch one address and filter by event
+    // signature. A part emits while running as the router, so its logs must
+    // carry the ROUTER's address — if they carried the part's, every duel would
+    // vanish from the site the moment a part moved.
+    const { arena, router, parts } = await deploy();
+    const publicClient = await hre.viem.getPublicClient();
+
+    // startDuel lives on the duel part and raises DuelStarted.
+    const tx = await arena.write.startDuel([0, 1, 3, false]);
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx });
+
+    const fromArena = receipt.logs.filter(
+      (l) => l.address.toLowerCase() === router.address.toLowerCase(),
+    );
+    expect(fromArena.length, "the duel's own events come from Arena").to.be.greaterThan(0);
+
+    const partAddresses = new Set(Object.values(parts).map((a) => a.toLowerCase()));
+    for (const log of receipt.logs) {
+      expect(partAddresses.has(log.address.toLowerCase()),
+        `no log may come from a part's own address (${log.address})`).to.equal(false);
+    }
   });
 
   it("every function the outside world calls is reachable", async function () {

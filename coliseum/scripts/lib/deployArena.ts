@@ -25,7 +25,7 @@ import { toFunctionSelector, type Abi } from "viem";
 type Hex = `0x${string}`;
 
 /** Every part, in the order they are deployed and wired. */
-export const ARENA_PARTS = ["ArenaVaultPart", "ArenaDuelPart", "ArenaViewPart"] as const;
+export const ARENA_PARTS = ["ArenaVaultPart", "ArenaDuelPart", "ArenaTurnPart", "ArenaViewPart"] as const;
 
 /** Function entries a part claims: its own, minus anything the router answers. */
 function claimedSelectors(routerAbi: Abi, partAbi: Abi): Hex[] {
@@ -56,23 +56,31 @@ export async function deployLinkedArena(
   log(`  ArenaUtils:      ${utils.address}  (library)`);
   const libraries = { ArenaUtils: utils.address };
 
+  /**
+   * Only a contract that actually calls into ArenaUtils may be handed the link;
+   * passing it to one that does not is rejected outright. The router itself no
+   * longer calls it — routing is all it does — so this has to be checked rather
+   * than assumed.
+   */
+  async function linkOpts(name: string) {
+    const artifact = await hre.artifacts.readArtifact(name);
+    const needsUtils = Object.keys(artifact.linkReferences ?? {}).length > 0;
+    return { artifact, opts: needsUtils ? { libraries } : {} };
+  }
+
+  const routerLink = await linkOpts("Arena");
   const router = await hre.viem.deployContract("Arena", args as never, {
     ...(opts.value !== undefined ? { value: opts.value } : {}),
-    libraries,
+    ...routerLink.opts,
   } as never);
   log(`  Arena:           ${router.address}  (router)`);
 
-  const routerAbi = (await hre.artifacts.readArtifact("Arena")).abi as Abi;
+  const routerAbi = routerLink.artifact.abi as Abi;
   const parts: Record<string, Hex> = {};
 
   for (const name of ARENA_PARTS) {
-    const artifact = await hre.artifacts.readArtifact(name);
-    // Only parts that actually call into ArenaUtils may be given the link —
-    // passing it to one that does not is rejected outright.
-    const needsUtils = Object.keys(artifact.linkReferences ?? {}).length > 0;
-    const part = await hre.viem.deployContract(
-      name, [], (needsUtils ? { libraries } : {}) as never,
-    );
+    const { artifact, opts: partOpts } = await linkOpts(name);
+    const part = await hre.viem.deployContract(name, [], partOpts as never);
     const partAbi = artifact.abi as Abi;
     const selectors = claimedSelectors(routerAbi, partAbi);
 
