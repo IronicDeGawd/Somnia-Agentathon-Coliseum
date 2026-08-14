@@ -539,4 +539,65 @@ describe("Arena — event-contract pool set", function () {
     expect(await arena.read.minDepositForKind([9, 2]), "and agrees with the event view")
       .to.equal(await arena.read.minDepositForEvent([9]));
   });
+
+  it("every mixed tier trades every slot, so even the shortest offers a choice", async function () {
+    // The tier ladder narrows on the coin books because a smallest BTC order
+    // costs dollars and a smallest SOMI order costs cents, so a cheap short
+    // fight used only the cheap slot. On questions that reasoning inverts —
+    // every slot costs a fraction of a cent — and narrowing would leave the
+    // shortest fight with ONE option per turn, which ends in a tie.
+    const { arena, usdso, deskWeth, deskWbtc, deskSomi } = await deploy();
+    const ONE = 10n ** 18n;
+
+    for (const desk of [deskWeth, deskWbtc, deskSomi]) {
+      await desk.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+      await desk.write.setMarkPrice([(ONE * 40n) / 100n]);
+      await desk.write.setBookLevel([false, (ONE * 41n) / 100n, ONE]);
+      await desk.write.setBookLevel([true, (ONE * 39n) / 100n, ONE]);
+      await desk.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
+    }
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), label("ETHHOUR")],
+    ]);
+
+    // Four fights at once, one per tier — above the default concurrency cap.
+    await arena.write.setMaxActiveDuels([4]);
+
+    const ALL_SLOTS = 0x07;
+    for (const turns of [3, 6, 9, 15]) {
+      await arena.write.startDuelOn([0, 1, turns, 2]);
+      const duelId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+      const duel = await arena.read.duels([duelId]) as unknown[];
+      expect(Number(duel[7]), `${turns}-round mixed fight trades every slot`).to.equal(ALL_SLOTS);
+
+      const [prompt, allowed] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+      expect(/[0-9]/.test(prompt), "still no digit in the prompt").to.equal(false);
+      // Hold plus a way into each of the three questions.
+      const backs = allowed.filter((a) => a.startsWith("Back"));
+      expect(backs.length, `${turns} rounds offers all three questions: ${allowed}`).to.equal(3);
+      expect(new Set(backs).size, "and they are three DIFFERENT questions").to.equal(3);
+    }
+  });
+
+  it("the coin ladder is untouched on the spot market", async function () {
+    // Only the mixed market changed. A spot fight must still narrow with its
+    // tier, or a three-round spot fight would suddenly demand a BTC order.
+    const { arena, usdso, poolWeth, poolWbtc, poolSomi } = await deploy();
+    const ONE = 10n ** 18n;
+    for (const pool of [poolWeth, poolWbtc, poolSomi]) {
+      await pool.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 1000n, 1n]);
+      await pool.write.setBookLevel([false, 2000n * ONE, ONE]);
+      await pool.write.setBookLevel([true, 2000n * ONE, ONE]);
+    }
+    await arena.write.refreshPoolMeta([
+      [poolWeth.address, poolWbtc.address, poolSomi.address], [18, 18, 18],
+    ]);
+
+    await arena.write.startDuelOn([0, 1, 3, 0]);
+    const duelId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+    const duel = await arena.read.duels([duelId]) as unknown[];
+    expect(Number(duel[7]), "a three-round spot fight still trades SOMI alone").to.equal(0x04);
+  });
 });

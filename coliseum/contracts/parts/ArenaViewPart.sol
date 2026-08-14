@@ -61,8 +61,10 @@ contract ArenaViewPart is ArenaStorage {
     /// @notice Minimum USDso deposit for a turn tier on the chosen market (real or
     ///         simulated). Matchmaker uses this so simulated queues price correctly.
     function minDepositForMarket(uint16 turns, bool simulated) external view returns (uint256) {
-        address[3] memory mp = _pools(simulated);
-        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
+        ArenaTypes.MarketKind kind = simulated
+            ? ArenaTypes.MarketKind.Practice : ArenaTypes.MarketKind.Spot;
+        address[3] memory mp = _poolsFor(kind);
+        return ArenaUtils.minDepositFor(turns, kind, mp[0], mp[1], mp[2], poolMeta);
     }
 
     /// @notice The exact prompt and allowed action list a fighter would be asked
@@ -93,7 +95,8 @@ contract ArenaViewPart is ArenaStorage {
     ///         left the cheapest market the one nobody could quote.
     function minDepositForEvent(uint16 turns) external view returns (uint256) {
         address[3] memory mp = _eventPools();
-        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
+        return ArenaUtils.minDepositFor(
+            turns, ArenaTypes.MarketKind.Mixed, mp[0], mp[1], mp[2], poolMeta);
     }
 
     /// @notice Minimum USDso deposit for a turn tier on any of the three markets.
@@ -101,8 +104,9 @@ contract ArenaViewPart is ArenaStorage {
     ///         different function per market.
     function minDepositForKind(uint16 turns, uint8 marketKind) external view returns (uint256) {
         if (marketKind > uint8(ArenaTypes.MarketKind.Mixed)) revert ArenaTypes.InvalidMarketKind();
-        address[3] memory mp = _poolsFor(ArenaTypes.MarketKind(marketKind));
-        return ArenaUtils.minDepositFor(turns, mp[0], mp[1], mp[2], poolMeta);
+        ArenaTypes.MarketKind kind = ArenaTypes.MarketKind(marketKind);
+        address[3] memory mp = _poolsFor(kind);
+        return ArenaUtils.minDepositFor(turns, kind, mp[0], mp[1], mp[2], poolMeta);
     }
 
     /// @notice The question a pool asks, or empty if it is an ordinary asset.

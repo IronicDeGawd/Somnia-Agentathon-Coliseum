@@ -1,10 +1,14 @@
 // ============================================================================
-// bind-event-window — point two idle EventDesks at live prediction windows and
-// register them with Arena as the WETH and WBTC slots.
+// bind-event-window — point three idle EventDesks at live prediction windows and
+// register all three of Arena's slots as questions.
 //
-// Arena keeps its cheap SOMI spot book in the third slot, so a fight trades one
-// real coin and two questions. Every fight records its own market set, so
-// re-pointing the desks between fights cannot disturb a fight already running.
+// The SOMI coin book used to keep the third slot. It was dropped because on this
+// market it had become the expensive one: a smallest SOMI order costs about nine
+// cents against a third of a cent for a question, so a single coin slot was 99%
+// of a mixed fight's whole deposit. Real coin trading lives in the spot game.
+//
+// Every fight records its own market set, so re-pointing the desks between fights
+// cannot disturb a fight already running.
 //
 // Run:
 //   pnpm exec hardhat run scripts/bind-event-window.ts --network somnia
@@ -14,6 +18,8 @@
 //   INTERVALS    — acceptable window lengths in minutes (default "60,240").
 //                  Among these, the window priced NEAREST EVEN MONEY wins — see
 //                  the note on pickWindow for why that beats picking by length.
+//   INTERVALS    — see above; three DISTINCT questions are bound, so at least
+//                  three (asset, window-length) pairs must be available.
 //   FUND_EACH    — collateral per desk, whole tokens; default from the manifest.
 //   RELEASE      — set to 1 to mark every desk free and exit, without binding.
 // ============================================================================
@@ -35,7 +41,6 @@ const CHUNK = 1000n;
 
 /// A slot's question in a few characters. It becomes part of the action name the
 /// model answers with, so it must contain no spaces and no digits.
-const NO_LABEL = "0x0000000000000000" as `0x${string}`;
 const label = (s: string) =>
   ("0x" + Buffer.from(s, "ascii").toString("hex").padEnd(16, "0")) as `0x${string}`;
 
@@ -90,54 +95,75 @@ async function main() {
    * pick on the price itself rather than on the window's length, and let the
    * length matter only through the requirement that it outlive the fight.
    */
-  const pickWindow = async (asset: string): Promise<Window> => {
-    const forAsset = live.filter((w) => w.asset.toUpperCase() === asset);
-    if (!forAsset.length) {
-      throw new Error(
-        `no ${asset} window of ${intervals.map((i) => i / 60).join("/")}min with >${minLife}s left. ` +
-        `Wait, lower MIN_LIFE_SEC, or widen INTERVALS.`,
-      );
-    }
-    const priced = await Promise.all(forAsset.map(async (w) => ({ w, mid: await midPrice(pub, w.pool) })));
-    // A window with no book at all cannot be traded and cannot be priced; treat
-    // it as maximally undesirable rather than as a perfect zero.
-    priced.sort((a, b) => distanceFromEven(a.mid) - distanceFromEven(b.mid));
-    return priced[0].w;
-  };
+  // Score every candidate once, then take the three most uncertain, never
+  // repeating an (asset, window-length) pair — three copies of the same question
+  // would give a fighter three ways to say the same thing.
+  const priced = await Promise.all(
+    live.map(async (w) => ({ w, mid: await midPrice(pub, w.pool) })),
+  );
+  priced.sort((a, b) => distanceFromEven(a.mid) - distanceFromEven(b.mid));
 
-  const chosen = { ETH: await pickWindow("ETH"), BTC: await pickWindow("BTC") };
-  for (const [asset, w] of Object.entries(chosen)) {
-    const mid = await midPrice(pub, w.pool);
-    console.log(
-      `${asset}: ${w.intervalSec / 60}min window priced at ${mid === null ? "no book" : mid.toFixed(3)}, ` +
-      `${w.expiry - now}s left  pool ${w.pool}`,
+  const chosen: { w: Window; mid: number | null; label: string }[] = [];
+  const takenPairs = new Set<string>();
+  for (const cand of priced) {
+    const pair = `${cand.w.asset.toUpperCase()}:${cand.w.intervalSec}`;
+    if (takenPairs.has(pair)) continue;
+    takenPairs.add(pair);
+    chosen.push({ ...cand, label: "" });
+    if (chosen.length === 3) break;
+  }
+  if (chosen.length < 3) {
+    throw new Error(
+      `only ${chosen.length} distinct question(s) with >${minLife}s left; three slots need three. ` +
+      `Widen INTERVALS or lower MIN_LIFE_SEC.`,
     );
   }
 
-  // ── claim two idle desks ──────────────────────────────────────────────────
+  // Name each slot. The label is what the fighter reads AND the word it answers
+  // with, so it must be unique, spaceless and — critically — carry no digit: a
+  // number in the prompt has already been echoed back and executed as a move.
+  const horizonWord = (sec: number) => (sec <= 900 ? "SOON" : sec <= 3600 ? "HOUR" : "LATER");
+  const usedLabels = new Set<string>();
+  for (const c of chosen) {
+    const asset = c.w.asset.toUpperCase();
+    let name = `${asset}UP`;
+    if (usedLabels.has(name)) name = `${asset}${horizonWord(c.w.intervalSec)}`;
+    let n = 0;
+    while (usedLabels.has(name)) name = `${asset}${horizonWord(c.w.intervalSec)}${"X".repeat(++n)}`;
+    usedLabels.add(name);
+    c.label = name.slice(0, 8);
+  }
+
+  for (const c of chosen) {
+    console.log(
+      `${c.label.padEnd(8)} ${c.w.asset} ${c.w.intervalSec / 60}min priced at ` +
+      `${c.mid === null ? "no book" : c.mid.toFixed(3)}, ${c.w.expiry - now}s left  pool ${c.w.pool}`,
+    );
+  }
+
+  // ── claim three idle desks ────────────────────────────────────────────────
   const free: typeof desks = [];
   for (const desk of desks) if (!(await desk.read.inUse())) free.push(desk);
-  if (free.length < 2) {
+  if (free.length < 3) {
     throw new Error(`only ${free.length} idle desk(s); a finished fight has not released its desks. Run with RELEASE=1.`);
   }
 
   const fundEach = BigInt(process.env.FUND_EACH ?? "0") * 10n ** 6n || BigInt(ev.fundEach ?? "50000000");
-  const bound: Record<string, `0x${string}`> = {};
+  const deskFor: `0x${string}`[] = [];
 
-  for (const [asset, w] of [["ETH", chosen.ETH], ["BTC", chosen.BTC]] as [string, Window][]) {
+  for (const c of chosen) {
     const desk = free.shift()!;
 
     // bind() retreats from any previous window first, collecting winnings and
     // pulling collateral back, so nothing is stranded in a pool nobody watches.
-    let hash = await desk.write.bind([w.pool, w.marketId]);
+    let hash = await desk.write.bind([c.w.pool, c.w.marketId]);
     await pub.waitForTransactionReceipt({ hash });
 
     // Only now is there a vault to fund. Top up to the target rather than adding
     // blindly, so a desk carrying winnings from a previous window is not doubled.
     const held6 = ((await desk.read.getWithdrawableBalance([manifest.contracts.Arena.address, ev.collateral])) as bigint) / 10n ** 12n;
     if (held6 < fundEach) {
-      const need = fundEach - held6;
-      hash = await treasury.write.fundDesk([desk.address, need]);
+      hash = await treasury.write.fundDesk([desk.address, fundEach - held6]);
       await pub.waitForTransactionReceipt({ hash });
     }
 
@@ -145,31 +171,31 @@ async function main() {
     await pub.waitForTransactionReceipt({ hash });
 
     const vault = (await desk.read.getWithdrawableBalance([manifest.contracts.Arena.address, ev.collateral])) as bigint;
-    console.log(`${asset} desk ${desk.address} bound and holding ${formatUnits(vault, 18)}`);
-    bound[asset] = desk.address;
+    console.log(`${c.label} desk ${desk.address} bound and holding ${formatUnits(vault, 18)}`);
+    deskFor.push(desk.address);
   }
 
   // ── register with Arena ───────────────────────────────────────────────────
-  // The slots are [WETH, WBTC, SOMI]; the SOMI slot keeps the real spot pool,
-  // which is already cheap enough. Both desks present 18 decimals to Arena.
-  //
-  // The labels become the words a fighter reads and answers with, so the SOMI
-  // slot is deliberately left unlabelled — it really is a coin, and calling it a
-  // question would describe its price as a probability.
-  const somi = (await arena.read.POOL_SOMI()) as `0x${string}`;
+  // All three slots now hold questions. The slot names [WETH, WBTC, SOMI] are
+  // only positions in the contract's array — what a slot actually asks comes
+  // from its label, which is what the fighter reads and answers with.
   const hash = await arena.write.setEventDesks([
-    [bound.ETH, bound.BTC, somi],
+    [deskFor[0], deskFor[1], deskFor[2]],
     [18, 18, 18],
-    [label("ETHUP"), label("BTCUP"), NO_LABEL],
+    [label(chosen[0].label), label(chosen[1].label), label(chosen[2].label)],
   ]);
   await pub.waitForTransactionReceipt({ hash });
-  console.log(`\nArena event slots: ETH-Q ${bound.ETH}  BTC-Q ${bound.BTC}  SOMI ${somi}`);
+  console.log(`\nArena mixed slots: ${chosen.map((c, i) => `${c.label} ${deskFor[i]}`).join("  ")}`);
 
-  ev.bound = {
-    ETH: { desk: bound.ETH, pool: chosen.ETH.pool, marketId: chosen.ETH.marketId, expiry: chosen.ETH.expiry },
-    BTC: { desk: bound.BTC, pool: chosen.BTC.pool, marketId: chosen.BTC.marketId, expiry: chosen.BTC.expiry },
-    somiPool: somi,
-  };
+  ev.bound = chosen.map((c, i) => ({
+    label: c.label,
+    desk: deskFor[i],
+    asset: c.w.asset,
+    intervalSec: c.w.intervalSec,
+    pool: c.w.pool,
+    marketId: c.w.marketId,
+    expiry: c.w.expiry,
+  }));
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
   console.log(`Recorded the binding under contracts.EventDesks.bound`);
 }

@@ -19,6 +19,30 @@ library ArenaUtils {
         revert ArenaTypes.InvalidTurnCount();
     }
 
+    /// @notice Which slots a fight trades, given its length AND its market.
+    ///
+    ///         The ladder above widens with the round count because it was built
+    ///         for the coin books, where the slots cost wildly different amounts —
+    ///         a smallest SOMI order is about nine cents, a smallest BTC order a
+    ///         few dollars — so a short cheap fight used only the cheap slot.
+    ///
+    ///         On the mixed market that reasoning inverts: every slot holds a
+    ///         prediction question costing a fraction of a cent, so there is no
+    ///         expensive slot to ration. Narrowing there would only take choices
+    ///         away — and a fight with ONE tradable slot has both fighters facing
+    ///         the same single option every turn, which is how a fight ends in a
+    ///         tie with nothing to watch.
+    ///
+    ///         So on mixed, every tier trades every slot and the tiers differ only
+    ///         in how long the fight runs.
+    function poolMaskFor(uint16 turns, ArenaTypes.MarketKind kind) internal pure returns (uint8) {
+        if (kind == ArenaTypes.MarketKind.Mixed) {
+            if (!isValidTurnCount(turns)) revert ArenaTypes.InvalidTurnCount();
+            return ArenaTypes.POOL_BIT_WETH | ArenaTypes.POOL_BIT_WBTC | ArenaTypes.POOL_BIT_SOMI;
+        }
+        return poolMaskForTurns(turns);
+    }
+
     function isValidTurnCount(uint16 turns) internal pure returns (bool) {
         return turns == 3 || turns == 6 || turns == 9 || turns == 15;
     }
@@ -36,7 +60,20 @@ library ArenaUtils {
         address poolSomi,
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta
     ) internal view returns (uint256 total) {
-        uint8 mask = poolMaskForTurns(turns);
+        return minDepositFor(turns, ArenaTypes.MarketKind.Spot, poolWeth, poolWbtc, poolSomi, poolMeta);
+    }
+
+    /// @notice The same, for a stated market — which decides how many slots the
+    ///         fight trades and therefore what it costs to cover them.
+    function minDepositFor(
+        uint16 turns,
+        ArenaTypes.MarketKind kind,
+        address poolWeth,
+        address poolWbtc,
+        address poolSomi,
+        mapping(address => ArenaTypes.PoolMeta) storage poolMeta
+    ) internal view returns (uint256 total) {
+        uint8 mask = poolMaskFor(turns, kind);
         address[3] memory pools = [poolWeth, poolWbtc, poolSomi];
         uint8[3] memory bits = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
 

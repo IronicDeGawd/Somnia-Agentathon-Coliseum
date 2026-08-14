@@ -84,11 +84,7 @@ contract ArenaDuelPart is ArenaStorage {
     ) internal returns (uint256 duelId) {
         // `simulated` on the duel record still means only "the mock books", which
         // is what every consumer reading that flag has always assumed.
-        return _start(
-            fighterA, fighterB, turns,
-            kind == ArenaTypes.MarketKind.Practice,
-            _poolsFor(kind)
-        );
+        return _start(fighterA, fighterB, turns, kind, _poolsFor(kind));
     }
 
     /// @notice Start a duel on the registered event-contract desks.
@@ -118,7 +114,7 @@ contract ArenaDuelPart is ArenaStorage {
         uint8  fighterA,
         uint8  fighterB,
         uint16 turns,
-        bool   simulated,
+        ArenaTypes.MarketKind kind,
         address[3] memory mPools
     ) internal returns (uint256 duelId) {
         // Duels run concurrently up to maxActiveDuels. Everything that could
@@ -136,7 +132,7 @@ contract ArenaDuelPart is ArenaStorage {
 
         // Compute minimum deposit for this tier and pull from caller.
         uint256 minDeposit = ArenaUtils.minDepositFor(
-            turns, mPools[0], mPools[1], mPools[2], poolMeta
+            turns, kind, mPools[0], mPools[1], mPools[2], poolMeta
         );
         // If no book data (local hardhat), minDeposit is 0. Use a floor of 2 USDso per fighter
         // so the duel pot is non-zero even without live price feeds.
@@ -157,7 +153,7 @@ contract ArenaDuelPart is ArenaStorage {
         uint256 initialUsdsoPerFighter = pot / 2;
         if (initialUsdsoPerFighter == 0) revert ArenaTypes.ZeroAmount();
 
-        uint8 mask = ArenaUtils.poolMaskForTurns(turns);
+        uint8 mask = ArenaUtils.poolMaskFor(turns, kind);
 
         duelId = nextDuelId++;
         duels[duelId] = ArenaTypes.Duel({
@@ -174,7 +170,7 @@ contract ArenaDuelPart is ArenaStorage {
             lastAction:              [uint8(0), uint8(0)],
             fundsRecovered:          false,
             winnerSlot:              type(uint8).max, // 255 = unset until resolved
-            simulated:               simulated
+            simulated:               kind == ArenaTypes.MarketKind.Practice
         });
         activeDuelIds.push(duelId);
         _activeIndex[duelId] = activeDuelIds.length; // index+1; 0 means "not active"
