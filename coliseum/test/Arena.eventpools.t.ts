@@ -136,6 +136,77 @@ describe("Arena — event-contract pool set", function () {
     expect(ids, "duel is untouched by the re-point").to.deep.equal([duelId]);
   });
 
+  it("startEventDuel binds the duel to the desks, not the real pools", async function () {
+    const { arena, deskWeth, deskWbtc, deskSomi, poolSomi } = await deploy();
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+    ]);
+
+    await arena.write.startEventDuel([0, 1, 3]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    // A 3-turn duel trades the SOMI slot only, so that is where each fighter's
+    // opening balance is credited. It must land on the DESK, and nothing at all
+    // on the real pool the duel would have used before.
+    const onDesk = await arena.read.fighterBalances([deskSomi.address, duelId, 0]) as unknown[];
+    const onReal = await arena.read.fighterBalances([poolSomi.address, duelId, 0]) as unknown[];
+    expect(onDesk[1], "fighter is funded on the event desk").to.be.greaterThan(0n);
+    expect(onReal[1], "and not on the real pool").to.equal(0n);
+
+    // Same escrow and payout path as any other duel.
+    expect(await arena.read.escrowedPot()).to.be.greaterThan(0n);
+
+    // Not a third kind of fight — it is a real duel that happens to use desks.
+    const duel = await arena.read.duels([duelId]) as unknown[];
+    expect(duel[12], "recorded as a real, non-simulated duel").to.equal(false);
+  });
+
+  it("startEventDuel refuses before any desks are registered", async function () {
+    const { arena } = await deploy();
+    let caught: unknown;
+    await arena.write.startEventDuel([0, 1, 3]).catch((e: unknown) => { caught = e; });
+    expect(caught, "no desks registered yet").to.not.be.undefined;
+    expect(String(caught)).to.include("InvalidPool");
+  });
+
+  it("only the owner may start an event duel", async function () {
+    const { arena, deskWeth, deskWbtc, deskSomi } = await deploy();
+    const [, stranger] = await hre.viem.getWalletClients();
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+    ]);
+
+    let caught: unknown;
+    await arena.write.startEventDuel([0, 1, 3], { account: stranger.account })
+      .catch((e: unknown) => { caught = e; });
+    expect(caught, "players reach duels through the queue, not this door").to.not.be.undefined;
+    expect(String(caught)).to.include(toFunctionSelector("NotOwner()"));
+  });
+
+  it("an event duel and an ordinary duel run side by side without crossing", async function () {
+    const { arena, deskWeth, deskWbtc, deskSomi, poolSomi } = await deploy();
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address], [18, 18, 18],
+    ]);
+
+    await arena.write.startDuel([0, 1, 3, false]);
+    await arena.write.startEventDuel([2, 3, 3]);
+
+    const ids = await arena.read.getActiveDuelIds() as bigint[];
+    expect(ids.length, "both are running").to.equal(2);
+    const [plain, event] = ids;
+
+    // Each duel's opening balances sit only on its own market.
+    expect((await arena.read.fighterBalances([poolSomi.address, plain, 0]) as unknown[])[1])
+      .to.be.greaterThan(0n);
+    expect((await arena.read.fighterBalances([deskSomi.address, plain, 0]) as unknown[])[1])
+      .to.equal(0n);
+    expect((await arena.read.fighterBalances([deskSomi.address, event, 2]) as unknown[])[1])
+      .to.be.greaterThan(0n);
+    expect((await arena.read.fighterBalances([poolSomi.address, event, 2]) as unknown[])[1])
+      .to.equal(0n);
+  });
+
   it("refreshPoolMeta re-reads rules for a pool Arena already knows", async function () {
     const { arena, usdso, poolWbtc } = await deploy();
 

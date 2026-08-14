@@ -22,6 +22,26 @@ const VIEW_SELECTORS = [
   "previewTurnPrompt(uint256,uint8)",
 ] as const;
 
+/** Signatures Matchmaker, Bookmaker or the frontend call on Arena's address. */
+const EXTERNAL_SELECTORS = [
+  "duels(uint256)",
+  "platformFee(uint16)",
+  "startDuel(uint8,uint8,uint16,bool)",
+  "finalizeDuel(uint256)",
+  "recoverFunds(uint256)",
+  "fundPools(uint256)",
+  "setSimPools(address,address,address,uint8[3])",
+  "setDuelHistory(address)",
+  "turn(uint256)",
+  "expireTurn(uint256)",
+  // The inference platform's callback. Its shape is dictated by the platform,
+  // so it is pinned here: if it ever stops resolving, fighters silently stop
+  // moving and every duel drifts to a draw.
+  "handleFighterResponse(uint256,(address,bytes,uint8,uint256,uint256,uint256)[],uint8,"
+    + "(uint256,address,address,bytes4,address[],(address,bytes,uint8,uint256,uint256,uint256)[],"
+    + "uint256,uint256,uint256,uint256,uint256,uint8,uint8,uint256,uint256))",
+] as const;
+
 async function deploy() {
   const [owner] = await hre.viem.getWalletClients();
   const registry     = await hre.viem.deployContract("FighterRegistry");
@@ -178,21 +198,22 @@ describe("Arena — routing to parts", function () {
 
   it("every function the outside world calls is reachable", async function () {
     const { arena, router } = await deploy();
+    const routerAbi = (await hre.artifacts.readArtifact("Arena")).abi;
+    const onRouter = new Set(
+      routerAbi.filter((e) => e.type === "function")
+        .map((e) => toFunctionSelector(e as never)),
+    );
 
-    // Routed reads: each must answer rather than revert with NoPart.
-    for (const sig of VIEW_SELECTORS) {
+    // Every signature Matchmaker, Bookmaker or the frontend calls must resolve
+    // somewhere — implemented by the router, or claimed by a part. Which of the
+    // two is an implementation detail that may change as parts move; being
+    // reachable is the contract with the outside world.
+    for (const sig of [...VIEW_SELECTORS, ...EXTERNAL_SELECTORS]) {
       const sel = toFunctionSelector(sig);
-      const part = await router.read.partOf([sel]) as string;
-      expect(part, `${sig} must be routed to a part`)
-        .to.not.equal("0x0000000000000000000000000000000000000000");
-    }
-
-    // Answered by the router itself, so they must NOT be routed — these are the
-    // ones Matchmaker and Bookmaker call, and the frontend reads.
-    for (const sig of ["duels(uint256)", "platformFee(uint16)", "startDuel(uint8,uint8,uint16,bool)"]) {
-      const part = await router.read.partOf([toFunctionSelector(sig)]) as string;
-      expect(part, `${sig} is implemented on the router itself`)
-        .to.equal("0x0000000000000000000000000000000000000000");
+      const routed = await router.read.partOf([sel]) as string;
+      const reachable = onRouter.has(sel)
+        || routed !== "0x0000000000000000000000000000000000000000";
+      expect(reachable, `${sig} must be callable on Arena`).to.equal(true);
     }
 
     // The duel record must keep its exact shape. The struct has 14 members; the

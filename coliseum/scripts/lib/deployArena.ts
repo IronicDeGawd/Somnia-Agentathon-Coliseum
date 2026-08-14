@@ -25,7 +25,7 @@ import { toFunctionSelector, type Abi } from "viem";
 type Hex = `0x${string}`;
 
 /** Every part, in the order they are deployed and wired. */
-export const ARENA_PARTS = ["ArenaVaultPart", "ArenaViewPart"] as const;
+export const ARENA_PARTS = ["ArenaVaultPart", "ArenaDuelPart", "ArenaViewPart"] as const;
 
 /** Function entries a part claims: its own, minus anything the router answers. */
 function claimedSelectors(routerAbi: Abi, partAbi: Abi): Hex[] {
