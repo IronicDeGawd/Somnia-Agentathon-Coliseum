@@ -14,8 +14,14 @@
 //      finalizes when all moves are in (force-resolve fallback on a stall).
 //      This replaces the on-chain reactivity subscription (left deactivated to
 //      avoid its every-block gas draw) for player-started fights.
-//   5. Refuses to drain the deployer below DEPLOYER_MIN_STT.
-//   6. Logs every action with timestamp; one-shots when WATCHER_INTERVAL_S=0.
+//   5. Tends the prediction desks, when any are deployed: refreshes each busy
+//      desk's remembered price every tick, because a window's makers stop
+//      quoting long before it expires and a desk with no price values a real
+//      holding at nothing. Hands a desk back once ITS WINDOW HAS EXPIRED and no
+//      fight is running, collecting anything won first — releasing merely because
+//      nothing is live would free a desk claimed for a fight about to start.
+//   6. Refuses to drain the deployer below DEPLOYER_MIN_STT.
+//   7. Logs every action with timestamp; one-shots when WATCHER_INTERVAL_S=0.
 //
 // Run:
 //   SEEDER_ADDRESS=0x<seeder> pnpm exec hardhat run scripts/watcher-bot.ts --network somnia
@@ -84,6 +90,17 @@ const BOOKMAKER_ABI = [
     inputs: [{ name: "duelId", type: "uint256" }, { name: "oddsA", type: "uint16" }, { name: "oddsB", type: "uint16" }], outputs: [] },
   { name: "settleBets", type: "function", stateMutability: "nonpayable",
     inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
+] as const;
+
+const EVENT_DESK_ABI = [
+  { name: "poke", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { name: "redeemSettled", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "setInUse", type: "function", stateMutability: "nonpayable", inputs: [{ type: "bool" }], outputs: [] },
+  { name: "inUse", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { name: "marketId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  { name: "pool", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  // On the bound pool, not the desk: when the window stops accepting orders.
+  { name: "marketExpiryNs", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
 ] as const;
 
 /** Opening line when a duel starts: even money until bets move it. */
@@ -213,6 +230,110 @@ async function settleResolvedDuels(opts: {
 // and a dry Arena fails soft — every move becomes Hold, and an all-Hold duel now
 // resolves as a draw. Silently drawing several fights at once is the failure
 // this guard exists to prevent.
+/**
+ * Keep every desk currently serving a fight remembering a real price.
+ *
+ * A prediction window's makers stop quoting well before it expires, so its book
+ * empties while the contract is still perfectly tradable. A desk looking at an
+ * empty book has no price to report, and Arena would value a real holding at
+ * nothing for the whole tail of a fight — turning a winning position into a
+ * scoreless one. Each desk remembers the last real top-of-book it saw, and this
+ * is what refreshes that memory while quotes still exist.
+ *
+ * Cheap and permissionless: it only ever writes the desk's own last-seen price.
+ */
+async function pokeDesksInUse(opts: {
+  pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
+  wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
+  desks: readonly `0x${string}`[];
+}) {
+  const { pub, wallet, desks } = opts;
+  const emsg = (e: unknown) =>
+    e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+
+  for (const desk of desks) {
+    try {
+      const inUse = (await pub.readContract({
+        address: desk, abi: EVENT_DESK_ABI, functionName: "inUse",
+      })) as boolean;
+      if (!inUse) continue;
+      const hash = await wallet.writeContract({
+        address: desk, abi: EVENT_DESK_ABI, functionName: "poke",
+      });
+      await pub.waitForTransactionReceipt({ hash });
+      log(`  desk ${desk}: price memory refreshed`);
+    } catch (e) {
+      // A desk that cannot be poked is not a reason to stop refereeing.
+      log(`  desk ${desk}: poke failed: ${emsg(e)}`);
+    }
+  }
+}
+
+/**
+ * Hand back desks whose window is over.
+ *
+ * A desk is claimed so nothing can re-point it mid-fight, and only releasing it
+ * allows that. But "no fight is running" is NOT enough on its own: a desk is
+ * claimed a little before its fight starts, and releasing it in that gap would
+ * let something re-point it under the fight about to begin. So a desk is only
+ * freed once its own window has EXPIRED, which no fight can use anyway. A window
+ * still alive needs no releasing — the next fight simply reuses it.
+ *
+ * Collecting first matters: a won position pays nothing until it is claimed, and
+ * a desk released with an uncollected win carries that money into its next
+ * binding, where it silently becomes the next fight's float. Claiming is
+ * attempted but not required — a losing position is worth nothing and the claims
+ * registry may refuse it outright, which must not strand the desk.
+ */
+async function releaseIdleDesks(opts: {
+  pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
+  wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number];
+  desks: readonly `0x${string}`[];
+}) {
+  const { pub, wallet, desks } = opts;
+  const emsg = (e: unknown) =>
+    e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+  const nowNs = BigInt(Math.floor(Date.now() / 1000)) * 1_000_000_000n;
+
+  for (const desk of desks) {
+    try {
+      const inUse = (await pub.readContract({
+        address: desk, abi: EVENT_DESK_ABI, functionName: "inUse",
+      })) as boolean;
+      if (!inUse) continue;
+
+      const pool = (await pub.readContract({
+        address: desk, abi: EVENT_DESK_ABI, functionName: "pool",
+      })) as `0x${string}`;
+      const expiryNs = (await pub.readContract({
+        address: pool, abi: EVENT_DESK_ABI, functionName: "marketExpiryNs",
+      })) as bigint;
+      if (expiryNs > nowNs) {
+        const left = Number((expiryNs - nowNs) / 1_000_000_000n);
+        log(`  desk ${desk}: window still open for ${left}s — keeping it claimed`);
+        continue;
+      }
+
+      try {
+        const claim = await wallet.writeContract({
+          address: desk, abi: EVENT_DESK_ABI, functionName: "redeemSettled",
+        });
+        await pub.waitForTransactionReceipt({ hash: claim });
+      } catch (e) {
+        log(`  desk ${desk}: nothing collectable (${emsg(e)})`);
+      }
+
+      const hash = await wallet.writeContract({
+        address: desk, abi: EVENT_DESK_ABI, functionName: "setInUse", args: [false],
+      });
+      await pub.waitForTransactionReceipt({ hash });
+      log(`  desk ${desk}: released`);
+    } catch (e) {
+      log(`  desk ${desk}: release failed: ${emsg(e)}`);
+    }
+  }
+}
+
 async function driveActiveDuels(opts: {
   bookmaker: `0x${string}` | undefined;
   pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
@@ -377,10 +498,11 @@ async function tick(opts: {
   arenaTopup: bigint;
   turnInterval: bigint;
   activeDuelArenaMin: bigint;
+  desks: readonly `0x${string}`[];
 }) {
   const pub = await hre.viem.getPublicClient();
   const [wallet] = await hre.viem.getWalletClients();
-  const { fallback, seeder, deployer, arena, bookmaker, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin } = opts;
+  const { fallback, seeder, deployer, arena, bookmaker, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin, desks } = opts;
 
   const [fbBal, seederBal, deployerBal, arenaBal] = await Promise.all([
     pub.getBalance({ address: fallback }),
@@ -466,6 +588,22 @@ async function tick(opts: {
     const msg = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
     log(`duel: drive error: ${msg}`);
   }
+
+  // 5. Prediction desks: keep prices fresh while a fight runs, hand them back
+  //    once none does. Both are keyed on whether anything is live at all, which
+  //    is why this sits after the duels have been driven and settled.
+  if (desks.length) {
+    try {
+      const stillRunning = (await pub.readContract({
+        address: arena, abi: ARENA_DUEL_ABI, functionName: "getActiveDuelIds",
+      })) as readonly bigint[];
+      if (stillRunning.length) await pokeDesksInUse({ pub, wallet, desks });
+      else await releaseIdleDesks({ pub, wallet, desks });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+      log(`desks: ${msg}`);
+    }
+  }
 }
 
 async function main() {
@@ -495,6 +633,9 @@ async function main() {
   // Optional: without it the watcher still referees duels, it just cannot open or
   // settle the betting line.
   const bookmaker = manifest?.contracts?.Bookmaker?.address as `0x${string}` | undefined;
+  // Optional: only present once the prediction desks are deployed. Without them
+  // the watcher behaves exactly as before.
+  const desks = (manifest?.contracts?.EventDesks?.desks ?? []) as readonly `0x${string}`[];
 
   const intervalS = parseInt(process.env.WATCHER_INTERVAL_S ?? "60", 10);
   const sweepThreshold = parseEther(process.env.SWEEP_THRESHOLD_STT ?? "5");
@@ -544,6 +685,7 @@ async function main() {
   log(`  active-duel fuel ${formatEther(activeDuelArenaMin)} STT (floor while a duel is live)`);
   log(`  turn interval    ${turnInterval} blocks`);
   log(`  deployer floor   ${formatEther(deployerMin)} STT`);
+  log(`  event desks      ${desks.length ? `${desks.length} known` : "none — event fights not deployed"}`);
 
   let running = true;
   const onSig = () => {
@@ -553,7 +695,7 @@ async function main() {
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
 
-  const ctx = { fallback, seeder, deployer, arena, bookmaker, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin };
+  const ctx = { fallback, seeder, deployer, arena, bookmaker, sweepThreshold, seederMin, seederTopup, deployerMin, arenaMin, arenaTopup, turnInterval, activeDuelArenaMin, desks };
 
   if (intervalS === 0) {
     await tick(ctx);

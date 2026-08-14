@@ -76,7 +76,7 @@ async function main() {
   console.log(`Refilling treasury with ${formatUnits(total, 6)} from the faucet...`);
   const refill = await treasury.write.refill([total]);
   await pub.waitForTransactionReceipt({ hash: refill });
-  console.log(`Treasury balance: ${formatUnits(await treasury.read.balance(), 6)}`);
+  console.log(`Treasury balance: ${formatUnits((await treasury.read.balance()) as bigint, 6)}`);
 
   // Desks are NOT funded here. `fund` puts collateral into the bound market's
   // vault, and an unbound desk has no vault to put it in — so funding happens
