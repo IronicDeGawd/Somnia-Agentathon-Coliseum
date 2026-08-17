@@ -285,9 +285,12 @@ contract EventDesk is ISpotPool {
         uint256 settled = _resolvedPrice18();
         if (settled != type(uint256).max) {
             OrderBookLevel[] memory one = new OrderBookLevel[](1);
-            // Quantity is nominal: this level exists to carry a price, not to be
-            // traded against. A resolved market accepts no orders.
-            one[0] = OrderBookLevel({ price: settled, quantity: type(uint128).max });
+            // Price so a holding can still be valued, but ZERO size, because a
+            // resolved market accepts no orders. It used to report unlimited
+            // size, which made a settled question look tradable: a fighter was
+            // offered it, its order reverted, and the turn was lost. Whoever
+            // reads this must decide tradability on size, not on price alone.
+            one[0] = OrderBookLevel({ price: settled, quantity: 0 });
             return one;
         }
 

@@ -249,7 +249,24 @@ library ArenaUtils {
         uint256 markPrice = midMarkPrice(pool);
         if (meta.minQuantity == 0 || markPrice == 0) return (false, false);
         uint256 minCost = (meta.minQuantity * markPrice) / (10 ** meta.baseDecimals);
-        return (bal.quoteTokenAmount >= minCost, bal.baseTokenAmount >= meta.minQuantity);
+
+        // Affording a trade is not the same as there being one to make. A
+        // prediction question that has SETTLED still quotes a price — the answer
+        // is now known — but accepts no orders, and a spot book can empty out.
+        // Offering either got a fighter's order reverted and its turn lost, so
+        // each side must have real size behind it before it is offered.
+        return (
+            bal.quoteTokenAmount >= minCost && _hasSize(pool, false),
+            bal.baseTokenAmount >= meta.minQuantity && _hasSize(pool, true)
+        );
+    }
+
+    /// @dev Is anyone actually resting an order on this side right now?
+    ///      A buy needs someone selling, a sell needs someone buying.
+    function _hasSize(address pool, bool isBid) private view returns (bool) {
+        try ISpotPool(pool).getBookLevels(isBid, 1) returns (OrderBookLevel[] memory lv) {
+            return lv.length > 0 && lv[0].quantity > 0;
+        } catch { return false; }
     }
 
     /// @notice The actions this fighter can actually execute right now, given the

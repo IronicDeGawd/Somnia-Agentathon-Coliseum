@@ -600,4 +600,68 @@ describe("Arena — event-contract pool set", function () {
     const duel = await arena.read.duels([duelId]) as unknown[];
     expect(Number(duel[7]), "a three-round spot fight still trades SOMI alone").to.equal(0x04);
   });
+
+  it("a settled question is priced but never offered as a trade", async function () {
+    // A resolved prediction still quotes a price — the answer is known, so a
+    // holding is worth one or nothing — but it accepts no orders. Offering it
+    // anyway got both fighters' orders reverted and cost them the turn, live,
+    // on duel #3. Price must still be readable; the trade must not be offered.
+    const { arena, usdso, deskWeth, deskWbtc, deskSomi } = await deploy();
+    const ONE = 10n ** 18n;
+
+    for (const desk of [deskWeth, deskWbtc, deskSomi]) {
+      await desk.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+      await desk.write.setBookLevel([false, (ONE * 40n) / 100n, ONE]);
+      await desk.write.setBookLevel([true, (ONE * 39n) / 100n, ONE]);
+      await desk.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
+    }
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), label("BTCSOON")],
+    ]);
+    await arena.write.startDuelOn([0, 1, 3, 2]);
+    const duelId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+
+    const [, before] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+    expect(before, "all three are offered while live").to.include("BackBTCSOON");
+
+    // The question resolves: a price, but no size behind it on either side.
+    await deskSomi.write.setBookLevel([false, ONE, 0n]);
+    await deskSomi.write.setBookLevel([true, ONE, 0n]);
+
+    const [prompt, after] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+    expect(after, "the settled question is no longer offered").to.not.include("BackBTCSOON");
+    expect(after, "the live ones still are").to.include("BackETHUP");
+    expect(after).to.include("BackBTCUP");
+    expect(prompt, "but it is still described, so the fighter can see it settled")
+      .to.include("BTCSOON");
+  });
+
+  it("a slot nobody is quoting is not offered either", async function () {
+    // Same rule, different cause: a spot book can simply empty out. Affording a
+    // trade is not the same as there being one to make.
+    const { arena, usdso, deskWeth, deskWbtc, deskSomi } = await deploy();
+    const ONE = 10n ** 18n;
+    for (const desk of [deskWeth, deskWbtc, deskSomi]) {
+      await desk.write.setPoolParams([usdso.address, usdso.address, 1n, ONE / 100n, 1n]);
+      await desk.write.setBookLevel([false, (ONE * 40n) / 100n, ONE]);
+      await desk.write.setBookLevel([true, (ONE * 39n) / 100n, ONE]);
+      await desk.write.creditVault([arena.address, usdso.address, parseEther("1000")]);
+    }
+    await arena.write.setEventDesks([
+      [deskWeth.address, deskWbtc.address, deskSomi.address],
+      [18, 18, 18],
+      [label("ETHUP"), label("BTCUP"), label("BTCSOON")],
+    ]);
+    await arena.write.startDuelOn([0, 1, 3, 2]);
+    const duelId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+
+    // Nobody selling ETHUP any more: a buy has nothing to hit.
+    await deskWeth.write.setBookLevel([false, (ONE * 40n) / 100n, 0n]);
+
+    const [, allowed] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+    expect(allowed, "cannot buy what nobody is selling").to.not.include("BackETHUP");
+    expect(allowed, "the quoted ones remain").to.include("BackBTCUP");
+  });
 });
