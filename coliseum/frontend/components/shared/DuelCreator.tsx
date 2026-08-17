@@ -7,6 +7,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useQueue } from '@/hooks/useQueue';
 import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useQueueState, queueKey } from '@/hooks/useQueueState';
+import { useEventQuestions } from '@/hooks/useEventQuestions';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, SIM_MARKET_ENABLED } from '@/lib/contracts';
 import { getWsClient } from '@/lib/wsClient';
@@ -16,8 +17,9 @@ const MATCH_STARTED_EVENT = parseAbiItem(
   'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
 );
 
-/** What each tier trades, per market. Mixed swaps the two costly coins for
- *  prediction questions, which is what makes the long tiers affordable. */
+/** What each tier trades on the COIN markets. The ladder narrows for short
+ *  fights because a smallest BTC order costs dollars. Mixed does not use this —
+ *  it trades questions, which all cost a fraction of a cent. */
 const TIER_POOLS: Record<number, string[]> = {
   3:  ['SOMI'],
   6:  ['SOMI', 'WETH'],
@@ -25,12 +27,6 @@ const TIER_POOLS: Record<number, string[]> = {
   15: ['SOMI', 'WETH', 'WBTC'],
 };
 
-const TIER_POOLS_MIXED: Record<number, string[]> = {
-  3:  ['SOMI'],
-  6:  ['SOMI', 'ETH?'],
-  9:  ['SOMI', 'ETH?', 'BTC?'],
-  15: ['SOMI', 'ETH?', 'BTC?'],
-};
 
 const MARKET_CHOICES: ReadonlyArray<{
   kind: MarketKind; label: string; accent: string; hint: string;
@@ -39,7 +35,7 @@ const MARKET_CHOICES: ReadonlyArray<{
     kind: MarketKind.Mixed,
     label: '◆ MIXED',
     accent: 'var(--gold)',
-    hint: 'SOMI plus two prediction questions. Cheap entry — the long tiers cost a couple of USDso.',
+    hint: 'Three live prediction questions. Cheap at every length — even the longest fight costs about a USDso.',
   },
   {
     kind: MarketKind.Spot,
@@ -57,8 +53,12 @@ const MARKET_CHOICES: ReadonlyArray<{
     : []),
 ];
 
-function poolsFor(turns: number, market: MarketKind): string[] {
-  return market === MarketKind.Mixed ? TIER_POOLS_MIXED[turns] : TIER_POOLS[turns];
+/// Mixed trades every question at every length, so this does not vary by tier.
+/// The names come from the chain — the desks are re-pointed at fresh questions
+/// between fights, so anything written in here would go stale within the hour.
+function poolsFor(turns: number, market: MarketKind, questions: string[]): string[] {
+  if (market !== MarketKind.Mixed) return TIER_POOLS[turns];
+  return questions.length ? questions : ['live questions'];
 }
 
 /** Round counts the lobby offers on a given market. */
@@ -67,13 +67,8 @@ function tiersFor(market: MarketKind): TurnOption[] {
   return LOBBY_MENU.filter((r) => r.market === market).map((r) => r.turns as TurnOption);
 }
 
-// Which rounds are offered on which market now comes from LOBBY_MENU in
+// Which rounds are offered on which market comes from LOBBY_MENU in
 // lib/contracts, so the menu can change without touching this component.
-//
-// CAVEAT on the 3-round row: it trades SOMI alone on every market, so both
-// fighters face the same single choice every turn and the fight tends to a
-// near-tie — duel #1 did exactly that. It is cheap and it is a fair first fight,
-// but it is not a good story. Drop its row from LOBBY_MENU to hide it again.
 /**
  * Any tier a duel can have, which still includes 3 — duels already on chain use it
  * and a locked join has to be able to name it. tiersFor(market) is the narrower
@@ -120,6 +115,7 @@ function QueueInner({
   } = useQueue(fighter, turns, market);
 
   const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
+  const { questions: eventQuestions } = useEventQuestions();
 
   const { isConnected, address } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -310,7 +306,7 @@ function QueueInner({
             {fighterRoster?.name ?? `FIGHTER ${fighter}`}
           </div>
           <div className="t-sm t-dim">
-            {turns}-round tier · {poolsFor(turns, market).join(' + ')}
+            {turns}-round tier · {poolsFor(turns, market, eventQuestions).join(' + ')}
           </div>
 
           {/* Animated pulse indicator */}
@@ -490,7 +486,7 @@ function QueueInner({
         >
           {tiersFor(market).map((t) => {
             const selected = turns === t;
-            const pools = poolsFor(t, market);
+            const pools = poolsFor(t, market, eventQuestions);
             return (
               <button
                 key={t}

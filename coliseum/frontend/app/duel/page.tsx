@@ -11,6 +11,7 @@ import DuelCard from '@/components/shared/DuelCard';
 import { useActiveDuels } from '@/hooks/useActiveDuels';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useQueueState, queueKey, type QueueTier } from '@/hooks/useQueueState';
+import { useEventQuestions } from '@/hooks/useEventQuestions';
 import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
@@ -60,6 +61,7 @@ export default function LobbyPage() {
   const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
+  const { questions: eventQuestions } = useEventQuestions();
   const { slots: queueSlots, pendingCounts, isLoading: isQueueLoading } = useQueueState();
   // Live betting odds for the active duel (real Bookmaker pools, 0 = disabled).
   const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
@@ -343,8 +345,13 @@ export default function LobbyPage() {
             // One card per WAITING LINE, not per round count: a nine-round spot
             // player and a nine-round mixed player never match each other, so
             // showing them as one card would promise a pairing that cannot happen.
+            // Mixed trades the same three questions at every length — only the
+            // number of turns differs — so the label does not vary by tier.
             const TIER_POOL_LABELS: Record<QueueTier, string> = market === MarketKind.Mixed
-              ? { 3: 'SOMI', 6: 'SOMI · ETH?', 9: 'SOMI · ETH? · BTC?', 15: 'SOMI · ETH? · BTC?' }
+              ? (() => {
+                  const q = eventQuestions.length ? eventQuestions.join(' · ') : 'live questions';
+                  return { 3: q, 6: q, 9: q, 15: q };
+                })()
               : { 3: 'SOMI', 6: 'SOMI · WETH', 9: 'SOMI · WETH · WBTC', 15: 'ALL POOLS' };
             const key = queueKey(turns, market);
             const slot = queueSlots[key];

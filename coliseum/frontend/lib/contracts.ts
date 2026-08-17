@@ -196,6 +196,12 @@ export const ABIS = {
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
     'function minDepositForKind(uint16 turns, uint8 marketKind) view returns (uint256)',
+    // Which questions the mixed market currently asks. They are re-bound between
+    // fights, so the lobby reads them rather than hard-coding asset names.
+    'function EVENT_POOL_WETH() view returns (address)',
+    'function EVENT_POOL_WBTC() view returns (address)',
+    'function EVENT_POOL_SOMI() view returns (address)',
+    'function poolQuestion(address pool) view returns (bytes8)',
     'function nextDuelId() view returns (uint256)',
     'function platformFee(uint16 turns) view returns (uint256)',
     'function TURN_INTERVAL_BLOCKS() view returns (uint256)',
