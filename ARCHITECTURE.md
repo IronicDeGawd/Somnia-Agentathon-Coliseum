@@ -43,8 +43,8 @@ about where the line falls.
 
 **Bots (the hands):** six processes, all *PM2\*-managed on one box.
 
-`coliseum-frontend` · `coliseum-watcher` (advances turns, finalises duels, keeps the desks' prices
-fresh) · `coliseum-seeder` (provides liquidity nobody else will) · `coliseum-sim-market` (drives the
+`coliseum-frontend` · `coliseum-watcher` (the watchdog behind Reactivity — rings a turn the chain
+missed, finalises duels, keeps the desks' prices fresh) · `coliseum-seeder` (provides liquidity nobody else will) · `coliseum-sim-market` (drives the
 practice market) · `coliseum-housematch` (gives a lone player an opponent) · `coliseum-binder`
 (re-points the prediction desks at fresh questions).
 
@@ -235,40 +235,66 @@ duel. That was fixed.
 
 ---
 
-## Reactivity — and why it is switched off
+## Reactivity — how the fights drive themselves
 
-Somnia has a feature called **Reactivity\***: a contract can subscribe to on-chain events and be
-woken automatically, with no bot polling. Arena and Bookmaker both have the wiring for it.
+Somnia has a feature called **Reactivity\***: a contract can subscribe to on-chain events and be woken
+automatically, with no bot polling. Arena and Bookmaker both use it, and as of 2026-08-18 it is what
+actually advances the turns on this deployment.
 
-**It is disabled** (`subscriptionId` is 0 on both) — and the honest version of why is more useful than
-the one this document used to give.
+It was switched off for months, and the reason is worth keeping, because it was a mistake about one
+field rather than about the feature.
 
-We subscribed to `BlockTick` with its second topic left at zero. That means **every block**. Somnia
-produces about ten blocks a second and a turn happens once every six hundred blocks, so we were paying
-to be woken roughly six hundred times per turn, and five hundred and ninety-nine of those wake-ups did
-nothing but check whether it was time yet and return. Measured: about **31 STT an hour**, burning
-identically whether a fight was running or the arena was empty. So the number that killed it was real.
+Picture hiring a bell-ringer who stands in the tower and rings **every second**, all day, whether or
+not anyone is fighting — and then throwing away five hundred and ninety-nine rings out of every six
+hundred, because a round only turns once a minute. That was the old subscription: `BlockTick` with its
+second topic left at zero, which means *every block*. Measured at about **31 STT an hour**, burning
+identically whether a fight was running or the arena stood empty.
 
-**The conclusion drawn from it was too broad.** Put a block *number* in that same field and the event
-fires **once, at that block**. Measured on testnet, it landed on exactly the block requested, every
-time, zero blocks late, at **0.0045 STT a firing** — including the cost of booking the next one. For a
-fifteen-round fight that is 0.07 STT of one-shot hops against 7.8 STT of every-block polling.
+Put a block *number* in that same field and it fires **once, at that block**. So now the contract tells
+the bell-ringer one thing — *come back at this exact moment* — and the ringer shows up, rings once, and
+books their next appointment before leaving. When the last fight ends, no appointment is booked at all,
+and an idle arena costs nothing.
 
-Two earlier claims here were wrong and are worth naming:
+Measured live, over three fights on the real deployment:
 
-- It said there is **no way to unsubscribe**. There is. `SomniaExtensions.unsubscribe(subscriptionId)`
-  works, and we measured it stopping a live subscription dead: 430 firings while running, then zero in
-  the following thirty seconds. So a subscription can be scoped to the life of a single fight, which
-  removes the idle burn entirely on its own.
+| | old: `eventTopics[1]` = 0 | now: a block number |
+|---|---|---|
+| fires | every block, ~10.5×/second | once, at that block |
+| lateness | n/a | **0 blocks**, 9 turns out of 9 |
+| cost | **~31 STT/hour**, running or idle | **~0.047 STT per turn** |
+| idle arena | same 31 STT/hour | **nothing at all**, measured over ~1,100 blocks |
+
+That 0.047 is the whole turn — price snapshots, two inference requests, and booking the next
+appointment — not just the wake-up. A bare probe with an empty handler came in at 0.0045.
+
+Cancelling works too, which is the other half of never paying while idle:
+`SomniaExtensions.unsubscribe(subscriptionId)` stops a live subscription dead, and both contracts call
+it when the last fight or betting line closes.
+
+**What the one-shot form gives up is self-healing.** An every-block subscription that misses a wake-up
+tries again a tenth of a second later. A one-shot chain has no such luck: each firing is what books the
+next, so a firing that never arrives ends the chain silently. The keeper bot therefore stays on, no
+longer as the driver but as a **watchdog** — it rings the bell itself once a turn is overdue past a
+grace period, and re-books the next appointment when it does.
+
+That watchdog has been tested by deliberately cutting the chain mid-fight. The tick was cancelled
+thirty-three blocks into a three-round bout; the keeper picked up the missed turn a hundred and
+fifty-eight blocks after it came due, the fight carried on, and when Reactivity was switched back on
+mid-fight the chain resumed exactly one interval after the keeper's turn and drove the rest.
+
+Two claims this document used to make were wrong and are worth naming, because both are easy to repeat:
+
+- It said there is **no way to unsubscribe**. There is, and it works.
 - It implied the cost was inherent to Reactivity. It was inherent to *polling*.
 
-What the one-shot form genuinely gives up is **self-healing**. An every-block subscription that misses
-a tick tries again a tenth of a second later. A one-shot chain that drops a firing stalls silently
-until something else notices — so it wants a watchdog behind it. That is the real reason turns are
-still keeper-driven here, and it is a design problem rather than a price problem.
-
-Both measurements are reproducible: `scripts/probe-reactivity-oneshot.ts` and
+Both cost profiles are reproducible with `scripts/probe-reactivity-oneshot.ts` and
 `scripts/probe-reactivity-unsubscribe.ts`.
+
+**The trap that outlives all of this:** a subscription's id is the only handle you have on it. The old
+Bookmaker overwrote its stored id with zero whenever a subscribe request was refused, which lost the
+handle to a subscription that was still firing — an orphan burning 34 STT an hour that nothing could
+cancel. The only way to kill it was to take away its fuel. Never overwrite a live subscription's id,
+and never abandon a deployment with a native balance still in it.
 
 ---
 
