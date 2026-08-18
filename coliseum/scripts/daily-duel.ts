@@ -52,7 +52,7 @@ const TURNS = 3;
 // Run the daily duel on the practice market (livelier book → visible PnL).
 // The Matchmaker/Arena key every queue/deposit by (turns, market), so this has
 // to be the same value everywhere below or the two house players never pair.
-// 0 spot coins, 1 practice, 2 mixed.
+// 0 spot coins, 1 practice, 2 events.
 const MARKET = 1;
 const TOTAL_CALLBACKS = TURNS * 2; // 6
 const TURN_INTERVAL_BLOCKS = 600;

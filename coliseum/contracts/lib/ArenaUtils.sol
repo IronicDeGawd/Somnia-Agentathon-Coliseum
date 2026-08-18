@@ -26,17 +26,17 @@ library ArenaUtils {
     ///         a smallest SOMI order is about nine cents, a smallest BTC order a
     ///         few dollars — so a short cheap fight used only the cheap slot.
     ///
-    ///         On the mixed market that reasoning inverts: every slot holds a
+    ///         On the events market that reasoning inverts: every slot holds a
     ///         prediction question costing a fraction of a cent, so there is no
     ///         expensive slot to ration. Narrowing there would only take choices
     ///         away — and a fight with ONE tradable slot has both fighters facing
     ///         the same single option every turn, which is how a fight ends in a
     ///         tie with nothing to watch.
     ///
-    ///         So on mixed, every tier trades every slot and the tiers differ only
+    ///         So on events, every tier trades every slot and the tiers differ only
     ///         in how long the fight runs.
     function poolMaskFor(uint16 turns, ArenaTypes.MarketKind kind) internal pure returns (uint8) {
-        if (kind == ArenaTypes.MarketKind.Mixed) {
+        if (kind == ArenaTypes.MarketKind.Events) {
             if (!isValidTurnCount(turns)) revert ArenaTypes.InvalidTurnCount();
             return ArenaTypes.POOL_BIT_WETH | ArenaTypes.POOL_BIT_WBTC | ArenaTypes.POOL_BIT_SOMI;
         }

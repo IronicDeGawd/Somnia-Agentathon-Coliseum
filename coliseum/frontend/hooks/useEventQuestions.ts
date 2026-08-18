@@ -8,7 +8,7 @@ import { config } from '@/lib/chain';
 const ARENA = CONTRACT_ADDRESSES.Arena as Address;
 
 /**
- * The three questions the mixed market is currently asking, in slot order.
+ * The three questions the events market is currently asking, in slot order.
  *
  * They are read from the chain rather than written into the UI because a
  * prediction window closes every few minutes and the desks are re-pointed at

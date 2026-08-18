@@ -67,7 +67,7 @@ contract MockArenaMatchmaker {
     }
 
     /// @notice Records the market each duel was started on, so a test can prove a
-    ///         mixed queue really did start a mixed fight and not a spot one.
+    ///         events queue really did start an events fight and not a spot one.
     mapping(uint256 => uint8) public duelMarketKind;
 
     function startDuelOn(uint8 fA, uint8 fB, uint16 turns, uint8 marketKind) external returns (uint256 duelId) {

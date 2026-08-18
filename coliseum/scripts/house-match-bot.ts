@@ -18,7 +18,7 @@
  *
  * Env (coliseum/.env):
  *   HOUSE_PRIVATE_KEY  — required, the house wallet (gen-bot-key.mjs)
- *   HOUSE_MARKETS      — "practice,mixed" (default) | any of practice|mixed|spot
+ *   HOUSE_MARKETS      — "practice,events" (default) | any of practice|events|spot
  *                        ("sim"/"real" still accepted, meaning practice/spot)
  *   HOUSE_TIERS        — "3,6,9,15" (default)
  *   HOUSE_GRACE_S      — seconds a player must wait alone before the house steps
@@ -71,9 +71,9 @@ const MM_ABI = [
 const ALL_TIERS: (3 | 6 | 9 | 15)[] = [3, 6, 9, 15];
 
 /** Mirrors ArenaTypes.MarketKind. */
-const SPOT = 0, PRACTICE = 1, MIXED = 2;
-const MARKET_NAME: Record<number, string> = { 0: "spot", 1: "practice", 2: "mixed" };
-const ALL_MARKETS: number[] = [SPOT, PRACTICE, MIXED];
+const SPOT = 0, PRACTICE = 1, EVENTS = 2;
+const MARKET_NAME: Record<number, string> = { 0: "spot", 1: "practice", 2: "events" };
+const ALL_MARKETS: number[] = [SPOT, PRACTICE, EVENTS];
 
 // keccak256("MatchStarted(uint256,address,address,uint8,uint8,uint16)") — the
 // first three parameters are indexed, so topics[1] carries the duel id.
@@ -112,12 +112,13 @@ async function main() {
   const pk = process.env.HOUSE_PRIVATE_KEY;
   if (!pk) throw new Error("HOUSE_PRIVATE_KEY not set (run gen-bot-key.mjs HOUSE_PRIVATE_KEY)");
 
-  // "mixed" is the affordable game and the default the house plays; "spot" is the
+  // "events" is the affordable game and the default the house plays; "spot" is the
   // real-coin game, whose long tiers cost far more than the demo bankroll.
-  const markets = (process.env.HOUSE_MARKETS ?? "practice,mixed").split(",").map((s) => s.trim().toLowerCase());
+  // "mixed" is the old name for events, still accepted so a running config keeps working.
+  const markets = (process.env.HOUSE_MARKETS ?? "practice,events").split(",").map((s) => s.trim().toLowerCase());
   const marketFlags: number[] = [];
   if (markets.includes("practice") || markets.includes("sim")) marketFlags.push(PRACTICE);
-  if (markets.includes("mixed")) marketFlags.push(MIXED);
+  if (markets.includes("events") || markets.includes("mixed")) marketFlags.push(EVENTS);
   if (markets.includes("spot") || markets.includes("real")) marketFlags.push(SPOT);
   // Default to tier 6 + 9. Tier 3 is dropped because it trades SOMI only, so both
   // fighters face one choice per turn and the duel converges to a near-tie. Real

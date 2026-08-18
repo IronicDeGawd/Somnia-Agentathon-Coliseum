@@ -464,31 +464,31 @@ describe("Arena — event-contract pool set", function () {
       [label("ETHUP"), label("BTCUP"), NO_LABEL],
     ]);
 
-    const SPOT = 0, MIXED = 2;
+    const SPOT = 0, EVENTS = 2;
 
-    // A spot fight and a mixed fight, running at the same time. Each records its
+    // A spot fight and an events fight, running at the same time. Each records its
     // own three markets, which is what lets an expensive real-asset game and a
     // cheap one coexist instead of one replacing the other.
     await arena.write.startDuelOn([0, 1, 3, SPOT]);
     const spotId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
-    await arena.write.startDuelOn([2, 3, 3, MIXED]);
-    const mixedId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
-    expect(mixedId, "both fights are running").to.not.equal(spotId);
+    await arena.write.startDuelOn([2, 3, 3, EVENTS]);
+    const eventsId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
+    expect(eventsId, "both fights are running").to.not.equal(spotId);
 
     const spotOnReal = await arena.read.fighterBalances([poolSomi.address, spotId, 0]) as unknown[];
     const spotOnDesk = await arena.read.fighterBalances([deskSomi.address, spotId, 0]) as unknown[];
     expect(spotOnReal[1], "the spot fight is funded on the real coin book").to.be.greaterThan(0n);
     expect(spotOnDesk[1], "and not on the desks").to.equal(0n);
 
-    const mixedOnDesk = await arena.read.fighterBalances([deskSomi.address, mixedId, 2]) as unknown[];
-    const mixedOnReal = await arena.read.fighterBalances([poolSomi.address, mixedId, 2]) as unknown[];
-    expect(mixedOnDesk[1], "the mixed fight is funded on the desks").to.be.greaterThan(0n);
-    expect(mixedOnReal[1], "and not on the real book").to.equal(0n);
+    const eventsOnDesk = await arena.read.fighterBalances([deskSomi.address, eventsId, 2]) as unknown[];
+    const eventsOnReal = await arena.read.fighterBalances([poolSomi.address, eventsId, 2]) as unknown[];
+    expect(eventsOnDesk[1], "the events fight is funded on the desks").to.be.greaterThan(0n);
+    expect(eventsOnReal[1], "and not on the real book").to.equal(0n);
   });
 
   it("startDuelOn refuses a market that was never registered", async function () {
     const { arena } = await deploy();
-    // No desks registered yet, so the mixed market does not exist.
+    // No desks registered yet, so the events market does not exist.
     let caught: unknown;
     await arena.write.startDuelOn([0, 1, 3, 2]).catch((e: unknown) => { caught = e; });
     expect(caught, "a fight cannot start on three empty addresses").to.not.be.undefined;
@@ -534,13 +534,13 @@ describe("Arena — event-contract pool set", function () {
     ]);
 
     const spot = await arena.read.minDepositForKind([9, 0]) as bigint;
-    const mixed = await arena.read.minDepositForKind([9, 2]) as bigint;
-    expect(mixed, "the mixed market is the cheap one").to.be.lessThan(spot);
+    const events = await arena.read.minDepositForKind([9, 2]) as bigint;
+    expect(events, "the events market is the cheap one").to.be.lessThan(spot);
     expect(await arena.read.minDepositForKind([9, 2]), "and agrees with the event view")
       .to.equal(await arena.read.minDepositForEvent([9]));
   });
 
-  it("every mixed tier trades every slot, so even the shortest offers a choice", async function () {
+  it("every events tier trades every slot, so even the shortest offers a choice", async function () {
     // The tier ladder narrows on the coin books because a smallest BTC order
     // costs dollars and a smallest SOMI order costs cents, so a cheap short
     // fight used only the cheap slot. On questions that reasoning inverts —
@@ -570,7 +570,7 @@ describe("Arena — event-contract pool set", function () {
       await arena.write.startDuelOn([0, 1, turns, 2]);
       const duelId = (await arena.read.getActiveDuelIds() as bigint[]).at(-1)!;
       const duel = await arena.read.duels([duelId]) as unknown[];
-      expect(Number(duel[7]), `${turns}-round mixed fight trades every slot`).to.equal(ALL_SLOTS);
+      expect(Number(duel[7]), `${turns}-round events fight trades every slot`).to.equal(ALL_SLOTS);
 
       const [prompt, allowed] = await arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
       expect(/[0-9]/.test(prompt), "still no digit in the prompt").to.equal(false);
@@ -582,7 +582,7 @@ describe("Arena — event-contract pool set", function () {
   });
 
   it("the coin ladder is untouched on the spot market", async function () {
-    // Only the mixed market changed. A spot fight must still narrow with its
+    // Only the events market changed. A spot fight must still narrow with its
     // tier, or a three-round spot fight would suddenly demand a BTC order.
     const { arena, usdso, poolWeth, poolWbtc, poolSomi } = await deploy();
     const ONE = 10n ** 18n;

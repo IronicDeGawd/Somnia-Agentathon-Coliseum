@@ -48,7 +48,7 @@ const HISTORY_ABI = [
 async function main() {
   const playerNum = process.env.PLAYER ?? "1";
   const turns = Number(process.env.TURNS ?? "3") as 3 | 6 | 9 | 15;
-  // MARKET: 0 spot coins, 1 practice, 2 mixed. Default practice.
+  // MARKET: 0 spot coins, 1 practice, 2 events. Default practice.
   // SIMULATED=0 still works and means spot.
   const market = Number(process.env.MARKET ?? ((process.env.SIMULATED ?? "1") !== "0" ? "1" : "0"));
   const fighter = Number(process.env.FIGHTER ?? "-1");

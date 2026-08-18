@@ -97,36 +97,41 @@ export function POOLS_FOR(simulated: boolean): typeof POOLS | typeof SIM_POOLS {
  *
  * Spot is the real coin books — a nine-round fight there needs about 150 USDso,
  * because one minimum WBTC order alone costs a few dollars and the deposit must
- * cover every fighter trading every round. Mixed keeps the cheap SOMI coin book
- * and puts a prediction question in each of the two costly slots, which brings
- * the same fight under two. Both are offered; neither replaced the other.
+ * cover every fighter trading every round. Events fills all three slots with
+ * live prediction questions instead, which brings the same fight under two.
+ * Both are offered; neither replaced the other.
+ *
+ * The numbering is on-chain and stored in every past fight — never reorder it.
+ * `Events` was called `Mixed` while it still kept the SOMI coin book in one
+ * slot; the coin was dropped because it had become the expensive one.
  */
 export enum MarketKind {
   Spot = 0,
   Practice = 1,
-  Mixed = 2,
+  Events = 2,
 }
 
 /**
  * The lobby menu: which round counts are offered on which market.
  *
  * Two players match only if they pick the same row, so every row is a separate
- * waiting line and adding rows thins them. At three rounds only SOMI trades, so
- * spot and mixed would be the identical fight — it is listed once.
+ * waiting line and adding rows thins them. Kept deliberately short for that
+ * reason: events at every length, spot only where the deposit is not punishing.
  */
 export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
-  { turns: 3,  market: MarketKind.Mixed },
-  { turns: 6,  market: MarketKind.Mixed },
-  { turns: 9,  market: MarketKind.Mixed },
+  { turns: 3,  market: MarketKind.Events },
+  { turns: 3,  market: MarketKind.Spot },
+  { turns: 6,  market: MarketKind.Events },
+  { turns: 9,  market: MarketKind.Events },
   { turns: 9,  market: MarketKind.Spot },
-  { turns: 15, market: MarketKind.Mixed },
+  { turns: 15, market: MarketKind.Events },
   { turns: 15, market: MarketKind.Spot },
 ] as const;
 
 export const MARKET_LABEL: Record<MarketKind, string> = {
   [MarketKind.Spot]: 'SPOT',
   [MarketKind.Practice]: 'PRACTICE',
-  [MarketKind.Mixed]: 'MIXED',
+  [MarketKind.Events]: 'EVENTS',
 };
 
 /** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
@@ -196,7 +201,7 @@ export const ABIS = {
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
     'function minDepositForKind(uint16 turns, uint8 marketKind) view returns (uint256)',
-    // Which questions the mixed market currently asks. They are re-bound between
+    // Which questions the events market currently asks. They are re-bound between
     // fights, so the lobby reads them rather than hard-coding asset names.
     'function EVENT_POOL_WETH() view returns (address)',
     'function EVENT_POOL_WBTC() view returns (address)',

@@ -3,7 +3,7 @@ import { expect } from "chai";
 /// Market kinds, mirroring ArenaTypes.MarketKind.
 const SPOT = 0;
 const PRACTICE = 1;
-const MIXED = 2;
+const EVENTS = 2;
 import hre from "hardhat";
 import { parseUnits, zeroAddress } from "viem";
 
@@ -447,9 +447,9 @@ describe("Matchmaker", () => {
   });
 
   describe("separate games per market", () => {
-    it("a mixed player and a spot player never match each other", async () => {
+    it("an events player and a spot player never match each other", async () => {
       // The whole point of the split: an expensive real-asset fight and a cheap
-      // mixed one are different games. If these two paired, one of them would be
+      // events one are different games. If these two paired, one of them would be
       // funding a fight priced for the other.
       const { mm, mockUsdso, alice, bob } = await deploy();
       const half = await mm.read.halfDeposit([9, SPOT]);
@@ -458,32 +458,32 @@ describe("Matchmaker", () => {
       await mm.write.queue([0, 9, SPOT], { account: alice.account });
 
       await mockUsdso.write.approve([mm.address, half], { account: bob.account });
-      await mm.write.queue([1, 9, MIXED], { account: bob.account });
+      await mm.write.queue([1, 9, EVENTS], { account: bob.account });
 
       const [spotPlayer] = await mm.read.getSlot([9, SPOT]);
-      const [mixedPlayer] = await mm.read.getSlot([9, MIXED]);
+      const [eventsPlayer] = await mm.read.getSlot([9, EVENTS]);
       expect(spotPlayer.toLowerCase(), "the spot player is still waiting")
         .to.equal(alice.account.address.toLowerCase());
-      expect(mixedPlayer.toLowerCase(), "and so is the mixed player")
+      expect(eventsPlayer.toLowerCase(), "and so is the events player")
         .to.equal(bob.account.address.toLowerCase());
     });
 
-    it("two mixed players match, and the fight starts on the mixed market", async () => {
+    it("two events players match, and the fight starts on the events market", async () => {
       const { mm, mockArena, mockUsdso, alice, bob } = await deploy();
-      const half = await mm.read.halfDeposit([9, MIXED]);
+      const half = await mm.read.halfDeposit([9, EVENTS]);
 
       await mockUsdso.write.approve([mm.address, half], { account: alice.account });
-      await mm.write.queue([0, 9, MIXED], { account: alice.account });
+      await mm.write.queue([0, 9, EVENTS], { account: alice.account });
       await mockUsdso.write.approve([mm.address, half], { account: bob.account });
-      await mm.write.queue([1, 9, MIXED], { account: bob.account });
+      await mm.write.queue([1, 9, EVENTS], { account: bob.account });
 
       const duelId = await mockArena.read.lastDuelId() as bigint;
       expect(duelId, "a duel was started").to.be.greaterThan(0n);
-      expect(await mockArena.read.duelMarketKind([duelId]), "on the mixed market")
-        .to.equal(MIXED);
+      expect(await mockArena.read.duelMarketKind([duelId]), "on the events market")
+        .to.equal(EVENTS);
 
-      const [stillWaiting] = await mm.read.getSlot([9, MIXED]);
-      expect(stillWaiting, "the mixed slot is empty again")
+      const [stillWaiting] = await mm.read.getSlot([9, EVENTS]);
+      expect(stillWaiting, "the events slot is empty again")
         .to.equal("0x0000000000000000000000000000000000000000");
     });
 
@@ -491,12 +491,12 @@ describe("Matchmaker", () => {
       // Three players, same tier, three different markets: nobody matches, and
       // each waits in their own line rather than colliding in one.
       const { mm, mockUsdso, alice, bob, charlie } = await deploy();
-      for (const [who, kind] of [[alice, SPOT], [bob, PRACTICE], [charlie, MIXED]] as const) {
+      for (const [who, kind] of [[alice, SPOT], [bob, PRACTICE], [charlie, EVENTS]] as const) {
         const half = await mm.read.halfDeposit([15, kind]);
         await mockUsdso.write.approve([mm.address, half], { account: who.account });
         await mm.write.queue([0, 15, kind], { account: who.account });
       }
-      for (const [who, kind] of [[alice, SPOT], [bob, PRACTICE], [charlie, MIXED]] as const) {
+      for (const [who, kind] of [[alice, SPOT], [bob, PRACTICE], [charlie, EVENTS]] as const) {
         const [player] = await mm.read.getSlot([15, kind]);
         expect(player.toLowerCase(), `market ${kind} holds its own player`)
           .to.equal(who.account.address.toLowerCase());

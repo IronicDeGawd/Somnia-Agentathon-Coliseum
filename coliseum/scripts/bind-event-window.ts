@@ -5,7 +5,7 @@
 // The SOMI coin book used to keep the third slot. It was dropped because on this
 // market it had become the expensive one: a smallest SOMI order costs about nine
 // cents against a third of a cent for a question, so a single coin slot was 99%
-// of a mixed fight's whole deposit. Real coin trading lives in the spot game.
+// of an events fight's whole deposit. Real coin trading lives in the spot game.
 //
 // Every fight records its own market set, so re-pointing the desks between fights
 // cannot disturb a fight already running.
@@ -185,7 +185,7 @@ async function main() {
     [label(chosen[0].label), label(chosen[1].label), label(chosen[2].label)],
   ]);
   await pub.waitForTransactionReceipt({ hash });
-  console.log(`\nArena mixed slots: ${chosen.map((c, i) => `${c.label} ${deskFor[i]}`).join("  ")}`);
+  console.log(`\nArena events slots: ${chosen.map((c, i) => `${c.label} ${deskFor[i]}`).join("  ")}`);
 
   ev.bound = chosen.map((c, i) => ({
     label: c.label,

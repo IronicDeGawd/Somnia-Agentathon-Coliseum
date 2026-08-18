@@ -227,7 +227,7 @@ abstract contract ArenaStorage {
             if (!simPoolsSet) revert ArenaTypes.InvalidPool(address(0));
             return [SIM_POOL_WETH, SIM_POOL_WBTC, SIM_POOL_SOMI];
         }
-        if (kind == ArenaTypes.MarketKind.Mixed) {
+        if (kind == ArenaTypes.MarketKind.Events) {
             if (!eventPoolsSet) revert ArenaTypes.InvalidPool(address(0));
             return [EVENT_POOL_WETH, EVENT_POOL_WBTC, EVENT_POOL_SOMI];
         }

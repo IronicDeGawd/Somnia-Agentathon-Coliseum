@@ -10,13 +10,13 @@ import { config, somniaTestnet } from '@/lib/chain';
  * Join the waiting line for one round count on one market.
  *
  * The market is part of the line's identity: you only ever match someone who
- * chose the same one, because a spot fight and a mixed fight are priced
+ * chose the same one, because a spot fight and an events fight are priced
  * differently and could not share a pot.
  */
 export function useQueue(
   fighter: number,
   turns: 3 | 6 | 9 | 15,
-  market: MarketKind = MarketKind.Mixed,
+  market: MarketKind = MarketKind.Events,
 ) {
   const { address, chainId } = useAccount();
   const publicClient = usePublicClient({ config });

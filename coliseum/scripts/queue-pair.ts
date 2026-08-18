@@ -12,7 +12,7 @@
  * Env:
  *   PAIR        — which pair of wallets to use (0 = players 1&2, 1 = 3&4, ...).
  *   TURNS       — 3, 6, 9 or 15.
- *   MARKET      — 0 spot coins, 1 practice, 2 mixed.
+ *   MARKET      — 0 spot coins, 1 practice, 2 events.
  *   FIGHTERS    — "0,1" registry indices; must differ.
  *   WALLET_FILE — JSON from make-test-wallets.ts.
  */
@@ -33,7 +33,7 @@ const MM = parseAbi([
   "function getSlot(uint16 turns, uint8 marketKind) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)",
   "function pendingCount(uint16 turns, uint8 marketKind) view returns (uint256)",
 ]);
-const MARKET_NAME = ["spot", "practice", "mixed"];
+const MARKET_NAME = ["spot", "practice", "events"];
 
 async function main() {
   const pair = Number(process.env.PAIR ?? "0");

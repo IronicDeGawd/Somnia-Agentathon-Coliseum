@@ -343,11 +343,11 @@ export default function LobbyPage() {
           {LOBBY_MENU.map(({ turns: turnsRaw, market }) => {
             const turns = turnsRaw as QueueTier;
             // One card per WAITING LINE, not per round count: a nine-round spot
-            // player and a nine-round mixed player never match each other, so
+            // player and a nine-round events player never match each other, so
             // showing them as one card would promise a pairing that cannot happen.
-            // Mixed trades the same three questions at every length — only the
+            // Events trades the same three questions at every length — only the
             // number of turns differs — so the label does not vary by tier.
-            const TIER_POOL_LABELS: Record<QueueTier, string> = market === MarketKind.Mixed
+            const TIER_POOL_LABELS: Record<QueueTier, string> = market === MarketKind.Events
               ? (() => {
                   const q = eventQuestions.length ? eventQuestions.join(' · ') : 'live questions';
                   return { 3: q, 6: q, 9: q, 15: q };
@@ -377,7 +377,7 @@ export default function LobbyPage() {
                       style={{
                         marginLeft: 8,
                         letterSpacing: '0.1em',
-                        color: market === MarketKind.Mixed ? 'var(--gold)' : '#5eead4',
+                        color: market === MarketKind.Events ? 'var(--gold)' : '#5eead4',
                       }}
                     >
                       {MARKET_LABEL[market]}

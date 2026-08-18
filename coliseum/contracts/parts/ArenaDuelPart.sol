@@ -53,26 +53,26 @@ contract ArenaDuelPart is ArenaStorage {
     }
 
     /// @notice Start a duel on a chosen market: the real coin books, the mock
-    ///         books, or the mixed set that trades SOMI plus two prediction
-    ///         questions.
+    ///         books, or the events set, whose three slots all hold live
+    ///         prediction questions.
     ///
-    ///         Spot and mixed fights coexist. Each fight records its own three
+    ///         Spot and events fights coexist. Each fight records its own three
     ///         markets when it starts, so an expensive real-asset fight and a
-    ///         cheap mixed one run side by side and neither can disturb the
+    ///         cheap events one run side by side and neither can disturb the
     ///         other's prices, balances or payout.
     ///
     ///         Every turn count is accepted on every market. Which combinations
     ///         are actually offered is a lobby decision, not a contract one, so
-    ///         the menu can change without redeploying anything. Note that at
-    ///         three turns only SOMI trades, making spot and mixed the same
-    ///         fight — they diverge from six turns up.
+    ///         the menu can change without redeploying anything. On spot the
+    ///         tier ladder still narrows the slots for short fights; on events
+    ///         every tier trades all three.
     function startDuelOn(
         uint8  fighterA,
         uint8  fighterB,
         uint16 turns,
         uint8  marketKind
     ) external returns (uint256 duelId) {
-        if (marketKind > uint8(ArenaTypes.MarketKind.Mixed)) revert ArenaTypes.InvalidMarketKind();
+        if (marketKind > uint8(ArenaTypes.MarketKind.Events)) revert ArenaTypes.InvalidMarketKind();
         return _startOn(fighterA, fighterB, turns, ArenaTypes.MarketKind(marketKind));
     }
 
@@ -103,7 +103,7 @@ contract ArenaDuelPart is ArenaStorage {
         uint8  fighterB,
         uint16 turns
     ) external onlyOwner returns (uint256 duelId) {
-        return _startOn(fighterA, fighterB, turns, ArenaTypes.MarketKind.Mixed);
+        return _startOn(fighterA, fighterB, turns, ArenaTypes.MarketKind.Events);
     }
 
     /// @dev The one place a duel is created. Both entry points come through here

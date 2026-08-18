@@ -18,8 +18,8 @@ const MATCH_STARTED_EVENT = parseAbiItem(
 );
 
 /** What each tier trades on the COIN markets. The ladder narrows for short
- *  fights because a smallest BTC order costs dollars. Mixed does not use this —
- *  it trades questions, which all cost a fraction of a cent. */
+ *  fights because a smallest BTC order costs dollars. The events market does not
+ *  use this — it trades questions, which all cost a fraction of a cent. */
 const TIER_POOLS: Record<number, string[]> = {
   3:  ['SOMI'],
   6:  ['SOMI', 'WETH'],
@@ -32,8 +32,8 @@ const MARKET_CHOICES: ReadonlyArray<{
   kind: MarketKind; label: string; accent: string; hint: string;
 }> = [
   {
-    kind: MarketKind.Mixed,
-    label: '◆ MIXED',
+    kind: MarketKind.Events,
+    label: '◆ EVENTS',
     accent: 'var(--gold)',
     hint: 'Three live prediction questions. Cheap at every length — even the longest fight costs about a USDso.',
   },
@@ -53,11 +53,11 @@ const MARKET_CHOICES: ReadonlyArray<{
     : []),
 ];
 
-/// Mixed trades every question at every length, so this does not vary by tier.
+/// Events trades every question at every length, so this does not vary by tier.
 /// The names come from the chain — the desks are re-pointed at fresh questions
 /// between fights, so anything written in here would go stale within the hour.
 function poolsFor(turns: number, market: MarketKind, questions: string[]): string[] {
-  if (market !== MarketKind.Mixed) return TIER_POOLS[turns];
+  if (market !== MarketKind.Events) return TIER_POOLS[turns];
   return questions.length ? questions : ['live questions'];
 }
 
@@ -357,8 +357,8 @@ function QueueInner({
         </span>
       </div>
 
-      {/* Market picker. Mixed and spot are different games, not a display
-          setting: mixed swaps the two costly coins for prediction questions, so
+      {/* Market picker. Events and spot are different games, not a display
+          setting: events replaces every coin with a prediction question, so
           a nine-round fight costs about two USDso instead of about ninety-four.
           Each market has its own waiting line. */}
       <div className="col gap-12">
@@ -651,9 +651,9 @@ function QueueInner({
 export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
   const [fighter, setFighter] = useState(0);
   const [turns, setTurns] = useState<TurnOption>(lockedTurns ?? 6);
-  // Mixed is the default: it is the affordable game, and the one every tier is
+  // Events is the default: it is the affordable game, and the one every tier is
   // offered on.
-  const [market, setMarket] = useState<MarketKind>(MarketKind.Mixed);
+  const [market, setMarket] = useState<MarketKind>(MarketKind.Events);
 
   // Sync the tier when the user opens a different locked tier while the
   // creator is already mounted (e.g. clicking JOIN on another card).

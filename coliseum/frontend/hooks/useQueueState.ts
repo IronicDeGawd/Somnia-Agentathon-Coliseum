@@ -33,7 +33,7 @@ export interface QueueSlot {
 /**
  * A waiting line is identified by round count AND market, not by round count
  * alone. Two players only match if both chose the same pair, so a nine-round
- * spot player and a nine-round mixed player wait in different lines.
+ * spot player and a nine-round events player wait in different lines.
  */
 export function queueKey(turns: number, market: MarketKind): string {
   return `${turns}:${market}`;

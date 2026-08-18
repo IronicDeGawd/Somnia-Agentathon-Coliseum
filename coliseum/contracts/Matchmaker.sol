@@ -192,10 +192,10 @@ contract Matchmaker {
     /// @notice Enter the matchmaking queue.
     /// @param fighter    Your FighterRegistry index (0 to FIGHTER_COUNT-1).
     /// @param turns      Tier: 3, 6, 9, or 15 rounds.
-    /// @param marketKind 0 spot coins, 1 practice, 2 mixed (SOMI plus two
+    /// @param marketKind 0 spot coins, 1 practice, 2 events (three prediction
     ///        prediction questions). Queues are kept separate per market, so you
     ///        only ever match someone who chose the same one — a spot fight and a
-    ///        mixed fight cost wildly different amounts and could not share a pot.
+    ///        events fight cost wildly different amounts and could not share a pot.
     ///
     /// Approve this contract for halfDeposit(turns, marketKind) USDso first.
     function queue(uint8 fighter, uint16 turns, uint8 marketKind) external {

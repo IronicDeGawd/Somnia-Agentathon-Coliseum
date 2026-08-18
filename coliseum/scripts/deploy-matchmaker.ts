@@ -50,11 +50,11 @@ async function main() {
 
   // ── Sanity reads against the live Arena ───────────────────────────────────
   try {
-    // 0 spot coins, 2 mixed — quoting both proves the market split is live.
+    // 0 spot coins, 2 events — quoting both proves the market split is live.
     const spot9  = await matchmaker.read.halfDeposit([9, 0]);
-    const mixed9 = await matchmaker.read.halfDeposit([9, 2]);
+    const events9 = await matchmaker.read.halfDeposit([9, 2]);
     console.log(`  halfDeposit(9, spot):  ${spot9}`);
-    console.log(`  halfDeposit(9, mixed): ${mixed9}`);
+    console.log(`  halfDeposit(9, events): ${events9}`);
     const free = await matchmaker.read.arenaFree();
     console.log(`  arenaFree():     ${free}`);
   } catch (e) {

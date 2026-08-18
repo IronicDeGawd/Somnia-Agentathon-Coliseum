@@ -44,21 +44,25 @@ library ArenaTypes {
 
     /// @notice Which set of markets a fight trades on.
     ///
-    ///         `Spot` is the real coin books. `Mixed` keeps the cheap SOMI coin
-    ///         book but puts a prediction question in each of the two costly
-    ///         slots, which is what takes a nine-round fight from about 150 USDso
-    ///         to under two. `Practice` is the mock books.
+    ///         `Spot` is the real coin books. `Events` fills all three slots with
+    ///         live prediction questions, which is what takes a nine-round fight
+    ///         from about 150 USDso to under two. `Practice` is the mock books.
     ///
     ///         The two real kinds coexist rather than replace each other: every
     ///         fight records its own three markets at the start, so a spot fight
-    ///         and a mixed fight run side by side without touching each other.
+    ///         and an events fight run side by side without touching each other.
     ///
     /// @dev    Numbering is deliberate. The old flag was `bool simulated`, and
     ///         false/true land on Spot/Practice, so every stored value and every
     ///         caller that has not been updated still means what it used to.
-    ///         At three turns only SOMI trades, so Spot and Mixed are the same
-    ///         fight there — the difference begins at six.
-    enum MarketKind { Spot, Practice, Mixed }
+    ///         NEVER reorder: the value is stored in every past fight.
+    ///
+    ///         `Events` was named `Mixed` while it still kept the SOMI coin book
+    ///         in one slot. The coin was dropped because on this market it had
+    ///         become the expensive leg — a smallest coin order costs about nine
+    ///         cents against a third of a cent for a question — so the mix was
+    ///         99% coin by cost. Nothing about a coin is traded there any more.
+    enum MarketKind { Spot, Practice, Events }
 
     // ─── Structs ─────────────────────────────────────────────────────────────
 
@@ -131,7 +135,7 @@ library ArenaTypes {
     error InvalidFighterPair();
     error ReactivityUnderfunded();
     error InvalidTurnCount();        // turns not in {3, 6, 9, 15}
-    error InvalidMarketKind();       // not one of Spot, Practice, Mixed
+    error InvalidMarketKind();       // not one of Spot, Practice, Events
     error DepositTooLow(uint256 required, uint256 provided);
     error NotDuelCreator();
     error DuelNotResolved();

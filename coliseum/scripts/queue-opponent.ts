@@ -6,7 +6,7 @@
  *
  *   TURNS=9 FIGHTER=1 MARKET=2 pnpm exec hardhat run scripts/queue-opponent.ts --network somnia
  *
- * MARKET is 0 spot coins, 1 practice, 2 mixed (SOMI plus two prediction
+ * MARKET is 0 spot coins, 1 practice, 2 events (three prediction
  * questions). Queues are separate per market, so this must match the waiting
  * player's choice or the two will never pair.
  *
