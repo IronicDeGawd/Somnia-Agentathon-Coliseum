@@ -52,6 +52,21 @@ contract ArenaViewPart is ArenaStorage {
         for (uint256 i = 0; i < n; i++) ready[i] = buf[i];
     }
 
+    /// @notice The three markets a fight is bound to, in [WETH, WBTC, SOMI] order.
+    ///
+    ///         This exists because a fight's market set CANNOT be inferred from
+    ///         anything else. There are three games, and `duel.simulated` is a
+    ///         two-valued flag: it says practice-or-not, so a spot fight and an
+    ///         events fight both report false. Events desks also live at fresh
+    ///         addresses every few minutes, so no fixed table can name them.
+    ///         `startDuel` records the set per duel for exactly this reason —
+    ///         and until now nothing outside the contract could read it, which
+    ///         left every client guessing from the flag and landing on the spot
+    ///         pools for an events fight.
+    function duelPoolsOf(uint256 duelId) external view returns (address[3] memory) {
+        return _duelPools(duelId);
+    }
+
     /// @notice Whether turns are driven by Reactivity, which block the live
     ///         subscription is aimed at, and its id. Zero for `armedFor` and `subId`
     ///         while `on` is true means the chain has stopped — the one failure a

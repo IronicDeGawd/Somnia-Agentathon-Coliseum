@@ -267,8 +267,20 @@ abstract contract ArenaStorage {
 
     /// @notice Record a pool's trading rules — tick, minimum size, lot size and
     ///         base-token decimals — so order math does not re-read them on every
-    ///         trade. A pool that cannot answer is cached with permissive defaults
-    ///         rather than reverting, so one bad pool cannot block a deployment.
+    ///         trade.
+    ///
+    ///         A pool that cannot answer is cached with a ZERO minimum size rather
+    ///         than reverting, so one bad pool cannot block a deployment. Read the
+    ///         downstream meaning carefully: a zero minimum makes that pool
+    ///         **untradable**, not unrestricted — `ArenaUtils.tradability` returns
+    ///         false on it and `minDepositFor` skips it. The old wording here said
+    ///         "permissive defaults", which is the opposite of what happens.
+    ///
+    ///         `baseDecimals` is supplied by the caller and deliberately NOT read
+    ///         from the token. The SOMI book's base "token" is an address with no
+    ///         code — a sentinel for native STT — so a `decimals()` call on it
+    ///         reverts. Anyone tidying this into an on-chain read will break that
+    ///         pool and no other.
     ///
     ///         Lives here because both the router's constructor and the part that
     ///         registers new pool sets need it.

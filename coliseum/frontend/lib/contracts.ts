@@ -95,10 +95,29 @@ export const SIM_POOLS = [
 /** Simulated market is live (sim pools deployed + seeded, injector running). */
 export const SIM_MARKET_ENABLED = true;
 
-/** Returns the correct pool list for a given duel: real market or simulated. */
+/**
+ * Returns the correct pool list for a given duel: real market or simulated.
+ *
+ * DO NOT use this to decide which markets a FIGHT trades. `simulated` is
+ * two-valued — practice or not — so a spot fight and an events fight both report
+ * false and both land on the real spot table. Events desks also move to fresh
+ * addresses every few minutes, so no fixed table can name them. Read
+ * `duelPoolsOf(duelId)` off the Arena instead; it returns what the fight actually
+ * recorded when it started.
+ *
+ * Still fine for anything that is about a MARKET rather than a fight — quoting a
+ * deposit, or naming the spot books on a landing page.
+ */
 export function POOLS_FOR(simulated: boolean): typeof POOLS | typeof SIM_POOLS {
   return simulated ? SIM_POOLS : POOLS;
 }
+
+/** Slot names in the [WETH, WBTC, SOMI] order the Arena stores and returns. */
+export const POOL_SLOTS = [
+  { key: 'WETH', bit: 0x01 },
+  { key: 'WBTC', bit: 0x02 },
+  { key: 'SOMI', bit: 0x04 },
+] as const;
 
 /**
  * Which markets a fight trades on. Mirrors ArenaTypes.MarketKind.
@@ -223,6 +242,13 @@ export const ABIS = {
     'function EVENT_POOL_WBTC() view returns (address)',
     'function EVENT_POOL_SOMI() view returns (address)',
     'function poolQuestion(address pool) view returns (bytes8)',
+    // The three markets a fight is actually bound to, [WETH, WBTC, SOMI].
+    // Recorded per duel at startDuel. There is no way to infer this: `simulated`
+    // is two-valued (practice or not), so a spot fight and an events fight both
+    // report false, and event desks move to new addresses every few minutes.
+    'function duelPoolsOf(uint256 duelId) view returns (address[3])',
+    // baseDecimals lives here; a desk presents 18 while a real WBTC book is 8.
+    'function poolMeta(address pool) view returns (uint8 baseDecimals, uint256 minQuantity, uint256 lotSize, uint256 tickSize)',
     'function nextDuelId() view returns (uint256)',
     'function platformFee(uint16 turns) view returns (uint256)',
     'function TURN_INTERVAL_BLOCKS() view returns (uint256)',

@@ -47,16 +47,26 @@ import "./interfaces/IBinaryPool.sol";
 ///    the holding correctly, while Arena's own `quantity == 0` check rejects
 ///    the trade instead of sending an order into a dead book.
 ///
-/// SCALING. Coliseum thinks in 18-decimal USDso; the event pool is 6-decimal.
-/// Everything crossing this boundary is scaled by SCALE (1e12), so Arena sees
-/// prices where 1e18 == one whole contract == one unit of collateral.
+/// SCALING. Coliseum thinks in 18-decimal USDso; the event pool quotes in its
+/// collateral's decimals, which is 6 on this testnet. Everything crossing the
+/// boundary is multiplied or divided by `scale`, so Arena sees prices where
+/// 1e18 == one whole contract == one unit of collateral.
+///
+/// `scale` is DERIVED at bind() from the pool's own `oneCollateral`, not fixed at
+/// compile time. It used to be `constant 1e12`, which is right only for 6-decimal
+/// collateral: a port to 18-decimal USDso would have mispriced every order, book
+/// level and balance by a factor of a trillion, with nothing to notice. The pool
+/// has always reported its own unit; the constant just ignored it. Deriving it
+/// also lets two desks serve markets with different collateral at the same time,
+/// which a constant can never do.
 ///
 /// TESTNET NOTE. Collateral here is tUSDC, a different token from Coliseum's
 /// USDso, and no swap route exists between them. The desk funds itself from
-/// tUSDC's open faucet and presents a 1:1 USDso-denominated face. On mainnet
-/// the event collateral IS USDso and this shim goes away. It is safe because
-/// Arena's `recoverFunds` pays from Arena's own balance capped by the duel pot,
-/// so an event position can never cause an over-payment.
+/// tUSDC's open faucet and presents a 1:1 USDso-denominated face. On mainnet the
+/// event collateral IS USDso, `oneCollateral` is 1e18 and `scale` becomes 1, so
+/// the arithmetic below turns into a no-op on its own. It is safe because Arena's
+/// `recoverFunds` pays from Arena's own balance capped by the duel pot, so an
+/// event position can never cause an over-payment.
 contract EventDesk is ISpotPool {
 
     // ─── Order kinds and types on the binary pool ─────────────────────────────
@@ -64,8 +74,14 @@ contract EventDesk is ISpotPool {
     uint8 private constant KIND_SELL_YES = 1;
     uint8 private constant ORDER_TYPE_IOC = 2;
 
-    /// @dev 6-decimal pool -> 18-decimal Coliseum.
-    uint256 public constant SCALE = 1e12;
+    /// @notice Coliseum's unit — one whole contract, one unit of collateral.
+    uint256 public constant ONE18 = 1e18;
+
+    /// @notice Pool collateral unit -> Coliseum's 18 decimals. Set by bind() from
+    ///         the market's own `oneCollateral`; 1e12 for 6-decimal collateral, 1
+    ///         for 18-decimal. Zero until the first bind, and every path that uses
+    ///         it is either `bound` or reads through the pool, which reverts first.
+    uint256 public scale;
 
     address public immutable owner;
     address public immutable arena;
@@ -93,6 +109,8 @@ contract EventDesk is ISpotPool {
     error DeskInUse();
     error PositionOutstanding();
     error MarketIdRequired();
+    /// @dev The market's collateral unit has no exact whole-number factor into 1e18.
+    error UnsupportedCollateralUnit(uint256 oneCollateral);
 
     /// @notice Last non-empty top-of-book seen, in the pool's own 6 decimals.
     ///         Refreshed by `poke()` and by every trade. Serves as the price
@@ -160,6 +178,15 @@ contract EventDesk is ISpotPool {
         outcomeToken  = IOutcomeToken6909(p.outcomeToken);
         yesId         = p.yesId;
         oneCollateral = p.oneCollateral;
+
+        // The market states its own unit; refuse anything we cannot represent
+        // exactly rather than silently rounding every price. Collateral finer than
+        // 18 decimals, or a unit that is not a power of ten, has no whole-number
+        // factor into Coliseum's 18 and would corrupt every conversion below.
+        if (p.oneCollateral == 0 || p.oneCollateral > ONE18 || ONE18 % p.oneCollateral != 0) {
+            revert UnsupportedCollateralUnit(p.oneCollateral);
+        }
+        scale = ONE18 / p.oneCollateral;
 
         // A fresh window has its own price history; carrying the last one's
         // cached book across would misvalue the new position.
@@ -263,7 +290,7 @@ contract EventDesk is ISpotPool {
     /// @notice Pull collateral back out of the vault, to the owner (the treasury
     ///         on testnet), so an idle desk's balance is never stranded.
     function withdraw(address, uint256 amount) external override onlyOwner bound {
-        uint256 amount6 = amount / SCALE;
+        uint256 amount6 = amount / scale;
         pool.withdraw(collateral, amount6);
         IERC20Like(collateral).transfer(owner, amount6);
     }
@@ -273,7 +300,7 @@ contract EventDesk is ISpotPool {
     function getWithdrawableBalance(address user, address) external view override returns (uint256) {
         // Arena asks about its own balance; the vault position is held by the desk.
         address who = user == arena ? address(this) : user;
-        return pool.getWithdrawableBalance(who, collateral) * SCALE;
+        return pool.getWithdrawableBalance(who, collateral) * scale;
     }
 
     /// @notice Top of book, scaled to 18 decimals — or the settled payout once
@@ -298,7 +325,7 @@ contract EventDesk is ISpotPool {
         if (raw.length > 0) {
             OrderBookLevel[] memory out = new OrderBookLevel[](raw.length);
             for (uint256 i = 0; i < raw.length; i++) {
-                out[i] = OrderBookLevel({ price: raw[i].price * SCALE, quantity: raw[i].quantity * SCALE });
+                out[i] = OrderBookLevel({ price: raw[i].price * scale, quantity: raw[i].quantity * scale });
             }
             return out;
         }
@@ -310,7 +337,7 @@ contract EventDesk is ISpotPool {
         uint256 cached = isBid ? lastGoodBid : lastGoodAsk;
         if (cached > 0) {
             OrderBookLevel[] memory stale = new OrderBookLevel[](1);
-            stale[0] = OrderBookLevel({ price: cached * SCALE, quantity: 0 });
+            stale[0] = OrderBookLevel({ price: cached * scale, quantity: 0 });
             return stale;
         }
         return raw;
@@ -349,9 +376,9 @@ contract EventDesk is ISpotPool {
             p.collateralToken,
             p.makerFeeBpsTimes1k,
             p.takerFeeBpsTimes1k,
-            g.tickSize   * SCALE,
-            g.minQuantity * SCALE,
-            g.lotSize    * SCALE
+            g.tickSize   * scale,
+            g.minQuantity * scale,
+            g.lotSize    * scale
         );
     }
 
@@ -378,8 +405,8 @@ contract EventDesk is ISpotPool {
 
         (success, orderId) = pool.placeBinaryOrder(
             isBid ? KIND_BUY_YES : KIND_SELL_YES,
-            price / SCALE,
-            quantity / SCALE,
+            price / scale,
+            quantity / scale,
             expiry,
             ORDER_TYPE_IOC,
             selfMatchingOption,
@@ -424,6 +451,6 @@ contract EventDesk is ISpotPool {
 
     /// @notice YES contracts this desk holds, in 18 decimals.
     function yesBalance18() external view returns (uint256) {
-        return outcomeToken.balanceOf(address(this), yesId) * SCALE;
+        return outcomeToken.balanceOf(address(this), yesId) * scale;
     }
 }

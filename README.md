@@ -323,6 +323,19 @@ factory's `MarketCreated` logs (`scanWindows` in `bind-event-window.ts` — the 
 else, and without it a won position can never be claimed), a collateral source, and something on a
 schedule to re-point desks as windows expire.
 
+Two things in that path are worth copying carefully, because both were wrong here first:
+
+- **Pin the log query to the venue's address, and check the collateral it names.** A query with only an
+  event shape matches that event from *any* contract on the chain. Somnia testnet has run one
+  prediction venue so far, so nothing broke — but with two, the best-scoring window can belong to
+  someone else, and a desk bound to it adopts *that* market's collateral, which your treasury does not
+  hold. The result is a slot registered on a question that can never be traded, invisible until a
+  fight's tape shows moves that never reached a market.
+- **Derive the decimal scaling from the market, never from a constant.** The pool reports its own
+  collateral unit (`oneCollateral`), and `EventDesk` now computes its factor from that at bind time. It
+  was `1e12` hardcoded — correct for 6-decimal testnet collateral and wrong by a factor of a trillion
+  the moment the collateral is 18-decimal, with nothing anywhere to notice.
+
 **The router pattern is the second.** `Arena.sol` plus `ArenaStorage.sol` is about 3.3 KB of
 diamond-lite: no libraries, no loupe, one storage layout shared by every part. Enough for "I need to fix
 this contract without migrating its funds", and small enough to read in one sitting.
