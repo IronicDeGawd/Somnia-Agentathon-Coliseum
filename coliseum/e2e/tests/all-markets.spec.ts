@@ -79,9 +79,6 @@ async function queueAsPlayer(
   // against a line that still looked empty, took the cheap estimate, and ran out of
   // gas on the expensive matching path. Either the page says it is waiting, or it
   // has already moved to the fight because the opponent was there first.
-  await expect(
-    page.getByText(/waiting for opponent/i).first().or(page.locator('body')),
-  ).toBeVisible();
   await page.waitForFunction(
     () => /\/duel\/\d+/.test(location.pathname) ||
           /waiting for opponent/i.test(document.body.innerText || ''),
