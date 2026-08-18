@@ -81,13 +81,20 @@ export async function installWallet(
           return null;
         case 'eth_sendTransaction': {
           const tx = params[0] as {
-            to?: Address; data?: Hex; value?: Hex; gas?: Hex; from?: Address;
+            to?: Address; data?: Hex; value?: Hex; gas?: Hex; gasPrice?: Hex; from?: Address;
           };
+          // LEGACY, ALWAYS. This chain rejects type-2 transactions outright, and
+          // viem would otherwise pick the fee-market shape on its own — so every
+          // send would fail, and it would look like the site's problem rather than
+          // the wallet's. The page usually supplies a gas price for the same
+          // reason; when it does not, one is fetched rather than invented.
           return wallet.sendTransaction({
             to: tx.to,
             data: tx.data,
             value: tx.value ? BigInt(tx.value) : undefined,
             gas: tx.gas ? BigInt(tx.gas) : undefined,
+            gasPrice: tx.gasPrice ? BigInt(tx.gasPrice) : await pub.getGasPrice(),
+            type: 'legacy',
           });
         }
         case 'personal_sign':
