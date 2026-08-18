@@ -25,23 +25,33 @@ contract ArenaTurnPart is ArenaStorage {
 
     // ─── Reactivity callback ─────────────────────────────────────────────────
 
+    /// @dev There is deliberately no check that the firing's block is a multiple of
+    ///      the turn interval. That check made sense only while the subscription
+    ///      fired on every block and most firings had to be thrown away; against a
+    ///      subscription aimed at one named block it would discard nearly every
+    ///      firing we paid for. _runTurn's own interval check is the real guard.
     function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
         if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;
         if (eventTopics.length < 2) return;
-        uint64 blockNumber = uint64(uint256(eventTopics[1]));
-        if (blockNumber % TURN_INTERVAL_BLOCKS != 0) return;
         // Advance every running duel. _runTurn is a no-op for any duel whose
         // interval has not elapsed, so this stays cheap when only one is live.
         uint256[] memory ids = activeDuelIds;
         for (uint256 i = 0; i < ids.length; i++) _runTurn(ids[i]);
+        // This firing is spent. Book the next one, or the chain ends here.
+        _scheduleNextTick();
     }
 
 
     /// @notice Manual turn advance, owner-only. Reactivity `onEvent` drives turns automatically;
-    ///         this is a fallback for when the subscription is down. Public access would let an
+    ///         this is a fallback for when a firing never lands. Public access would let an
     ///         attacker time turns to sandwich pool manipulation around LLM context reads.
     function turn(uint256 duelId) external onlyOwner {
         _runTurn(duelId);
+        // Re-arm even though the keeper drove this turn. Without it, a single
+        // watchdog-driven turn would leave the subscription pointed at a block that
+        // has already passed — the chain would die at exactly the moment the safety
+        // net was supposed to catch it.
+        _scheduleNextTick();
     }
 
 

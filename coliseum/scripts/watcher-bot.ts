@@ -12,8 +12,10 @@
 //   4. Referees any live player-started duel: fuels the Arena (while a duel is
 //      live), rings the bell via turn() when the block window opens, and
 //      finalizes when all moves are in (force-resolve fallback on a stall).
-//      This replaces the on-chain reactivity subscription (left deactivated to
-//      avoid its every-block gas draw) for player-started fights.
+//      With Arena's Reactivity switched off this is what drives every turn. With
+//      it on, Arena books one firing per turn and this becomes the watchdog:
+//      set REACTIVITY_GRACE_BLOCKS so the bot only rings the bell once a firing
+//      has clearly been missed, instead of racing the chain and paying twice.
 //   5. Tends the prediction desks, when any are deployed: refreshes each busy
 //      desk's remembered price every tick, because a window's makers stop
 //      quoting long before it expires and a desk with no price values a real
@@ -136,6 +138,21 @@ const EMERGENCY_FINALIZE_BLOCKS = 1000n;
 
 /** Gas floor for turn() — see the note at the call site. */
 const TURN_GAS_LIMIT = BigInt(9_000_000);
+
+/**
+ * How far past a turn's due block to wait before ringing the bell ourselves.
+ *
+ * Zero — the default — is the old behaviour: the bot drives every turn the moment
+ * it is due. With Arena's one-shot Reactivity switched on, the chain drives turns
+ * instead, and racing it means paying twice for the same turn (harmless but
+ * wasteful: Arena's turn is idempotent on lastTurnBlock, so whichever lands second
+ * does nothing). Set this to roughly 50 blocks — about 5 s at 101 ms blocks — while
+ * Reactivity is on, so the bot only steps in once a firing has clearly been missed.
+ *
+ * It must stay well under EMERGENCY_FINALIZE_BLOCKS, or a stalled duel would reach
+ * the force-resolve window before anything tried to advance it.
+ */
+const REACTIVITY_GRACE_BLOCKS = BigInt(process.env.REACTIVITY_GRACE_BLOCKS ?? "0");
 
 interface DuelState {
   lastTurnBlock: bigint;
@@ -448,9 +465,11 @@ async function driveDuel(aid: bigint, opts: {
     return;
   }
 
-  // Mid-duel: ring the bell when the block window is open.
-  if (cur >= d.lastTurnBlock + turnInterval) {
-    log(`  turn window open (head ${cur} ≥ ${d.lastTurnBlock + turnInterval}) → turn()`);
+  // Mid-duel: ring the bell when the block window is open, plus whatever grace
+  // period is configured for Reactivity to get there first.
+  const dueAt = d.lastTurnBlock + turnInterval + REACTIVITY_GRACE_BLOCKS;
+  if (cur >= dueAt) {
+    log(`  turn window open (head ${cur} ≥ ${dueAt}) → turn()`);
     try {
       // Explicit floor rather than estimation. A real-market turn can reach
       // dreamDEX's native-payout guard, which needs ~5M gas of headroom to still
@@ -480,7 +499,7 @@ async function driveDuel(aid: bigint, opts: {
       }
     }
   } else {
-    log(`  waiting for turn window: ${d.lastTurnBlock + turnInterval - cur} blocks left`);
+    log(`  waiting for turn window: ${dueAt - cur} blocks left`);
   }
 }
 

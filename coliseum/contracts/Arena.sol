@@ -75,12 +75,18 @@ contract Arena is ArenaStorage {
         //     15-round fight against 7.8 STT of polling.
         //   - unsubscribe genuinely stops a live subscription, so one can be scoped
         //     to a single fight.
-        // So the cost was in the polling, not in Reactivity. What a one-shot chain
-        // gives up is self-healing: a dropped firing stalls the fight until something
-        // notices, where every-block retries 100 ms later. Turns are keeper-driven
-        // until that watchdog exists.
+        // So the cost was in the polling, not in Reactivity. Arena now books ONE
+        // firing at a time, at the block the next turn is due, and cancels when the
+        // last fight ends — see ArenaStorage._scheduleNextTick.
+        //
+        // What a one-shot chain gives up is self-healing: a dropped firing stalls the
+        // fight until something notices, where every-block retries 100 ms later. The
+        // keeper bot therefore stays on as a watchdog, advancing a turn that is
+        // overdue past its grace period (REACTIVITY_GRACE_BLOCKS in watcher-bot.ts)
+        // and re-arming when it does.
         //
         // Reactivity stays OPT-IN here: nothing in this constructor subscribes.
+        // resubscribe() switches it on, disableReactivity() switches it back off.
         USDSO     = _usdso;
         POOL_WETH = _poolWeth;
         POOL_WBTC = _poolWbtc;

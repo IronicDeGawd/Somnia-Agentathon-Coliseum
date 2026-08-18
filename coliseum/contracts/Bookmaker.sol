@@ -33,6 +33,16 @@ contract Bookmaker is IBookmaker {
     uint256 public subscriptionId;
     uint256 public TURN_INTERVAL_BLOCKS;
 
+    /// @notice Whether re-pricing is driven by Reactivity. Explicit rather than
+    ///         inferred from subscriptionId, because a one-shot subscription is
+    ///         absent most of the time and "absent" must not read as "switched off".
+    bool public reactivityOn;
+
+    /// @notice The block named in the live subscription's topic; zero if nothing is
+    ///         armed. Compared before re-arming, so an already-correct subscription
+    ///         is not paid for twice.
+    uint64 public armedForBlock;
+
     // fighterId in bets is a relative index: 0 = fighterA, 1 = fighterB (NOT the global fighter id)
     struct Bet {
         address bettor;
@@ -95,6 +105,12 @@ contract Bookmaker is IBookmaker {
     event OddsRequestSent(uint256 indexed duelId, uint256 indexed requestId, uint256 blockNumber);
     event OddsRequestFailed(uint256 indexed duelId, string reason);
 
+    /// @notice A one-shot tick was booked for `targetBlock`. A zero subscriptionId is
+    ///         the only visible sign that the chain of ticks has stopped.
+    event TickArmed(uint64 targetBlock, uint256 subscriptionId);
+    event TickCancelled(uint256 subscriptionId);
+    event ReactivityDisabled();
+
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
@@ -108,10 +124,12 @@ contract Bookmaker is IBookmaker {
         address _platform,
         uint256 _turnIntervalBlocks
     ) payable {
-        // Reactivity is OPT-IN: call resubscribe() to switch it on. A BlockTick
-        // subscription bills every block regardless of activity (~25.8 STT/hour)
-        // and cannot be cancelled, so subscribing from the constructor made every
-        // deploy start burning STT the moment it landed. See Arena's constructor.
+        // Reactivity is OPT-IN: call resubscribe() to switch it on, disableReactivity()
+        // to switch it off. Nothing here subscribes, because a deploy should not start
+        // spending before a line is open. Each firing is now booked for one named
+        // block and cancelled when the bets settle, so an idle book pays nothing —
+        // measured 0.0045 STT per firing against ~31 STT/hour for the every-block
+        // subscription this replaced. See Arena's constructor.
         // Must be a contract — an EOA/typo would silently disable the duelist guard.
         if (_matchmaker.code.length == 0) revert BadMatchmaker();
         arena         = IArena(_arena);
@@ -125,11 +143,77 @@ contract Bookmaker is IBookmaker {
 
     receive() external payable {}
 
-    function _subscribeReactivity() internal returns (uint256 newId) {
+    // ─── Reactivity: one subscription, aimed at the next re-price ────────────
+    //
+    // A zero in eventTopics[1] means EVERY block — ~10.5 firings a second, ~31
+    // STT/hour, burning identically whether a line was open or the book was shut.
+    // A block NUMBER there fires once, at that block, for 0.0045 STT including
+    // booking the next one. See ArenaStorage for the measurements.
+    //
+    // What it buys in exchange is fragility: each firing books the next, so one
+    // firing that never lands stops the re-pricing silently. Odds going stale is
+    // survivable — bets lock the odds at placement — but the keeper watches anyway.
+
+    /// @notice The block at which the open line is next due a re-price, or zero if
+    ///         no line is open. A due block already in the past becomes one interval
+    ///         from now, since a block in the past can never fire.
+    function _nextRepriceBlock() internal view returns (uint64) {
+        uint256 duelId = arena.activeDuelId();
+        if (duelId == 0) return 0;
+        if (duelSettled[duelId]) return 0;
+        // Line not opened yet: nothing to re-price.
+        if (uint256(currentOdds[duelId][0]) + uint256(currentOdds[duelId][1]) != BPS_TOTAL) return 0;
+        uint256 last = lastOddsUpdateBlock[duelId];
+        uint256 due  = (last == 0 ? block.number : last) + TURN_INTERVAL_BLOCKS;
+        // One full interval, not the next block. Several paths through _onBlockTick
+        // return without writing lastOddsUpdateBlock — a request already in flight,
+        // too little STT, the arena no longer Active. Arming for the next block in
+        // those cases would quietly restore per-block firing, which is the whole
+        // cost this change exists to remove.
+        if (due <= block.number) due = block.number + TURN_INTERVAL_BLOCKS;
+        return uint64(due);
+    }
+
+    function _scheduleNextTick() internal {
+        if (!reactivityOn) return;
+        uint64 target = _nextRepriceBlock();
+        if (target == 0) {
+            _cancelTick();
+            return;
+        }
+        if (target == armedForBlock && subscriptionId != 0) return;
+        if (subscriptionId != 0) _unsubscribeReactivity(subscriptionId);
+        uint256 newId = _subscribeReactivity(target);
+        subscriptionId = newId;
+        // A failed subscribe must leave nothing armed, so the next caller retries
+        // rather than trusting a tick that was never booked.
+        armedForBlock  = newId == 0 ? 0 : target;
+        emit TickArmed(target, newId);
+    }
+
+    function _cancelTick() internal {
+        uint256 id = subscriptionId;
+        if (id != 0) _unsubscribeReactivity(id);
+        subscriptionId = 0;
+        armedForBlock  = 0;
+        if (id != 0) emit TickCancelled(id);
+    }
+
+    /// @dev Best-effort. A failed cancel must never revert the settlement that
+    ///      triggered it — the cost of that is one stray firing, not stuck money.
+    function _unsubscribeReactivity(uint256 id) internal {
+        (bool ok, ) = SOMNIA_REACTIVITY_PRECOMPILE.call(
+            abi.encodeWithSelector(ISomniaReactivityPrecompile.unsubscribe.selector, id)
+        );
+        if (!ok) emit SubscriptionSkipped("unsubscribe failed");
+    }
+
+    function _subscribeReactivity(uint64 targetBlock) internal returns (uint256 newId) {
         ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
             eventTopics: [
                 keccak256("BlockTick(uint64)"),
-                bytes32(0),
+                // The whole point of the change. A zero here means every block.
+                bytes32(uint256(targetBlock)),
                 bytes32(0),
                 bytes32(0)
             ],
@@ -164,12 +248,25 @@ contract Bookmaker is IBookmaker {
         }
     }
 
+    /// @notice Switch re-pricing over to Reactivity, arming now if a line is open.
+    ///         The signature is unchanged on purpose: a changed signature leaves the
+    ///         old selector pointing at retired behaviour, so an existing entry point
+    ///         is reused wherever the body can carry the change.
     function resubscribe() external returns (uint256 newId) {
         if (msg.sender != owner) revert NotOwner();
         if (address(this).balance < REACTIVITY_FUND_MIN) revert ReactivityUnderfunded();
-        newId = _subscribeReactivity();
-        subscriptionId = newId;
+        reactivityOn = true;
+        _scheduleNextTick();
+        newId = subscriptionId;
         emit Resubscribed(newId);
+    }
+
+    /// @notice Switch it off and cancel anything armed. One call, no redeploy.
+    function disableReactivity() external {
+        if (msg.sender != owner) revert NotOwner();
+        reactivityOn = false;
+        _cancelTick();
+        emit ReactivityDisabled();
     }
 
     function withdrawNative(address to, uint256 amount) external {
@@ -184,8 +281,15 @@ contract Bookmaker is IBookmaker {
         if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;
         if (eventTopics.length < 2) return;
         uint64 blockNumber = uint64(uint256(eventTopics[1]));
-        if (blockNumber % TURN_INTERVAL_BLOCKS != 0) return;
+        // No multiple-of-interval check. That existed only because the subscription
+        // fired on every block and nearly every firing had to be discarded; against
+        // a subscription aimed at one named block it would discard the firing we paid
+        // for. _onBlockTick's own cooldown is the real guard.
         _onBlockTick(blockNumber);
+        // Re-arm here rather than at the end of _onBlockTick: that function returns
+        // early on half a dozen paths, and every one of them would otherwise end the
+        // chain.
+        _scheduleNextTick();
     }
 
     function _onBlockTick(uint64 blockNumber) internal {
@@ -346,6 +450,8 @@ contract Bookmaker is IBookmaker {
         currentOdds[duelId][0] = oddsA;
         currentOdds[duelId][1] = oddsB;
         emit OddsInitialized(duelId, oddsA, oddsB);
+        // Opening the line is what starts the chain — nothing is armed before it.
+        _scheduleNextTick();
     }
 
     function updateOdds(uint256 duelId, uint16 oddsA, uint16 oddsB) external onlyOwner {
@@ -465,6 +571,11 @@ contract Bookmaker is IBookmaker {
         }
 
         emit BetsSettled(duelId, winnerId, totalPayout, rake);
+
+        // The line is closed, so stop paying for ticks. Last thing in the function on
+        // purpose: settlement can still revert above this point, and a cancel that is
+        // rolled back with it is a cancel that never happened.
+        _cancelTick();
     }
 
     function withdrawRake(uint256 duelId, address to) external onlyOwner {

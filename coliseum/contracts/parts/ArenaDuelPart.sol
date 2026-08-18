@@ -194,6 +194,11 @@ contract ArenaDuelPart is ArenaStorage {
         }
 
         emit ArenaTypes.DuelStarted(duelId, fighterA, fighterB, msg.sender, turns, mask, block.number);
+
+        // Arm the first tick. Nothing is armed while the arena is empty, so this is
+        // what starts the chain — and if a duel already running is due sooner, this
+        // leaves that earlier subscription alone.
+        _scheduleNextTick();
     }
 
 
@@ -297,6 +302,10 @@ contract ArenaDuelPart is ArenaStorage {
                 duel.initialUsdsoPerFighter
             ) {} catch {}
         }
+
+        // Re-aim at whichever fight is now due soonest — or cancel outright, which
+        // is what happens on the last one out. An idle arena pays nothing.
+        _scheduleNextTick();
     }
 
 

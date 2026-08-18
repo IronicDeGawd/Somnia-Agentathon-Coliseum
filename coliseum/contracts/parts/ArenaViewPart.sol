@@ -52,6 +52,17 @@ contract ArenaViewPart is ArenaStorage {
         for (uint256 i = 0; i < n; i++) ready[i] = buf[i];
     }
 
+    /// @notice Whether turns are driven by Reactivity, which block the live
+    ///         subscription is aimed at, and its id. Zero for `armedFor` and `subId`
+    ///         while `on` is true means the chain has stopped — the one failure a
+    ///         one-shot subscription cannot recover from by itself.
+    ///
+    ///         A view rather than three public variables because the router's
+    ///         compiled getters are frozen and it is never redeployed.
+    function reactivityStatus() external view returns (bool on, uint64 armedFor, uint256 subId, uint64 nextDue) {
+        return (reactivityOn, armedForBlock, subscriptionId, _nextTurnBlock());
+    }
+
     /// @notice Returns the minimum USDso deposit (excluding platform fee) for a turn
     ///         tier on the REAL pool set. Kept for backward compatibility.
     function minDepositFor(uint16 turns) external view returns (uint256) {

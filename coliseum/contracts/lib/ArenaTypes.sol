@@ -213,6 +213,13 @@ library ArenaTypes {
     event NativeWithdrawn(address indexed to, uint256 amount);
     event Resubscribed(uint256 indexed newSubscriptionId);
     event SubscriptionSkipped(string reason);
+
+    /// @notice A one-shot tick was booked for `targetBlock`. subscriptionId is zero
+    ///         when the precompile refused, which is the only visible sign that the
+    ///         chain of ticks has stopped.
+    event TickArmed(uint64 targetBlock, uint256 subscriptionId);
+    event TickCancelled(uint256 subscriptionId);
+    event ReactivityDisabled();
     event FeesWithdrawn(address indexed to, uint256 amount);
     event SeedWithdrawn(address indexed to, uint256 amount);
     event DuelFundsRecovered(uint256 indexed duelId, address indexed creator, uint256 amount);

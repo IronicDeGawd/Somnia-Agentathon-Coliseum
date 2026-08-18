@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "./lib/ArenaTypes.sol";
 import "./interfaces/IFighterRegistry.sol";
 import "./interfaces/ISpotPool.sol";
+import "./interfaces/ISomniaReactivityPrecompile.sol";
 
 /// @title ArenaStorage
 /// @notice The single declaration of everything Arena remembers.
@@ -190,6 +191,21 @@ abstract contract ArenaStorage {
     ///         ArenaViewPart, since the router has no getter for it either.
     mapping(address => bytes8) internal poolLabel;
 
+    /// @notice Whether turns are allowed to arm a Reactivity subscription at all.
+    ///         Deliberately explicit rather than inferred from subscriptionId: a
+    ///         one-shot subscription is expected to be absent most of the time, so
+    ///         "no subscription" cannot mean "switched off".
+    ///
+    ///         Internal, like poolLabel, because the router's getters are frozen.
+    ///         Read it through ArenaViewPart.reactivityStatus().
+    bool internal reactivityOn;
+
+    /// @notice The block number currently named in the live subscription's topic.
+    ///         Zero means nothing is armed. Compared before re-arming so an
+    ///         already-correct subscription is left alone instead of being paid for
+    ///         twice.
+    uint64 internal armedForBlock;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {
@@ -285,5 +301,124 @@ abstract contract ArenaStorage {
     function _cachePoolMeta(address pool, uint8 baseDecimals, bytes8 label) internal {
         _cachePoolMeta(pool, baseDecimals);
         poolLabel[pool] = label;
+    }
+
+    // ─── Reactivity: one subscription, aimed at the next turn ─────────────────
+    //
+    // A BlockTick subscription with a zero in eventTopics[1] fires on EVERY block —
+    // ~10.5 times a second, measured at ~31 STT/hour whether a fight was running or
+    // the arena was empty. A turn happens once per TURN_INTERVAL_BLOCKS, so all but
+    // one of those firings did nothing but return.
+    //
+    // Put a block NUMBER in that field and it fires once, at that block: measured
+    // 4/4 hops landing on the exact block, 0 blocks late, 0.0045 STT per firing
+    // including booking the next one. Per 15-round fight that is 0.07 STT against
+    // 7.8 STT polled.
+    //
+    // The cost of that shape is that it does not self-heal. Each firing is what
+    // books the next one, so a firing that never lands ends the chain silently,
+    // where an every-block subscription simply retries 100 ms later. The keeper bot
+    // therefore stays, as a watchdog: it advances a turn that is overdue by more
+    // than its grace period, and re-arms when it does.
+
+    /// @notice The earliest block at which any running duel is due a turn, or zero
+    ///         if no duel needs one. A duel already past due arms for the next block
+    ///         rather than a block in the past, which would never fire.
+    function _nextTurnBlock() internal view returns (uint64) {
+        uint256 best = 0;
+        uint256[] memory ids = activeDuelIds;
+        for (uint256 i = 0; i < ids.length; i++) {
+            ArenaTypes.Duel storage d = duels[ids[i]];
+            if (d.status != ArenaTypes.DuelStatus.Active) continue;
+            if (d.completedCallbacks >= d.turns * 2) continue;
+            uint256 due = d.lastTurnBlock + TURN_INTERVAL_BLOCKS;
+            if (due <= block.number) due = block.number + 1;
+            if (best == 0 || due < best) best = due;
+        }
+        return uint64(best);
+    }
+
+    /// @notice Point the single subscription at whichever duel is due soonest.
+    ///         No-op while reactivity is off, and no-op when the subscription
+    ///         already names the right block — re-arming for the same block would
+    ///         pay the 210,000-gas creation cost for nothing.
+    function _scheduleNextTick() internal {
+        if (!reactivityOn) return;
+        uint64 target = _nextTurnBlock();
+        if (target == 0) {
+            _cancelTick();
+            return;
+        }
+        if (target == armedForBlock && subscriptionId != 0) return;
+        if (subscriptionId != 0) _unsubscribeReactivity(subscriptionId);
+        uint256 newId = _subscribeReactivity(target);
+        subscriptionId = newId;
+        // A failed subscribe leaves nothing armed, so the next caller retries
+        // instead of believing a tick is booked that never was.
+        armedForBlock  = newId == 0 ? 0 : target;
+        emit ArenaTypes.TickArmed(target, newId);
+    }
+
+    /// @notice Stop paying for ticks. Safe to call when nothing is armed.
+    function _cancelTick() internal {
+        uint256 id = subscriptionId;
+        if (id != 0) _unsubscribeReactivity(id);
+        subscriptionId = 0;
+        armedForBlock  = 0;
+        if (id != 0) emit ArenaTypes.TickCancelled(id);
+    }
+
+    /// @notice Ask the precompile for one firing at `targetBlock`.
+    ///         A zero return means the precompile refused or is absent — locally the
+    ///         address holds no code, and a call to a codeless address SUCCEEDS with
+    ///         empty return data, which is why the empty-return branch exists.
+    function _subscribeReactivity(uint64 targetBlock) internal returns (uint256 newId) {
+        ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
+            eventTopics: [
+                keccak256("BlockTick(uint64)"),
+                // The whole point of the change. A zero here means every block.
+                bytes32(uint256(targetBlock)),
+                bytes32(0),
+                bytes32(0)
+            ],
+            origin:                  address(0),
+            caller:                  address(0),
+            emitter:                 SOMNIA_REACTIVITY_PRECOMPILE,
+            handlerContractAddress:  address(this),
+            handlerFunctionSelector: ON_EVENT_SELECTOR,
+            // Priority fee must be high enough to win the per-block reactivity queue.
+            // Testnet baseFee is ~6 gwei; lower-priority subs get indefinitely deferred
+            // even though the subscription stays alive. That matters MORE with one shot:
+            // a deferred firing is not a late turn, it is the end of the chain.
+            priorityFeePerGas:       10_000_000_000,
+            // maxFeePerGas must be >= priorityFeePerGas + baseFee.
+            maxFeePerGas:            50_000_000_000,
+            // Arena _runTurn does pool snapshots + 2 LLM createRequest calls, and now
+            // also books the next tick (210,000 gas). 3M gas was tight; reactive txs
+            // were silently failing out-of-gas with no event. 15M, under the 200M cap.
+            gasLimit:                15_000_000,
+            isGuaranteed:            false,
+            isCoalesced:             false
+        });
+
+        (bool ok, bytes memory ret) = SOMNIA_REACTIVITY_PRECOMPILE.call(
+            abi.encodeWithSelector(ISomniaReactivityPrecompile.subscribe.selector, data)
+        );
+        if (ok && ret.length >= 32) {
+            newId = abi.decode(ret, (uint256));
+        } else {
+            newId = 0;
+            emit ArenaTypes.SubscriptionSkipped("precompile unavailable");
+        }
+    }
+
+    /// @dev Best-effort. A failed cancel must never revert the turn or the
+    ///      resolution that triggered it — worst case a subscription outlives its
+    ///      block, which costs one firing, not a stuck fight.
+    function _unsubscribeReactivity(uint256 id) internal {
+        (bool ok, ) = SOMNIA_REACTIVITY_PRECOMPILE.call(
+            abi.encodeWithSelector(ISomniaReactivityPrecompile.unsubscribe.selector, id)
+        );
+        if (!ok) emit ArenaTypes.SubscriptionSkipped("unsubscribe failed");
     }
 }

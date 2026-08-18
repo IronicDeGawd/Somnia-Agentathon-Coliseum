@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import hre from "hardhat";
-import { parseEther } from "viem";
+import { parseEther, decodeEventLog } from "viem";
 
 // DuelStatus enum: None=0, Active=1, Finalizing=2, Resolved=3
 const DUEL_ACTIVE_STATUS   = 1;
@@ -402,6 +402,116 @@ describe("Bookmaker", function () {
       expect(receipt.status).to.equal("success");
       const subId = (await bookmaker.read.subscriptionId()) as bigint;
       expect(subId).to.equal(0n);
+    });
+  });
+
+  /**
+   * One-shot ticks. A zero in the subscription's second topic means every block —
+   * ~10.5 firings a second, ~31 STT/hour, burning the same whether a line was open
+   * or the book was shut. A block NUMBER there fires once, at that block.
+   *
+   * Only the block that gets ASKED for is visible locally: the precompile address
+   * holds no code on a local node, a call to a codeless address succeeds returning
+   * nothing, so every subscribe here yields id zero. That is enough to catch the two
+   * quiet failures — asking for block zero, and not asking at all.
+   */
+  describe("one-shot Reactivity ticks", function () {
+    const INTERVAL = 10n;
+
+    /** Same wiring as deploy(), with a turn interval long enough to be visible. */
+    async function deployWithInterval() {
+      const [owner] = await hre.viem.getWalletClients();
+      const mockArena      = await hre.viem.deployContract("MockArena");
+      const usdso          = await hre.viem.deployContract("MockERC20", ["USDso", "USDso"]);
+      const mockMatchmaker = await hre.viem.deployContract("MockMatchmaker");
+      const bookmaker = await hre.viem.deployContract("Bookmaker", [
+        mockArena.address,
+        usdso.address,
+        owner.account.address,
+        mockMatchmaker.address,
+        owner.account.address,
+        INTERVAL,
+      ], { value: parseEther("33") });
+      await mockArena.write.setActiveDuelId([1n]);
+      await mockArena.write.setDuelStatus([1n, DUEL_ACTIVE_STATUS]);
+      return { bookmaker, mockArena, owner };
+    }
+
+    /** Every block number a transaction asked for a tick at. */
+    async function armedTargets(hash: `0x${string}`): Promise<bigint[]> {
+      const pub = await hre.viem.getPublicClient();
+      const receipt = await pub.getTransactionReceipt({ hash });
+      const out: bigint[] = [];
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: [{
+              type: "event",
+              name: "TickArmed",
+              inputs: [
+                { name: "targetBlock", type: "uint64", indexed: false },
+                { name: "subscriptionId", type: "uint256", indexed: false },
+              ],
+            }] as const,
+            ...log,
+          });
+          out.push((decoded.args as unknown as { targetBlock: bigint }).targetBlock);
+        } catch {
+          // Any other event from the same transaction.
+        }
+      }
+      return out;
+    }
+
+    it("opening the line asks for one block, one interval out", async function () {
+      const { bookmaker } = await deployWithInterval();
+      const pub = await hre.viem.getPublicClient();
+      await bookmaker.write.resubscribe();
+
+      const hash = await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      const at = (await pub.getTransactionReceipt({ hash })).blockNumber;
+
+      const targets = await armedTargets(hash);
+      expect(targets, "opening the line must arm a tick").to.have.lengthOf(1);
+      // Zero would be the every-block subscription this replaced.
+      expect(targets[0]).to.equal(at + INTERVAL);
+      expect(await bookmaker.read.reactivityOn()).to.equal(true);
+    });
+
+    it("asks for nothing while reactivity is switched off", async function () {
+      const { bookmaker } = await deployWithInterval();
+      const hash = await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+      expect(await armedTargets(hash)).to.have.lengthOf(0);
+      expect(await bookmaker.read.reactivityOn()).to.equal(false);
+      expect(await bookmaker.read.armedForBlock()).to.equal(0n);
+    });
+
+    it("asks for nothing while no line is open", async function () {
+      const { bookmaker } = await deployWithInterval();
+      const hash = await bookmaker.write.resubscribe();
+      expect(await armedTargets(hash), "an unopened line arms nothing").to.have.lengthOf(0);
+      expect(await bookmaker.read.reactivityOn()).to.equal(true);
+    });
+
+    it("disableReactivity switches it off without a redeploy", async function () {
+      const { bookmaker } = await deployWithInterval();
+      await bookmaker.write.resubscribe();
+      await bookmaker.write.initializeOdds([1n, 6000, 4000]);
+
+      await bookmaker.write.disableReactivity();
+      expect(await bookmaker.read.reactivityOn()).to.equal(false);
+      expect(await bookmaker.read.armedForBlock()).to.equal(0n);
+    });
+
+    it("only the owner may switch it off", async function () {
+      const { bookmaker } = await deployWithInterval();
+      const [, nonOwner] = await hre.viem.getWalletClients();
+
+      let caught: unknown;
+      await bookmaker.write
+        .disableReactivity([], { account: nonOwner.account })
+        .catch((e: unknown) => { caught = e; });
+      expect(caught, "expected NotOwner revert").to.not.be.undefined;
     });
   });
 });
