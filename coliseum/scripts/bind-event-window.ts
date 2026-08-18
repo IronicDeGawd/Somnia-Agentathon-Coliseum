@@ -75,6 +75,20 @@ async function main() {
     return;
   }
 
+  // ── never compete with the referee for the same wallet ────────────────────
+  //
+  // Binding needs the Arena's owner, which is also the key the watcher sends
+  // every turn from. Transactions from one address are strictly ordered, so two
+  // senders racing on it get one of them rejected. The binder is the one that
+  // can afford to wait: it runs on a schedule and the next run is minutes away,
+  // whereas a missed turn stalls a live fight. It also has nothing to do during
+  // a fight — desks in use are skipped anyway.
+  const active = (await arena.read.getActiveDuelIds()) as bigint[];
+  if (active.length > 0) {
+    console.log(`${active.length} fight(s) running — leaving the owner key to the watcher`);
+    return;
+  }
+
   // ── nothing to do while the current questions are still alive ────────────
   //
   // This runs on a schedule, so most of the time it finds a perfectly healthy
