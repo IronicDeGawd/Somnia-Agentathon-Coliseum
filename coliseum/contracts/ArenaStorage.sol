@@ -481,9 +481,16 @@ abstract contract ArenaStorage {
             // maxFeePerGas must be >= priorityFeePerGas + baseFee.
             maxFeePerGas:            50_000_000_000,
             // Arena _runTurn does pool snapshots + 2 LLM createRequest calls, and now
-            // also books the next tick (210,000 gas). 3M gas was tight; reactive txs
-            // were silently failing out-of-gas with no event. 15M, under the 200M cap.
-            gasLimit:                15_000_000,
+            // also books the next tick (210,000 gas). 3M was tight and reactive txs
+            // failed out-of-gas with no event; 15M then held for weeks — until the
+            // same turn on the same fight length measured 7,477,821 gas one hour and
+            // 29,382,823 the next. The variable part is the two `createRequest` calls,
+            // whose cost belongs to the inference platform, not to us, so there is no
+            // figure here that is safe by arithmetic. A firing that runs out of gas
+            // books no successor and the chain ends silently, so the limit is set well
+            // clear of the worst seen rather than just above it. Unused gas is not
+            // charged; being short costs every remaining turn of every live fight.
+            gasLimit:                60_000_000,
             isGuaranteed:            false,
             isCoalesced:             false
         });

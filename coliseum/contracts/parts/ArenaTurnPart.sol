@@ -34,10 +34,22 @@ contract ArenaTurnPart is ArenaStorage {
     function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
         if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;
         if (eventTopics.length < 2) return;
-        // Advance every running duel. _runTurn is a no-op for any duel whose
-        // interval has not elapsed, so this stays cheap when only one is live.
+        // ONE DUEL PER FIRING. A turn is two inference requests, and their cost is
+        // the platform's rather than ours: measured 7,477,821 gas one hour and
+        // 29,382,823 the next, on the same contract and the same fight length. So the
+        // budget for a firing cannot be divided by however many duels happen to be
+        // due — advancing all of them exceeded the cap and the firing reverted, which
+        // books no successor and ends the chain silently. Five concurrent fights
+        // stalled for fifteen thousand blocks that way, with nothing reporting it.
+        //
+        // Advancing one and re-arming is not slower in practice: any duel still
+        // overdue makes `_nextTurnBlock` return the very next block, so the remaining
+        // ones are picked up in consecutive blocks rather than all in one transaction.
+        // A duel whose interval has not elapsed costs about 49,000 gas to skip.
         uint256[] memory ids = activeDuelIds;
-        for (uint256 i = 0; i < ids.length; i++) _runTurn(ids[i]);
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (_runTurn(ids[i])) break;
+        }
         // This firing is spent. Book the next one, or the chain ends here.
         _scheduleNextTick();
     }
@@ -56,13 +68,16 @@ contract ArenaTurnPart is ArenaStorage {
     }
 
 
-    function _runTurn(uint256 duelId) internal {
-        if (duelId == 0) return;
+    /// @return advanced true when this call actually took a turn, so a caller can
+    ///         stop after one rather than paying for every duel in one transaction.
+    function _runTurn(uint256 duelId) internal returns (bool advanced) {
+        if (duelId == 0) return false;
         ArenaTypes.Duel storage duel = duels[duelId];
-        if (duel.status != ArenaTypes.DuelStatus.Active) return;
-        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
-        if (duel.completedCallbacks >= duel.turns * 2) return;
+        if (duel.status != ArenaTypes.DuelStatus.Active) return false;
+        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return false;
+        if (duel.completedCallbacks >= duel.turns * 2) return false;
         duel.lastTurnBlock = block.number;
+        advanced = true;
 
         // Snapshot mark prices on every active pool BEFORE any LLM requests.
         // emergencyFinalize will use these snapshots instead of live prices.
