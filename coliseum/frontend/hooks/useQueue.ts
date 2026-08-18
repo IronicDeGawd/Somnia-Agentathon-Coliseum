@@ -73,7 +73,23 @@ export function useQueue(
   // headroom, floor at 5M to survive the match race, fall back to 12M if the
   // Somnia estimator is momentarily unavailable. (ES2017 target: BigInt(), no n.)
   async function withGasHeadroom(estimate: () => Promise<bigint>): Promise<bigint> {
-    const FLOOR = BigInt(5000000);
+    // THE FLOOR HAS TO COVER THE MATCHING SIDE, not the cheap one.
+    //
+    // Queueing costs a few hundred thousand gas when the line is empty and MILLIONS
+    // when it is not, because the second player's transaction starts the fight
+    // inline. The estimate is taken when the button is clicked, so a player who
+    // clicks while the line looks empty and is matched before their transaction
+    // executes gets billed for the expensive path against an estimate for the cheap
+    // one — and the floor is the only thing standing between them and running out of
+    // gas.
+    //
+    // Measured 2026-08-19 on a six-round events fight: the matching side USED
+    // 5,223,101 gas. The old floor was 5,000,000, so it failed by 223,101 — the
+    // player lost their gas, the deposit was never taken, and the site showed a
+    // failed queue with nothing explaining it. Raised to the same figure the
+    // estimator-outage fallback already uses, since that was evidently sized for
+    // the real path.
+    const FLOOR = BigInt(12000000);
     const FALLBACK = BigInt(12000000);
     try {
       const est = await estimate();
