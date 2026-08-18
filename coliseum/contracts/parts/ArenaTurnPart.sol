@@ -85,6 +85,12 @@ contract ArenaTurnPart is ArenaStorage {
                 // the move since last turn, then record this turn's price.
                 duelPrevMarkSnapshots[duelId][pools[i]] = duelMarkSnapshots[duelId][pools[i]];
                 duelMarkSnapshots[duelId][pools[i]] = mp;
+                // The opening price is written once and then left alone. A perp mark
+                // barely moves across one turn, so it is the distance from HERE that
+                // tells a fighter whether a market is trending or just wobbling.
+                if (duelOpenMarkSnapshots[duelId][pools[i]] == 0) {
+                    duelOpenMarkSnapshots[duelId][pools[i]] = mp;
+                }
                 emit ArenaTypes.MarkPriceSnapshot(duelId, pools[i], mp, turnNum);
             }
         }
@@ -125,7 +131,7 @@ contract ArenaTurnPart is ArenaStorage {
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2],
             fighterBalances, poolMeta,
-            duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel, poolIsPerp
+            duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
         );
         // Ask by NAME, constrained to the actions this fighter can execute.
         //

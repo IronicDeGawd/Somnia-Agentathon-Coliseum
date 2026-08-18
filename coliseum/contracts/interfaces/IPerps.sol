@@ -164,3 +164,18 @@ interface IPerpRegistry {
 
     function releaseFloat(uint256 amount, address to) external;
 }
+
+/// @notice The extra registry reads the TURN PROMPT needs, split out because they
+///         serve a different purpose from the write path above: these exist so a
+///         fighter can be told what its position is actually worth, rather than only
+///         which way it is facing.
+///
+///         Reaching them through the registry rather than adding them to the desk is
+///         what keeps this a library change: the desks and the registry are already
+///         deployed and neither can be re-pointed, but both already expose enough to
+///         find the margin bank and the fighter's own account from a desk address.
+interface IPerpRegistryPrompt {
+    function bank() external view returns (address);
+    function marketCost(address market) external view returns (bool tradable, uint256 imPerLot);
+    function freeMarginOf(address account) external view returns (uint256);
+}

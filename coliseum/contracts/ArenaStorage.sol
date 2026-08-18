@@ -246,6 +246,22 @@ abstract contract ArenaStorage {
     ///         `duelMarkSnapshots` already provides for a dark spot book.
     mapping(uint256 => mapping(uint8 => uint256)) internal perpEquitySnapshots;
 
+    /// @notice The mark price each of a fight's markets opened at, written once on the
+    ///         first turn and never again.
+    ///
+    ///         For the turn prompt, and only reachable because of how slowly these
+    ///         markets move: a perp mark shifts a few basis points across a turn, so
+    ///         comparing against LAST turn tells a fighter almost nothing, while
+    ///         comparing against the price the fight opened at accumulates into a real
+    ///         trend. Measured 2026-08-19: eighteen moves across two fights, the
+    ///         largest a seven-basis-point step, every one reported as "flat" — and so
+    ///         every fighter held, every round, and both fights were draws.
+    ///
+    ///         Appended, internal, and read through `ArenaViewPart` like everything
+    ///         else added after the router shipped: the live router has no compiled
+    ///         getter for storage it did not know about.
+    mapping(uint256 => mapping(address => uint256)) internal duelOpenMarkSnapshots;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {

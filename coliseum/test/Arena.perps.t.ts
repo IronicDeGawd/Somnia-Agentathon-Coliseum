@@ -340,10 +340,26 @@ describe("Arena — perpetual futures market", function () {
         "no prediction words either").to.equal(false);
 
       // A perps position is a direction, not a holding, so the prompt says so.
-      expect(prompt).to.match(/not in this market/);
-      // And still no digits anywhere in the decision path: an echoed number was once
-      // extracted as a move index and executed as the wrong trade.
-      expect(prompt, `prompt must carry no numerals, got: ${prompt}`).to.not.match(/\d/);
+      expect(prompt, `got: ${prompt}`).to.match(/You are flat here/);
+
+      // AND IT CARRIES NUMBERS, unlike every other market's prompt.
+      //
+      // The digit ban was a fix for `inferNumber`, which pulled the first integer out
+      // of the model's free text and clamped it into an action index — so an echoed
+      // price became a trade nobody asked for. This path asks with `inferString`
+      // against a fixed list of names matched exactly, so a digit cannot become an
+      // action; the worst a numeric reply does is match nothing, which is recorded as
+      // a coercion and taken as Hold.
+      //
+      // Perps needs them because a fighter here is flat by default and its whole
+      // decision is a direction against a level. Measured on chain 2026-08-19 with the
+      // word-only prompt: two fights, eighteen moves, every one a Hold, because the
+      // word bands call anything under fifty basis points flat and the largest move in
+      // any turn was seven.
+      expect(prompt, `a level to trade against, got: ${prompt}`).to.match(/ at \d+\.\d+/);
+      expect(prompt, `the fighter's own score, got: ${prompt}`).to.match(/Your score is \d+\.\d+ USDso/);
+      expect(prompt, `what a position costs, got: ${prompt}`).to.match(/costs \d+\.\d+ USDso of margin/);
+      expect(prompt, `room left, got: ${prompt}`).to.match(/Spare margin \d+\.\d+ USDso/);
     });
 
     it("leaves the other markets' vocabulary untouched", async () => {
@@ -405,6 +421,36 @@ describe("Arena — perpetual futures market", function () {
       const desk = ctx.desk(marketName);
       expect(await desk.read.fighterSide([duelId, 0]), `${short} opened a short`).to.equal(-1);
       expect(await desk.read.fighterSide([duelId, 1]), "the other fighter held").to.equal(0);
+    });
+
+    it("tells a fighter holding a position what it is worth", async () => {
+      // The whole reason the prompt carries numbers. A flat fighter needs a level to
+      // trade against; a fighter already in the market needs to know its side, its
+      // entry, and whether it is ahead — none of which any word can carry.
+      const ctx = await deploy();
+      await wirePerps(ctx);
+      await ctx.arena.write.startDuelOn([0, 1, 6, PERPS]);
+      const duelId = await ctx.arena.read.activeDuelId() as bigint;
+      await mineBlock();
+
+      const [before, allowed] = await ctx.arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+      expect(before, `flat fighter, got: ${before}`).to.match(/You are flat here/);
+
+      const long = allowed.find((a) => a.startsWith("Long"))!;
+      await runTurn(ctx, duelId, long, "Hold");
+
+      const [after] = await ctx.arena.read.previewTurnPrompt([duelId, 0]) as [string, string[]];
+      // Side, size, entry and the unrealised figure, signed — the sign is the only
+      // thing that says whether a price move helped or hurt.
+      expect(after, `got: ${after}`).to.match(/You are long \d+\.\d+ from \d+\.\d+, worth [+-]\d+\.\d+ USDso unrealised/);
+      expect(after, "the opponent that held is still flat").to.match(/flat here/);
+
+      const [oppo] = await ctx.arena.read.previewTurnPrompt([duelId, 1]) as [string, string[]];
+      expect(oppo, `the fighter that held holds nothing, got: ${oppo}`).to.not.match(/You are long/);
+
+      if (process.env.SHOW_PROMPT === "1") {
+        console.log(`\n--- flat ---\n${before}\n--- in a position ---\n${after}\n`);
+      }
     });
 
     it("a Long answer opens a positive one", async () => {
