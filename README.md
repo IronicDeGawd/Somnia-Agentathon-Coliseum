@@ -85,35 +85,48 @@ code before forwarding, or a mistyped part address would silently make every cal
 
 | What | Where |
 |---|---|
-| Subscribe / resubscribe wiring | `ArenaVaultPart._subscribeReactivity()`, `Bookmaker.resubscribe()` |
-| **Measuring a one-shot BlockTick** — fires once, at a named block | `coliseum/scripts/probe-reactivity-oneshot.ts` |
-| **Measuring whether unsubscribe really stops a live subscription** | `coliseum/scripts/probe-reactivity-unsubscribe.ts` |
-| The probe contract both use | `coliseum/contracts/test/ReactivitySpike.sol` |
-| What drives turns today instead | `coliseum/scripts/watcher-bot.ts` |
+| One subscription aimed at the next deadline, re-aimed and cancelled | `ArenaStorage._nextTurnBlock()`, `_scheduleNextTick()`, `_cancelTick()` |
+| The subscribe payload — the one field that decides the whole cost | `ArenaStorage._subscribeReactivity(uint64 targetBlock)` |
+| The handler, and the four places that re-arm | `ArenaTurnPart.onEvent()` / `turn()`, `ArenaDuelPart.startDuel()` / `_resolveDuel()` |
+| Owner switches — on, off, and reading the state | `ArenaVaultPart.resubscribe()` / `disableReactivity()`, `ArenaViewPart.reactivityStatus()` |
+| The same shape on a standalone contract, its own cadence | `coliseum/contracts/Bookmaker.sol` |
+| The watchdog behind it | `coliseum/scripts/watcher-bot.ts` (`REACTIVITY_GRACE_BLOCKS`) |
+| Measuring both cost profiles yourself | `coliseum/scripts/probe-reactivity-oneshot.ts`, `probe-reactivity-unsubscribe.ts` |
+| Tests, including what a local node cannot show you | `coliseum/test/Arena.reactivity.t.ts` |
 | Verified API notes | `context/research/somnia-reactivity.md` |
 
 **Read this before copying anyone's Reactivity code, including ours.** `BlockTick` has two completely
-different cost profiles depending on one field, and we shipped the expensive one:
+different cost profiles depending on **one field**, and we shipped the expensive one for months:
 
-| `eventTopics[1]` | Fires | Measured cost |
+| `eventTopics[1]` | Fires | Cost |
 |---|---|---|
 | `bytes32(0)` | **every block** — ~10.5×/second | **~31 STT/hour**, running or idle |
-| a block number | **once, at that block** | **0.0045 STT per firing**, including the subscribe for the next hop |
+| a block number | **once, at that block** | **~0.047 STT per turn**, and **nothing while idle** |
 
-Measured on testnet 2026-08-18 with the two probes above. The one-shot form landed on exactly the
-requested block every time, zero blocks late. For a 15-round fight that is **0.07 STT** of one-shot
-hops against **7.8 STT** of every-block polling — and against ~750 STT/day for an always-on
-subscription that nobody gated.
+Measured live across three fights on the deployment: nine turns, every one executed on the exact block
+requested, zero blocks late, then cancelled on resolution — followed by ~1,100 idle blocks with no
+spend at all. The 0.047 is a whole turn (price snapshots, two inference requests, and booking the next
+firing); a bare probe with an empty handler comes in at 0.0045.
 
-Cancelling also works: 430 firings while running, then **zero** in the 30 seconds after
-`unsubscribe`. So a subscription can safely be scoped to the life of one fight.
+Cancelling works, which is what makes an idle arena free: `SomniaExtensions.unsubscribe(subscriptionId)`
+stops a live subscription dead. It is documented but was missing from the published interface — see
+`coliseum/contracts/interfaces/ISomniaReactivityPrecompile.sol`.
 
-The one thing the one-shot form gives up is self-healing. An every-block subscription that misses a
-tick tries again 100 ms later; a one-shot chain that drops a firing stalls until something else
-notices — so anything relying on it wants a watchdog. That is why turns are keeper-driven here today,
-and it is a solvable problem rather than a reason to avoid Reactivity.
+**What one-shot firing gives up is self-healing.** An every-block subscription that misses a wake-up
+retries 100 ms later; a one-shot chain has each firing book the next, so a firing that never lands ends
+the chain silently. Three consequences worth copying:
 
-### Player-matching and escrow
+- **Keep a watchdog.** The keeper here rings a turn that is overdue past a grace period — and re-arms
+  when it does. Tested by cutting the chain mid-fight: the keeper picked the missed turn up 158 blocks
+  after it came due, and the chain resumed exactly one interval later when switched back on.
+- **Re-aim, never blindly cancel.** Every hook calls the same "what is due soonest" function and lets
+  it decide whether the answer is *cancel*. The Bookmaker originally cancelled outright on settlement,
+  so a keeper catching up on a finished fight killed the tick for the fight actually running.
+- **A subscription's id is your only handle on it.** Overwrite it with zero on a failed subscribe — as
+  the old Bookmaker did — and you have an orphan firing forever that nothing can cancel. The only cure
+  was starving it of gas. Never abandon a deployment with a native balance still in it.
+
+### Player-matching and escrow### Player-matching and escrow
 
 | What | Where |
 |---|---|
@@ -217,11 +230,12 @@ interface, so nothing above it knows the difference. It also translates 6-decima
 into the 18-decimal face the Arena expects; on mainnet the collateral *is* USDso and the shim
 disappears.
 
-**Autonomy is currently bots, not Reactivity.** Somnia Reactivity drives the turn loop by design and
-the subscription path is built and tested, but it is **switched off** on this deployment — it billed
-around 1,240 STT/day. Turns, funding, desk upkeep and bet settlement are driven by processes under
-PM2: a watcher (the referee), a binder (keeps prediction questions fresh), a house opponent, a pool
-seeder and a mock-market injector.
+**Turns are driven by Reactivity; the bots do everything around them.** Each fight books a single
+wake-up at the block its next round is due, re-books as each is spent, and cancels when the fight ends,
+so an idle arena costs nothing. The earlier every-block subscription billed ~31 STT/hour regardless and
+was switched off for months — the fix was one field, not a different architecture. Five processes under
+PM2 handle the rest: a watcher (referee, funder, and the watchdog behind Reactivity), a binder (keeps
+prediction questions fresh), a house opponent, a pool seeder and a mock-market injector.
 
 **Prediction questions expire, so something has to rewind them.** A question lives for its window —
 an hour, or four. The watcher hands a desk back when its window ends, and the binder re-points it at
@@ -293,7 +307,7 @@ like an ordinary draw with three of five moves silently rejected.
 |---|---|
 | Execution venue | **dreamDEX** — SOMI / WBTC / WETH spot books and binary prediction markets, quoted in USDso |
 | Agent brain | **Somnia Agents** — LLM inference with validator consensus |
-| Turn loop | PM2 watcher today; **Reactivity BlockTick** built and tested, switched off on cost |
+| Turn loop | **Somnia Reactivity** — one `BlockTick` booked per round, cancelled when idle; PM2 watcher as watchdog |
 | Settlement | On-chain, atomic, fill-or-kill |
 | Frontend | Next.js 15 + Tailwind v4 + wagmi + RainbowKit |
 
@@ -341,7 +355,7 @@ Each of these was bought with a real failure, not added defensively.
 |---|---|
 | Arena (router — permanent) | `0x301d9364BDb2fd76E33c13eBE8FCc956BAcfbeD6` |
 | Matchmaker | `0x6b7e255a3420c7846a15e963589ffd5504773b0a` |
-| Bookmaker | `0xea808eac9798e2eda1a937d3d2be8541258e3802` |
+| Bookmaker | `0x73d0a884f563c454ca0d05bd09b0643c0204b755` |
 | DuelHistory | `0x11ac9b65b05dfb1406618bda649b410b8e8f7108` |
 | FighterRegistry | `0xefe3dd01c59b435bb688135f19db364ef09e90df` |
 | EventTreasury (+ 6 desks) | `0x47dab39e8a6c1e9e8c367576ae225904fc85fbff` |
@@ -354,6 +368,11 @@ Each of these was bought with a real failure, not added defensively.
 
 The Arena's part addresses and the six desks live in `coliseum/deployments/somnia.json`, which is
 gitignored — the bots need it, or they referee a different Arena than the frontend serves.
+
+Only the Arena's address is permanent: it is a router, so its logic is replaced underneath it without
+moving storage or funds. Everything else moves when its code changes, which is why the Bookmaker has
+had three addresses. Two are abandoned and should never be funded again — a subscription attached to a
+contract keeps spending any balance you send it.
 
 The SOMI book's "base token" is an address with **no code**. It is a sentinel for native STT, not a
 token — a detail that costs an afternoon to rediscover.
