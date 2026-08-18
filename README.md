@@ -1,17 +1,113 @@
-# Coliseum
+# Coliseum — a worked example of Somnia's primitives
 
 > **Two prompts. One arena. Real trades. Live.**
 >
-> An agent-vs-agent trading arena on Somnia. Two LLM personalities fight by placing real orders on
-> dreamDEX. Spectators bet on the result. Every decision, order, score and payout is on-chain.
+> An agent-vs-agent trading arena on Somnia, built as a **reference implementation**: on-chain LLM
+> inference, dreamDEX spot books, dreamDEX **event contracts** (binary prediction markets), and an
+> upgradeable contract that never moves its address — each wired up and running against live testnet.
 
 **Live: [coliseum.somniaforge.com](https://coliseum.somniaforge.com)** · Somnia testnet (chain 50312)
+
+**This is a demo to read and copy from, not a product to sign up for.** The game exists to give the
+integrations something real to do. If you are here for one primitive, the map below is the whole point
+of this README — go straight to the file, ignore the rest.
 
 Built for the **Somnia Agentathon** (May 2026).
 
 ---
 
-## What it is
+## Where each primitive is wired up
+
+Every row is a real, working integration against live testnet contracts — not a sketch. Line numbers
+drift; the function names are the durable anchor.
+
+### Event contracts (binary prediction markets)
+
+| What | Where |
+|---|---|
+| The whole adapter — makes a prediction market look like an order book | `coliseum/contracts/EventDesk.sol` |
+| Attach to a market: read its outcome-token ids, retreat from the previous one first | `EventDesk.bind()` |
+| Place an order, **clamping expiry to the market's own deadline** | `EventDesk.placeOrder()` |
+| Quote a price and size, including the settled case | `EventDesk.getBookLevels()`, `_resolvedPrice18()` |
+| Collect a won position | `EventDesk.redeemSettled()` |
+| Remember the last real price, because makers stop quoting before a window ends | `EventDesk.poke()` |
+| **Find live markets** — the only place a market id is ever published | `coliseum/scripts/bind-event-window.ts` → `scanWindows()` |
+| Choose which questions to trade, and keep them fresh on a schedule | same file, `pickWindow` notes |
+| Collateral plumbing (testnet faucet → desks) | `coliseum/contracts/EventTreasury.sol` |
+
+Two things here cost real money to learn. An order outliving its market **reverts**, so the desk
+substitutes the market's deadline rather than passing yours through. And a **settled** market still
+quotes a price while accepting no orders at all — so size, not price, is what tells you a trade is
+possible.
+
+### dreamDEX spot trading
+
+| What | Where |
+|---|---|
+| Placing a fill-or-kill taker order, with every failure recorded | `coliseum/contracts/parts/ArenaTurnPart.sol` → `_placeOrderForFighter()` |
+| Deciding a move is even possible (cash, minimum size, **real resting size**) | `coliseum/contracts/lib/ArenaUtils.sol` → `tradability()`, `_hasSize()` |
+| Pricing with no oracle: midpoint of the top of the book | `ArenaUtils.midMarkPrice()` |
+| Reading pool minimums and lot rules, and caching them | `ArenaStorage._cachePoolMeta()` |
+| The interface we actually needed | `coliseum/contracts/interfaces/ISpotPool.sol` |
+| Buying native STT on the SOMI book | `coliseum/scripts/buy-stt.ts` |
+
+The real pool has **no `getMarkPrice()`** — compute the midpoint yourself. And the SOMI book's "base
+token" address holds **no code**: it is a sentinel meaning native STT, and orders against it need a
+raised gas limit or they revert on a payout check. `buy-stt.ts` has both details in working form.
+
+### On-chain LLM inference (Somnia Agents)
+
+| What | Where |
+|---|---|
+| Paying for and submitting a request, with a callback selector | `ArenaTurnPart.sol` → `_requestFighterMove()` (`platform.createRequest`) |
+| Receiving the answer and acting on it | `ArenaTurnPart.handleFighterResponse()` |
+| Building the prompt **on-chain** | `ArenaUtils.sol` → `holdingLine()`, `actionName()`, `previewTurnPrompt()` |
+| Never letting a model failure decide the game | same file — timeout, unparseable and out-of-funds all become Hold |
+| The interface | `coliseum/contracts/interfaces/ISomniaAgents.sol` |
+
+**Keep every digit out of the prompt.** A price printed into a prompt was echoed back by the model,
+read as the move number, and executed as the wrong trade. Slots are described in words —
+*"odds edged toward yes"* — and a test fails if a digit appears.
+
+### Upgrading without moving funds (router + parts)
+
+| What | Where |
+|---|---|
+| The router: storage, funds, and a delegating `fallback()` | `coliseum/contracts/Arena.sol` |
+| The storage declaration every part shares | `coliseum/contracts/ArenaStorage.sol` |
+| The logic, in four replaceable pieces | `coliseum/contracts/parts/` |
+| Swapping parts on a live deployment, and retiring dead selectors | `coliseum/scripts/rewire-parts.ts` |
+
+A `delegatecall` to an address with **no code succeeds and returns nothing** — so the router checks for
+code before forwarding, or a mistyped part address would silently make every call a no-op.
+
+### Reactivity (autonomous turns)
+
+| What | Where |
+|---|---|
+| Subscribe / resubscribe wiring, and why it is off | `Arena.sol` constructor notes, `Bookmaker.resubscribe()` |
+| What replaces it in practice | `coliseum/scripts/watcher-bot.ts` |
+| Verified API notes, including costs | `context/research/somnia-reactivity.md` |
+
+Built, tested, and **deliberately switched off**: a block-tick subscription bills about 25.8 STT per
+hour per contract, roughly 1,240 STT a day for the pair. It *can* be cancelled —
+`SomniaExtensions.unsubscribe(subscriptionId)` exists — the reason is cost, not capability.
+
+### Player-matching and escrow
+
+| What | Where |
+|---|---|
+| A queue keyed on *(tier, game)*, with full-refund cancel and FIFO pending | `coliseum/contracts/Matchmaker.sol` |
+| Quoting a player before they commit | `Matchmaker.halfDeposit()` |
+| Paying out and releasing escrow | `Matchmaker.claimWinnings()` |
+
+---
+
+## What the demo does
+
+The game is the harness. It exists so the integrations above have something real to exercise — a
+contract that must actually price a book, actually ask a model, actually place an order that can
+actually fail. Everything below is context for reading the code.
 
 A duel is real on-chain trading between two AI personalities. Each round, every fighter's brain — a
 Somnia LLM agent — is shown its portfolio and what the market did, and answers with one move: hold,
@@ -184,7 +280,25 @@ like an ordinary draw with three of five moves silently rejected.
 **Testnet only.** Event collateral is testnet tUSDC rather than USDso, and `EventTreasury` exists
 purely to refill it from a faucet — neither is part of a mainnet deployment.
 
-## Security highlights
+## Lifting a piece out
+
+**The event-contract adapter is the most reusable part.** `EventDesk.sol` depends on nothing in
+Coliseum except the order-book interface it implements, so anything that already trades a spot book can
+trade prediction markets by pointing at a desk instead of a pool. To reuse it you need: the market
+factory's `MarketCreated` logs (`scanWindows` in `bind-event-window.ts` — the market id appears nowhere
+else, and without it a won position can never be claimed), a collateral source, and something on a
+schedule to re-point desks as windows expire.
+
+**The router pattern is the second.** `Arena.sol` plus `ArenaStorage.sol` is about 3.3 KB of
+diamond-lite: no libraries, no loupe, one storage layout shared by every part. Enough for "I need to fix
+this contract without migrating its funds", and small enough to read in one sitting.
+
+**What is Coliseum-specific and not worth copying:** the fighter personalities, the tier ladder, the
+betting market, and `EventTreasury` — which exists only because testnet collateral comes from a faucet.
+
+## Guards worth copying
+
+Each of these was bought with a real failure, not added defensively.
 
 - **Per-duel `recoverFunds`** — one duel's creator cannot drain another's funds.
 - **CEI ordering on recovery** — the recovered flag flips before any external call.
@@ -226,7 +340,7 @@ token — a detail that costs an afternoon to rediscover.
 
 ## Where to read next
 
-- `ARCHITECTURE.md` — plain-language tour of the live system
+- `ARCHITECTURE.md` — plain-language tour of how the whole thing actually works, jargon explained
 - `context/structure.md` — what lives where, before reaching for grep
 - `context/progress.md` — current status, known issues, lessons
 - `context/research/` — dreamDEX, Somnia Agents and Reactivity reference docs

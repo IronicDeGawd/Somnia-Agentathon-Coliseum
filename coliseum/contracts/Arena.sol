@@ -64,10 +64,14 @@ contract Arena is ArenaStorage {
         //
         // This used to demand 33 STT up front and subscribe in the constructor.
         // A BlockTick subscription bills every block whether or not a duel is
-        // running — ~25.8 STT/hour — and the precompile offers no unsubscribe, so
-        // the only way to stop one is to let the contract's balance run dry. A
-        // fresh deploy therefore started burning immediately and silently. Turns
-        // are keeper-driven now, so nothing here needs the subscription.
+        // running — ~25.8 STT/hour, about 1,240 STT/day once Bookmaker is counted
+        // too — so a fresh deploy started burning immediately and silently.
+        //
+        // It CAN be stopped: SomniaExtensions.unsubscribe(subscriptionId) exists,
+        // and a subscription is also dropped once the balance can no longer cover
+        // the gas limit at firing time. (An earlier version of this comment said
+        // there was no unsubscribe. That was wrong; the cost is the reason.)
+        // Turns are keeper-driven now, so nothing here needs the subscription.
         USDSO     = _usdso;
         POOL_WETH = _poolWeth;
         POOL_WBTC = _poolWbtc;
