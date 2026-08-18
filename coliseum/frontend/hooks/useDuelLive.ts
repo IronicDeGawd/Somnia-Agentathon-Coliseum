@@ -28,11 +28,17 @@ export interface FighterLive {
 }
 
 export interface PoolMarket {
-  poolKey: string;              // "WETH" / "WBTC" / "SOMI"
+  poolKey: string;              // "WETH" / "WBTC" / "SOMI", or a question like "BTCUP"
   poolAddress: `0x${string}`;
   markPrice: bigint;            // latest mark price (18 dec USDso per base token)
   markPriceNum: number;         // float for display
   history: number[];            // chronological mark prices (floats)
+  /**
+   * True when this slot holds a prediction question rather than a coin book. The
+   * number then means a PROBABILITY between zero and one, not a price, so it must
+   * not be shown with a currency symbol or a "/USDso" pair suffix.
+   */
+  isQuestion: boolean;
 }
 
 export interface DuelLiveResult {
@@ -73,6 +79,21 @@ const EMPTY_RESULT: DuelLiveResult = {
   markets: [],
   isLoading: false,
 };
+
+/**
+ * A slot's question, as a few characters ("BTCUP"), or null for a plain coin book.
+ * Stored as 8 raw bytes on-chain and right-padded with zeros.
+ */
+function questionLabel(raw?: `0x${string}`): string | null {
+  if (!raw || raw === '0x0000000000000000') return null;
+  let out = '';
+  for (let i = 2; i < raw.length; i += 2) {
+    const code = parseInt(raw.slice(i, i + 2), 16);
+    if (code === 0) break;
+    out += String.fromCharCode(code);
+  }
+  return out.length > 0 ? out : null;
+}
 
 function bigintToNum(v: bigint, decimals: number): number {
   return Number(formatUnits(v, decimals));
@@ -340,12 +361,24 @@ export function useDuelLive(
   const duelPools = (poolReads?.[0]?.result as readonly `0x${string}`[] | undefined) ?? undefined;
 
   const { data: metaReads } = useReadContracts({
-    contracts: (duelPools ?? []).map((addr) => ({
-      address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
-      abi: ABIS.Arena,
-      functionName: 'poolMeta' as const,
-      args: [addr] as [`0x${string}`],
-    })),
+    contracts: (duelPools ?? []).flatMap((addr) => [
+      {
+        address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+        abi: ABIS.Arena,
+        functionName: 'poolMeta' as const,
+        args: [addr] as [`0x${string}`],
+      },
+      {
+        // A slot holding a prediction desk carries the QUESTION it asks ("BTCUP").
+        // Without it the page labels the slot by the asset it is named after, so a
+        // probability of 0.845 reads as "WETH/USDso $0.8450" — a price, which it is
+        // not. Empty for an ordinary coin book, which is what every spot pool is.
+        address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+        abi: ABIS.Arena,
+        functionName: 'poolQuestion' as const,
+        args: [addr] as [`0x${string}`],
+      },
+    ]),
     query: { enabled: !!duelPools },
   });
 
@@ -355,9 +388,12 @@ export function useDuelLive(
         if ((duel.poolMask & slot.bit) === 0) return [];
         const address = duelPools[i];
         if (!address || /^0x0+$/.test(address)) return [];
-        const meta = metaReads?.[i]?.result as readonly [number, bigint, bigint, bigint] | undefined;
+        const meta = metaReads?.[i * 2]?.result as readonly [number, bigint, bigint, bigint] | undefined;
+        const question = metaReads?.[i * 2 + 1]?.result as `0x${string}` | undefined;
+        const label = questionLabel(question);
         return [{
-          key: slot.key as string,
+          key: label ?? (slot.key as string),
+          isQuestion: label !== null,
           bit: slot.bit as number,
           address,
           // Fall back to 18 only while the read is in flight; every registered pool
@@ -451,6 +487,7 @@ export function useDuelLive(
       markPrice: price,
       markPriceNum: bigintToNum(price, 18),
       history: entry?.history ?? [],
+      isQuestion: pool.isQuestion,
     };
   });
 

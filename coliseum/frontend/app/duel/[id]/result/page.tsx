@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
-import { useAccount, useReadContract, usePublicClient } from 'wagmi';
+import { useAccount, useReadContract, useReadContracts, usePublicClient } from 'wagmi';
 import { formatUnits, parseAbiItem } from 'viem';
 import { useEffect, useState } from 'react';
 import { AppTopBar } from '@/components/shared/AppTopBar';
@@ -13,7 +13,7 @@ import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelTranscript } from '@/hooks/useDuelTranscript';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
-import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -82,12 +82,67 @@ export default function ResultPage() {
     !!matchPlayerA &&
     matchPlayerA !== '0x0000000000000000000000000000000000000000';
 
-  // ── DuelResolved event backfill → real final valueA / valueB ─────────────
+  // ── Final valueA / valueB ─────────────────────────────────────────────────
+  //
+  // Two sources, in this order:
+  //
+  //  1. DuelHistory's ledger. It stores both values per duel and answers in ONE
+  //     read, whenever the duel was resolved.
+  //  2. The DuelResolved log, for duels older than the history sink.
+  //
+  // The log used to be the only source, and it went wrong: the scan is bounded to
+  // ~1500 blocks past the duel's last turn, so a fight finalised later than that
+  // showed a blank portfolio FOREVER — the window is derived from the duel's own
+  // blocks and never widens. Seen for real when the keeper was down nine minutes:
+  // resolution landed 2983 blocks past the window and the values were on chain the
+  // whole time. Widening the window is not the fix either; scanning to the chain
+  // head means an unbounded number of RPC calls for an old duel.
   const [resolvedValueA, setResolvedValueA] = useState<bigint | null>(null);
   const [resolvedValueB, setResolvedValueB] = useState<bigint | null>(null);
 
+  // Source 1: the ledger. Reads the most recent slice and looks for this duel —
+  // enough for anything current, and the log path below still covers the rest.
+  const { data: historyData } = useReadContracts({
+    contracts: DUEL_HISTORY_DEPLOYED
+      ? [{
+          address: CONTRACT_ADDRESSES.DuelHistory,
+          abi: ABIS.DuelHistory,
+          functionName: 'totalDuels' as const,
+        }]
+      : [],
+    query: { enabled: DUEL_HISTORY_DEPLOYED },
+  });
+  const ledgerLength = (historyData?.[0]?.result as bigint | undefined) ?? BigInt(0);
+  const LEDGER_WINDOW = BigInt(250);
+  const ledgerOffset = ledgerLength > LEDGER_WINDOW ? ledgerLength - LEDGER_WINDOW : BigInt(0);
+
+  const { data: entriesData } = useReadContracts({
+    contracts: ledgerLength > BigInt(0)
+      ? [{
+          address: CONTRACT_ADDRESSES.DuelHistory,
+          abi: ABIS.DuelHistory,
+          functionName: 'getEntries' as const,
+          args: [ledgerOffset, ledgerLength - ledgerOffset] as [bigint, bigint],
+        }]
+      : [],
+    query: { enabled: ledgerLength > BigInt(0) },
+  });
+
+  useEffect(() => {
+    const entries = entriesData?.[0]?.result as
+      | readonly { duelId: bigint; valueA: bigint; valueB: bigint }[]
+      | undefined;
+    if (!entries) return;
+    const mine = entries.find((e) => e.duelId === duelId);
+    if (!mine) return;
+    setResolvedValueA(mine.valueA);
+    setResolvedValueB(mine.valueB);
+  }, [entriesData, duelId]);
+
+  // Source 2: the log, for anything the ledger does not carry.
   useEffect(() => {
     if (!publicClient || duelId <= BigInt(0)) return;
+    if (resolvedValueA !== null && resolvedValueB !== null) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -178,7 +233,7 @@ export default function ResultPage() {
   const loserFighter  = FIGHTERS[loserId];
   const winnerHex = winnerVisual?.hex ?? winnerFighter?.hex ?? 'var(--gold)';
 
-  // Real final portfolio values from DuelResolved event
+  // Real final portfolio values — from the history ledger, or the log as fallback.
   const winnerFinalValue: bigint | null =
     isResolved && resolvedValueA !== null && resolvedValueB !== null
       ? (winnerSlotNum === 0 ? resolvedValueA : resolvedValueB)
