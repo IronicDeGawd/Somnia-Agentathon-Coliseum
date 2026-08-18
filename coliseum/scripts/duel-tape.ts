@@ -19,7 +19,7 @@
  *
  *   FROM_DUEL=3 BLOCKS=6000 pnpm exec hardhat run scripts/duel-tape.ts --network somnia
  */
-import hre from "hardhat"; import { parseAbiItem, formatEther } from "viem";
+import hre from "hardhat"; import { parseAbiItem, formatUnits } from "viem";
 import fs from "fs"; import path from "path";
 const MOVE=parseAbiItem("event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, uint8 action, uint128 orderId)");
 const PLACED=parseAbiItem("event OrderPlaced(address indexed pool, uint8 indexed fighterId, uint256 duelId, uint128 orderId, bool isBid, uint256 price, uint256 quantity, uint8 orderType)");
@@ -35,8 +35,12 @@ async function main(){
   const pub=await hre.viem.getPublicClient(); const arena=m.contracts.Arena.address;
   const a=await hre.viem.getContractAt("Arena",arena);
 
-  // Pool address → display name, filled in as duels are encountered.
+  // Pool address → display name and BASE DECIMALS, filled in as duels are
+  // encountered. The decimals matter: a size is in the market's own base units, and
+  // these run from six to eighteen across the six perp markets — so formatting every
+  // one as eighteen printed a tenth of a SOL as a ten-billionth of one.
   const names:Record<string,string>={};
+  const dp:Record<string,number>={};
 
   /**
    * One duel's seven action names, in the order `ArenaUtils.actionName` numbers
@@ -56,6 +60,7 @@ async function main(){
         let perp=false;
         try{ perp=await (a.read as any).isPerpPool([p as `0x${string}`]) as boolean; }catch{}
         names[p.toLowerCase()]=label||p.slice(0,8);
+        try{ dp[p.toLowerCase()]=Number((await a.read.poolMeta([p as `0x${string}`]) as any[])[0]); }catch{}
         return {label,perp};
       }));
       out=["Hold"];
@@ -83,7 +88,7 @@ async function main(){
         for(const l of lo){ const g:any=(l as any).args; const id=Number(g.duelId);
           if(BigInt(id)<first) continue;
           if(tag==="m"){moves++;const act=await actions(id);rows.push(`${l.blockNumber} #${id} fighter ${g.fighterId} → ${act[Number(g.action)]??"Hold"}`);}
-          if(tag==="o"){orders++;await actions(id);rows.push(`${l.blockNumber} #${id} fighter ${g.fighterId} ORDER ${names[String(g.pool).toLowerCase()]??g.pool} ${g.isBid?"buy":"sell"} qty ${formatEther(g.quantity)} @ ${formatEther(g.price)}`);}
+          if(tag==="o"){orders++;await actions(id);rows.push(`${l.blockNumber} #${id} fighter ${g.fighterId} ORDER ${names[String(g.pool).toLowerCase()]??g.pool} ${g.isBid?"buy":"sell"} qty ${formatUnits(g.quantity, dp[String(g.pool).toLowerCase()] ?? 18)} @ ${formatUnits(g.price, 18)}`);}
           if(tag==="r"){rej++;rows.push(`${l.blockNumber} #${id} REJECTED ${g.reason}`);}
           if(tag==="c"){co++;rows.push(`${l.blockNumber} #${id} COERCED "${g.requested}"`);}
           if(tag==="f"){fail++;rows.push(`${l.blockNumber} #${id} FAILED ${g.reason}`);}
