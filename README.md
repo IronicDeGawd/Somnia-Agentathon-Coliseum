@@ -85,13 +85,33 @@ code before forwarding, or a mistyped part address would silently make every cal
 
 | What | Where |
 |---|---|
-| Subscribe / resubscribe wiring, and why it is off | `Arena.sol` constructor notes, `Bookmaker.resubscribe()` |
-| What replaces it in practice | `coliseum/scripts/watcher-bot.ts` |
-| Verified API notes, including costs | `context/research/somnia-reactivity.md` |
+| Subscribe / resubscribe wiring | `ArenaVaultPart._subscribeReactivity()`, `Bookmaker.resubscribe()` |
+| **Measuring a one-shot BlockTick** — fires once, at a named block | `coliseum/scripts/probe-reactivity-oneshot.ts` |
+| **Measuring whether unsubscribe really stops a live subscription** | `coliseum/scripts/probe-reactivity-unsubscribe.ts` |
+| The probe contract both use | `coliseum/contracts/test/ReactivitySpike.sol` |
+| What drives turns today instead | `coliseum/scripts/watcher-bot.ts` |
+| Verified API notes | `context/research/somnia-reactivity.md` |
 
-Built, tested, and **deliberately switched off**: a block-tick subscription bills about 25.8 STT per
-hour per contract, roughly 1,240 STT a day for the pair. It *can* be cancelled —
-`SomniaExtensions.unsubscribe(subscriptionId)` exists — the reason is cost, not capability.
+**Read this before copying anyone's Reactivity code, including ours.** `BlockTick` has two completely
+different cost profiles depending on one field, and we shipped the expensive one:
+
+| `eventTopics[1]` | Fires | Measured cost |
+|---|---|---|
+| `bytes32(0)` | **every block** — ~10.5×/second | **~31 STT/hour**, running or idle |
+| a block number | **once, at that block** | **0.0045 STT per firing**, including the subscribe for the next hop |
+
+Measured on testnet 2026-08-18 with the two probes above. The one-shot form landed on exactly the
+requested block every time, zero blocks late. For a 15-round fight that is **0.07 STT** of one-shot
+hops against **7.8 STT** of every-block polling — and against ~750 STT/day for an always-on
+subscription that nobody gated.
+
+Cancelling also works: 430 firings while running, then **zero** in the 30 seconds after
+`unsubscribe`. So a subscription can safely be scoped to the life of one fight.
+
+The one thing the one-shot form gives up is self-healing. An every-block subscription that misses a
+tick tries again 100 ms later; a one-shot chain that drops a firing stalls until something else
+notices — so anything relying on it wants a watchdog. That is why turns are keeper-driven here today,
+and it is a solvable problem rather than a reason to avoid Reactivity.
 
 ### Player-matching and escrow
 

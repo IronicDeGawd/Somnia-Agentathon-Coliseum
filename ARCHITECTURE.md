@@ -240,15 +240,35 @@ duel. That was fixed.
 Somnia has a feature called **Reactivity\***: a contract can subscribe to on-chain events and be
 woken automatically, with no bot polling. Arena and Bookmaker both have the wiring for it.
 
-**It is deliberately disabled** (`subscriptionId` is 0 on both), and the reason is cost, not
-capability: a block-tick subscription bills around **25.8 STT per hour, per contract** — roughly
-1,240 STT a day for the pair. We found that by watching the balance fall. The `watcher` bot does the
-same job for the price of gas.
+**It is disabled** (`subscriptionId` is 0 on both) — and the honest version of why is more useful than
+the one this document used to give.
 
-*A correction to an earlier version of this document:* it claimed there is no way to unsubscribe.
-That is wrong. **`SomniaExtensions.unsubscribe(subscriptionId)` exists**, and a subscription is also
-dropped automatically once the owner's balance can no longer cover the gas limit at firing time. The
-cost argument stands on its own; it never needed the exaggeration.
+We subscribed to `BlockTick` with its second topic left at zero. That means **every block**. Somnia
+produces about ten blocks a second and a turn happens once every six hundred blocks, so we were paying
+to be woken roughly six hundred times per turn, and five hundred and ninety-nine of those wake-ups did
+nothing but check whether it was time yet and return. Measured: about **31 STT an hour**, burning
+identically whether a fight was running or the arena was empty. So the number that killed it was real.
+
+**The conclusion drawn from it was too broad.** Put a block *number* in that same field and the event
+fires **once, at that block**. Measured on testnet, it landed on exactly the block requested, every
+time, zero blocks late, at **0.0045 STT a firing** — including the cost of booking the next one. For a
+fifteen-round fight that is 0.07 STT of one-shot hops against 7.8 STT of every-block polling.
+
+Two earlier claims here were wrong and are worth naming:
+
+- It said there is **no way to unsubscribe**. There is. `SomniaExtensions.unsubscribe(subscriptionId)`
+  works, and we measured it stopping a live subscription dead: 430 firings while running, then zero in
+  the following thirty seconds. So a subscription can be scoped to the life of a single fight, which
+  removes the idle burn entirely on its own.
+- It implied the cost was inherent to Reactivity. It was inherent to *polling*.
+
+What the one-shot form genuinely gives up is **self-healing**. An every-block subscription that misses
+a tick tries again a tenth of a second later. A one-shot chain that drops a firing stalls silently
+until something else notices — so it wants a watchdog behind it. That is the real reason turns are
+still keeper-driven here, and it is a design problem rather than a price problem.
+
+Both measurements are reproducible: `scripts/probe-reactivity-oneshot.ts` and
+`scripts/probe-reactivity-unsubscribe.ts`.
 
 ---
 

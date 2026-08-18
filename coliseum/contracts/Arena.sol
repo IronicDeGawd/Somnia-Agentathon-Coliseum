@@ -63,15 +63,24 @@ contract Arena is ArenaStorage {
         // Reactivity is OPT-IN: call resubscribe() to switch it on.
         //
         // This used to demand 33 STT up front and subscribe in the constructor.
-        // A BlockTick subscription bills every block whether or not a duel is
-        // running — ~25.8 STT/hour, about 1,240 STT/day once Bookmaker is counted
-        // too — so a fresh deploy started burning immediately and silently.
+        // resubscribe() asks for BlockTick with eventTopics[1] = 0, which means
+        // EVERY BLOCK: ~10.5 firings/second, measured at ~31 STT/hour, burning the
+        // same whether a duel is running or the arena is empty. A turn happens once
+        // per 600 blocks, so 599 of every 600 wake-ups did nothing. A fresh deploy
+        // therefore started burning immediately and silently.
         //
-        // It CAN be stopped: SomniaExtensions.unsubscribe(subscriptionId) exists,
-        // and a subscription is also dropped once the balance can no longer cover
-        // the gas limit at firing time. (An earlier version of this comment said
-        // there was no unsubscribe. That was wrong; the cost is the reason.)
-        // Turns are keeper-driven now, so nothing here needs the subscription.
+        // Two things measured since (scripts/probe-reactivity-*.ts):
+        //   - a block NUMBER in that topic fires ONCE at that block, on the exact
+        //     block, for 0.0045 STT including booking the next hop. ~0.07 STT for a
+        //     15-round fight against 7.8 STT of polling.
+        //   - unsubscribe genuinely stops a live subscription, so one can be scoped
+        //     to a single fight.
+        // So the cost was in the polling, not in Reactivity. What a one-shot chain
+        // gives up is self-healing: a dropped firing stalls the fight until something
+        // notices, where every-block retries 100 ms later. Turns are keeper-driven
+        // until that watchdog exists.
+        //
+        // Reactivity stays OPT-IN here: nothing in this constructor subscribes.
         USDSO     = _usdso;
         POOL_WETH = _poolWeth;
         POOL_WBTC = _poolWbtc;
