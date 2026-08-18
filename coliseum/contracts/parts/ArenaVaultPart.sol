@@ -206,53 +206,36 @@ contract ArenaVaultPart is ArenaStorage {
     }
 
     // ─── Reactivity subscription ─────────────────────────────────────────────
+    //
+    // The subscribing and cancelling machinery lives in ArenaStorage, because the
+    // turn part and the duel part both need it and no part may hold state of its
+    // own. These two are the owner's switches.
 
-    function _subscribeReactivity() internal returns (uint256 newId) {
-        ISomniaReactivityPrecompile.SubscriptionData memory data = ISomniaReactivityPrecompile.SubscriptionData({
-            eventTopics: [
-                keccak256("BlockTick(uint64)"),
-                bytes32(0),
-                bytes32(0),
-                bytes32(0)
-            ],
-            origin:                  address(0),
-            caller:                  address(0),
-            emitter:                 SOMNIA_REACTIVITY_PRECOMPILE,
-            handlerContractAddress:  address(this),
-            handlerFunctionSelector: ON_EVENT_SELECTOR,
-            // Priority fee must be high enough to win the per-block reactivity queue.
-            // Testnet baseFee is ~6 gwei; lower-priority subs get indefinitely deferred
-            // even though the subscription stays alive. 10 gwei tip puts us above most
-            // background traffic.
-            priorityFeePerGas:       10_000_000_000,
-            // maxFeePerGas must be >= priorityFeePerGas + baseFee.
-            maxFeePerGas:            50_000_000_000,
-            // Arena _runTurn does pool snapshots + 2 LLM createRequest calls — heavy
-            // path. 3M gas was tight; reactive txs were silently failing on
-            // out-of-gas with no event. Bumped to 15M (well under the 200M cap).
-            gasLimit:                15_000_000,
-            isGuaranteed:            false,
-            isCoalesced:             false
-        });
-
-        bytes memory callData = abi.encodeWithSelector(
-            ISomniaReactivityPrecompile.subscribe.selector,
-            data
-        );
-        (bool ok, bytes memory ret) = SOMNIA_REACTIVITY_PRECOMPILE.call(callData);
-        if (ok && ret.length >= 32) {
-            newId = abi.decode(ret, (uint256));
-        } else {
-            newId = 0;
-            emit ArenaTypes.SubscriptionSkipped("precompile unavailable");
-        }
+    /// @notice Switch turns over to Reactivity, and arm immediately if a fight is
+    ///         already running. Named resubscribe() rather than something clearer
+    ///         on purpose: changing a function's signature leaves its old selector
+    ///         routed at retired code running against live storage, so an existing
+    ///         entry point is reused wherever the body can carry the change.
+    ///
+    ///         The balance floor is checked here even though a one-shot chain costs
+    ///         pennies per fight, because the precompile refuses a subscription
+    ///         outright below its own minimum, and a silent refusal reads exactly
+    ///         like a working switch.
+    function resubscribe() external onlyOwner returns (uint256 newId) {
+        if (address(this).balance < REACTIVITY_FUND_MIN) revert ArenaTypes.ReactivityUnderfunded();
+        reactivityOn = true;
+        _scheduleNextTick();
+        newId = subscriptionId;
+        emit ArenaTypes.Resubscribed(newId);
     }
 
 
-    function resubscribe() external onlyOwner returns (uint256 newId) {
-        if (address(this).balance < REACTIVITY_FUND_MIN) revert ArenaTypes.ReactivityUnderfunded();
-        newId = _subscribeReactivity();
-        subscriptionId = newId;
-        emit ArenaTypes.Resubscribed(newId);
+    /// @notice Switch Reactivity off and cancel anything armed. The keeper bot takes
+    ///         turns over again the moment this lands, so this is the rollback — no
+    ///         redeploy, no rewiring.
+    function disableReactivity() external onlyOwner {
+        reactivityOn = false;
+        _cancelTick();
+        emit ArenaTypes.ReactivityDisabled();
     }
 }
