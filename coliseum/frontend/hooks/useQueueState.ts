@@ -3,7 +3,7 @@
 import { useCallback, useEffect } from 'react';
 import { useReadContracts } from 'wagmi';
 import { zeroAddress, parseAbiItem, type Address } from 'viem';
-import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, LOBBY_MENU, MarketKind } from '@/lib/contracts';
 import { config } from '@/lib/chain';
 import { getWsClient } from '@/lib/wsClient';
 
@@ -30,36 +30,43 @@ export interface QueueSlot {
   deposit: bigint;
 }
 
+/**
+ * A waiting line is identified by round count AND market, not by round count
+ * alone. Two players only match if both chose the same pair, so a nine-round
+ * spot player and a nine-round events player wait in different lines.
+ */
+export function queueKey(turns: number, market: MarketKind): string {
+  return `${turns}:${market}`;
+}
+
 export interface QueueState {
-  slots: Record<QueueTier, QueueSlot | null>;
+  /** Keyed by `queueKey(turns, market)`. */
+  slots: Record<string, QueueSlot | null>;
   /**
-   * Pairs waiting to start, per tier. Matched players who could not start
+   * Pairs waiting to start, per line. Matched players who could not start
    * because every ring was full sit in a FIFO queue and begin as duels finish;
    * this is how deep that queue is.
    */
-  pendingCounts: Record<QueueTier, number>;
+  pendingCounts: Record<string, number>;
   isLoading: boolean;
   refetch: () => void;
 }
 
-const TIERS: QueueTier[] = [3, 6, 9, 15];
-
 export function useQueueState(): QueueState {
   const contracts = [
-    // getSlot for each tier — indices 0-3; always read the real market (simulated=false)
-    // A dual-market queue board (simulated=true slots) is a follow-up.
-    ...TIERS.map((turns) => ({
+    // getSlot for every line the lobby offers, then pendingCount for each, in
+    // the same order — the two halves are read back by offset below.
+    ...LOBBY_MENU.map(({ turns, market }) => ({
       address: MATCHMAKER_ADDRESS,
       abi: ABIS.Matchmaker,
       functionName: 'getSlot' as const,
-      args: [turns, false] as [number, boolean],
+      args: [turns, market] as [number, number],
     })),
-    // pendingCount for each tier — indices 4-7
-    ...TIERS.map((turns) => ({
+    ...LOBBY_MENU.map(({ turns, market }) => ({
       address: MATCHMAKER_ADDRESS,
       abi: ABIS.Matchmaker,
       functionName: 'pendingCount' as const,
-      args: [turns, false] as [number, boolean],
+      args: [turns, market] as [number, number],
     })),
   ];
 
@@ -96,26 +103,26 @@ export function useQueueState(): QueueState {
     };
   }, [refetch]);
 
-  // Parse slot results (indices 0-3)
-  const slots = {} as Record<QueueTier, QueueSlot | null>;
-  TIERS.forEach((tier, i) => {
-    const result = data?.[i];
-    if (result?.status === 'success' && result.result) {
-      const [player, fighter, deposit] = result.result as unknown as [Address, bigint | number, bigint];
-      slots[tier] = player === zeroAddress
+  // First half of the results are the slots, second half the pending counts.
+  const slots: Record<string, QueueSlot | null> = {};
+  const pendingCounts: Record<string, number> = {};
+
+  LOBBY_MENU.forEach(({ turns, market }, i) => {
+    const key = queueKey(turns, market);
+
+    const slotResult = data?.[i];
+    if (slotResult?.status === 'success' && slotResult.result) {
+      const [player, fighter, deposit] = slotResult.result as unknown as [Address, bigint | number, bigint];
+      slots[key] = player === zeroAddress
         ? null
         : { player, fighter: Number(fighter), deposit };
     } else {
-      slots[tier] = null;
+      slots[key] = null;
     }
-  });
 
-  // Parse pendingCount results (indices 4-7)
-  const pendingCounts = {} as Record<QueueTier, number>;
-  TIERS.forEach((tier, i) => {
-    const result = data?.[TIERS.length + i];
-    pendingCounts[tier] =
-      result?.status === 'success' ? Number(result.result as bigint) : 0;
+    const pendingResult = data?.[LOBBY_MENU.length + i];
+    pendingCounts[key] =
+      pendingResult?.status === 'success' ? Number(pendingResult.result as bigint) : 0;
   });
 
   return { slots, pendingCounts, isLoading, refetch };

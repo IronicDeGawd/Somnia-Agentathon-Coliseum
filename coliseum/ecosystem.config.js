@@ -143,5 +143,29 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: "coliseum-binder",
+      cwd: ROOT,
+      script: "pnpm",
+      args: "exec hardhat run scripts/bind-event-window.ts --network somnia",
+      // Re-points the prediction desks at fresh questions.
+      //
+      // A question is only alive for its window — an hour, or four. When the
+      // last one expires the watcher hands the desks back, but nothing rebinds
+      // them, so the events market keeps its lobby cards while no fight on it
+      // can trade a single move. That is exactly what happened overnight: the
+      // default, cheapest, most advertised market sat dead for ten hours.
+      //
+      // Runs every fifteen minutes and exits. It only touches IDLE desks, so it
+      // cannot re-point a desk under a fight in progress, and it skips windows
+      // with under MIN_LIFE_SEC left so a fight cannot outlive its own question.
+      autorestart: false,
+      cron_restart: "*/15 * * * *",
+      kill_timeout: 120000,
+      out_file: "./logs/binder.out.log",
+      error_file: "./logs/binder.err.log",
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

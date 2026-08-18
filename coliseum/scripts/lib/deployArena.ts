@@ -1,41 +1,98 @@
 /**
  * deployArena.ts
  * --------------
- * Deploys ArenaUtils and links it into Arena.
+ * Stands up a complete Arena: the shared library, the router, and every part,
+ * wired together.
  *
- * Arena outgrew the EIP-170 24576-byte contract limit once the prompt layer
- * moved to named actions. The fix was to make the heavy string builders
- * (`legalActions`, `buildMarketSummary`) `public` on ArenaUtils, which turns
- * them into a separately deployed library reached by delegatecall instead of
- * bytecode inlined into Arena. That took Arena from 24844 bytes (over the
- * limit) to 22089 — smaller than it was before the change.
+ * Arena outgrew the EIP-170 24576-byte contract limit twice. The first time, the
+ * heavy string builders moved into ArenaUtils as `public` functions, making it a
+ * separately deployed library reached by delegatecall. That bought room but not
+ * headroom, so Arena is now a ROUTER: it holds the storage and the funds and
+ * answers the hot paths itself, and hands any other function to the part that
+ * claims it. Parts run against the router's storage, so from the outside there
+ * is still one Arena at one address.
  *
- * The cost is that Arena can no longer be deployed on its own: its bytecode
- * ships with a placeholder where the library address goes. Every Arena
- * deployment must go through this function, or it fails with
- * MissingLibraryAddressError.
+ * Two consequences for anyone deploying:
+ *   - Arena cannot be deployed on its own. Its bytecode ships with a placeholder
+ *     where the library address goes, and it answers nothing routed until the
+ *     parts are wired. Always come through this function.
+ *   - Wiring is only permitted while the arena is empty. That is trivially true
+ *     for a fresh deploy and deliberately hard later — see setPart.
  */
 import type { HardhatRuntimeEnvironment } from "hardhat/types";
+import { toFunctionSelector, type Abi } from "viem";
+
+import { routerOwnAbi } from "./mergeArenaAbi";
 
 type Hex = `0x${string}`;
 
+/** Every part, in the order they are deployed and wired. */
+export const ARENA_PARTS = ["ArenaVaultPart", "ArenaDuelPart", "ArenaTurnPart", "ArenaViewPart"] as const;
+
+/** Function entries a part claims: its own, minus anything the router answers. */
+function claimedSelectors(routerAbi: Abi, partAbi: Abi): Hex[] {
+  const onRouter = new Set(
+    routerAbi.filter((e) => e.type === "function").map((e) => toFunctionSelector(e as never)),
+  );
+  return partAbi
+    .filter((e) => e.type === "function")
+    .map((e) => toFunctionSelector(e as never))
+    .filter((sel) => !onRouter.has(sel));
+}
+
 /**
- * Deploy ArenaUtils, then Arena linked against it.
- * @returns the Arena contract and the library address — record the library in the
- *          manifest, since verifying or re-linking Arena later needs to know it.
+ * Deploy ArenaUtils, the Arena router linked against it, and every part; then
+ * point each part's functions at it.
+ *
+ * @returns the router address plus the library and part addresses — record them
+ *          all in the manifest. Verifying or re-linking needs the library, and
+ *          swapping a part later needs to know what is currently wired.
  */
 export async function deployLinkedArena(
   hre: HardhatRuntimeEnvironment,
   args: unknown[],
-  opts: { value?: bigint } = {},
-): Promise<{ address: Hex; arenaUtils: Hex }> {
+  opts: { value?: bigint; quiet?: boolean } = {},
+): Promise<{ address: Hex; arenaUtils: Hex; parts: Record<string, Hex> }> {
+  const log = (m: string) => { if (!opts.quiet) console.log(m); };
   const utils = await hre.viem.deployContract("ArenaUtils");
-  console.log(`  ArenaUtils:      ${utils.address}  (library)`);
+  log(`  ArenaUtils:      ${utils.address}  (library)`);
+  const libraries = { ArenaUtils: utils.address };
 
-  const arena = await hre.viem.deployContract("Arena", args as never, {
+  /**
+   * Only a contract that actually calls into ArenaUtils may be handed the link;
+   * passing it to one that does not is rejected outright. The router itself no
+   * longer calls it — routing is all it does — so this has to be checked rather
+   * than assumed.
+   */
+  async function linkOpts(name: string) {
+    const artifact = await hre.artifacts.readArtifact(name);
+    const needsUtils = Object.keys(artifact.linkReferences ?? {}).length > 0;
+    return { artifact, opts: needsUtils ? { libraries } : {} };
+  }
+
+  const routerLink = await linkOpts("Arena");
+  const router = await hre.viem.deployContract("Arena", args as never, {
     ...(opts.value !== undefined ? { value: opts.value } : {}),
-    libraries: { ArenaUtils: utils.address },
+    ...routerLink.opts,
   } as never);
+  log(`  Arena:           ${router.address}  (router)`);
 
-  return { address: arena.address as Hex, arenaUtils: utils.address as Hex };
+  // What the router's own bytecode dispatches — NOT the widened interface that
+  // consumers see, which already lists every part's functions and would make it
+  // look as though nothing needed routing.
+  const routerAbi = routerOwnAbi(hre.config.paths.artifacts) as unknown as Abi;
+  const parts: Record<string, Hex> = {};
+
+  for (const name of ARENA_PARTS) {
+    const { artifact, opts: partOpts } = await linkOpts(name);
+    const part = await hre.viem.deployContract(name, [], partOpts as never);
+    const partAbi = artifact.abi as Abi;
+    const selectors = claimedSelectors(routerAbi, partAbi);
+
+    await router.write.setPart([selectors, part.address]);
+    parts[name] = part.address as Hex;
+    log(`  ${name}:  ${part.address}  (${selectors.length} functions)`);
+  }
+
+  return { address: router.address as Hex, arenaUtils: utils.address as Hex, parts };
 }

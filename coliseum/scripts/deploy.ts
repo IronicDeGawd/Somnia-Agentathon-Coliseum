@@ -162,9 +162,9 @@ async function main() {
   // WETH = 18, WBTC = 8, SOMI = 18. Local mocks all use 18.
   const baseDecimals: [number, number, number] = IS_LOCAL ? [18, 18, 18] : [18, 8, 18];
   console.log(`Deploying Arena... (baseDecimals=${JSON.stringify(baseDecimals)})`);
-  // Arena exceeds the 24576-byte contract limit unless the prompt builders live
-  // in a linked library, so ArenaUtils deploys alongside it. See lib/deployArena.ts.
-  const { address: arenaAddress, arenaUtils } = await deployLinkedArena(
+  // Arena is a router plus parts plus a linked library, and cannot be deployed
+  // on its own. See lib/deployArena.ts.
+  const { address: arenaAddress, arenaUtils, parts: arenaParts } = await deployLinkedArena(
     hre,
     [
       registryAddress,
@@ -187,7 +187,7 @@ async function main() {
     deployer,
     contracts: {
       FighterRegistry: { address: registryAddress },
-      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils },
+      Arena: { address: arena.address, subscriptionId: subId.toString(), turnIntervalBlocks: turnIntervalBlocks.toString(), arenaUtils, parts: arenaParts },
     },
     external: addresses,
   });
@@ -368,6 +368,12 @@ async function main() {
         address: arena.address,
         subscriptionId: subId.toString(),
         turnIntervalBlocks: turnIntervalBlocks.toString(),
+        // This write replaces the Arena entry wholesale, so the library and part
+        // addresses have to be repeated here or they are lost. Both are needed
+        // later: verifying or re-linking needs the library, and swapping a part
+        // needs to know what is currently wired.
+        arenaUtils,
+        parts: arenaParts,
       },
       DuelHistory: { address: history.address },
       Bookmaker: { address: bookmaker.address },

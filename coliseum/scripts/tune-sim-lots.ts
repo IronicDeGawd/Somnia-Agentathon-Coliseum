@@ -8,6 +8,11 @@
  * cost more than a whole duel's deposit. This sets each lot to a target USD cost
  * instead, keeping tier deposits affordable at realistic prices.
  *
+ * The target used to be 30 cents a lot, which made practice the DEAREST market —
+ * dearer than the real-coin-free events market at every tier. That is backwards:
+ * practice risks nothing, so it must be the cheapest way in. A lot is now priced
+ * to match a prediction question's smallest order, a third of a cent.
+ *
  * Arena caches minQuantity/lotSize/tickSize in `poolMeta`, so setPoolParams alone
  * is not enough — setSimPools must be called afterwards to refresh the cache.
  * Both sim pools' setters are unpermissioned; setSimPools is owner-only.
@@ -19,11 +24,23 @@ import "dotenv/config";
 import hre from "hardhat";
 import { formatEther, parseEther } from "viem";
 
-/** Target USD cost of one lot, per pool. Keeps tier-6 near 3-4 USDso per side. */
+/**
+ * Target USD cost of one lot, per pool.
+ *
+ * Set BELOW a prediction question's smallest order, which measures about
+ * two-thirds of a tenth of a cent per slot, so practice comes out strictly
+ * cheapest at every tier. There is no floor to respect here: the books are mock,
+ * the token is mock, and nothing rounds to zero because a lot still values at
+ * ~4e14 wei against an 18-decimal base.
+ *
+ * Note the deposit covers BOTH fighters, so a tier's total is
+ * 2 x turns x sum(lot cost over active slots) — a lot's cost lands in the
+ * per-side figure four times over at a 2-slot tier, not once.
+ */
 const TARGET_LOT_USD: Record<string, number> = {
-  WETH: 0.3,
-  WBTC: 0.3,
-  SOMI: 0.3,
+  WETH: 0.0004,
+  WBTC: 0.0004,
+  SOMI: 0.0004,
 };
 
 const MOCK_POOL_ABI = [
@@ -49,8 +66,8 @@ const ARENA_ABI = [
       { name: "weth", type: "address" }, { name: "wbtc", type: "address" },
       { name: "somi", type: "address" }, { name: "baseDecimals", type: "uint8[3]" },
     ], outputs: [] },
-  { name: "minDepositForMarket", type: "function", stateMutability: "view",
-    inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ type: "uint256" }] },
+  { name: "minDepositForKind", type: "function", stateMutability: "view",
+    inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [{ type: "uint256" }] },
 ] as const;
 
 const log = (msg: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
@@ -106,11 +123,24 @@ async function main() {
     log(`setSimPools (poolMeta re-cached) ok ${h}`);
   }
 
+  // Quote all three markets side by side. The point of the retune is the ORDER of
+  // these columns: practice must come out under events, or the safest way to try
+  // the game is also the dearest.
+  const KINDS = [["spot", 0], ["practice", 1], ["events", 2]] as const;
+  log("per side, USDso:");
   for (const turns of [3, 6, 9, 15] as const) {
-    const total = (await pub.readContract({
-      address: arena, abi: ARENA_ABI, functionName: "minDepositForMarket", args: [turns, true],
-    })) as bigint;
-    log(`tier ${turns}: total ${formatEther(total)} USDso -> ${formatEther(total / BigInt(2))} per side`);
+    const cols: string[] = [];
+    for (const [name, kind] of KINDS) {
+      try {
+        const total = (await pub.readContract({
+          address: arena, abi: ARENA_ABI, functionName: "minDepositForKind", args: [turns, kind],
+        })) as bigint;
+        cols.push(`${name} ${Number(formatEther(total / BigInt(2))).toFixed(4)}`);
+      } catch {
+        cols.push(`${name} n/a`);        // that market's pools are not registered
+      }
+    }
+    log(`  tier ${String(turns).padStart(2)}: ${cols.join("  |  ")}`);
   }
 }
 

@@ -10,7 +10,9 @@ import { DuelCreator } from '@/components/shared/DuelCreator';
 import DuelCard from '@/components/shared/DuelCard';
 import { useActiveDuels } from '@/hooks/useActiveDuels';
 import { useDuelState } from '@/hooks/useDuelState';
-import { useQueueState, type QueueTier } from '@/hooks/useQueueState';
+import { useQueueState, queueKey, type QueueTier } from '@/hooks/useQueueState';
+import { useEventQuestions } from '@/hooks/useEventQuestions';
+import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
 import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
@@ -22,6 +24,14 @@ import { useAccount } from 'wagmi';
 // order — it named index two Scalper (it is The Quant) and indexes three and four
 // as fighters that no longer exist, so the headline duel card mislabelled them.
 // The rest of this page already used the shared helper; the hero now does too.
+
+/** One colour per market, so a card is identifiable before its label is read.
+ *  Matches the market picker in DuelCreator. */
+const MARKET_ACCENT: Record<MarketKind, string> = {
+  [MarketKind.Events]: 'var(--gold)',
+  [MarketKind.Spot]: '#5eead4',
+  [MarketKind.Practice]: '#a78bfa',
+};
 
 export default function LobbyPage() {
   const router = useRouter();
@@ -59,6 +69,7 @@ export default function LobbyPage() {
   const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
+  const { questions: eventQuestions } = useEventQuestions();
   const { slots: queueSlots, pendingCounts, isLoading: isQueueLoading } = useQueueState();
   // Live betting odds for the active duel (real Bookmaker pools, 0 = disabled).
   const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
@@ -337,14 +348,21 @@ export default function LobbyPage() {
         </div>
 
         <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
-          {([6, 9, 15] as QueueTier[]).map((turns) => {
-            const TIER_POOL_LABELS: Record<QueueTier, string> = {
-              3:  'SOMI',
-              6:  'SOMI · WETH',
-              9:  'SOMI · WETH · WBTC',
-              15: 'ALL POOLS',
-            };
-            const slot = queueSlots[turns];
+          {LOBBY_MENU.map(({ turns: turnsRaw, market }) => {
+            const turns = turnsRaw as QueueTier;
+            // One card per WAITING LINE, not per round count: a nine-round spot
+            // player and a nine-round events player never match each other, so
+            // showing them as one card would promise a pairing that cannot happen.
+            // Events trades the same three questions at every length — only the
+            // number of turns differs — so the label does not vary by tier.
+            const TIER_POOL_LABELS: Record<QueueTier, string> = market === MarketKind.Events
+              ? (() => {
+                  const q = eventQuestions.length ? eventQuestions.join(' · ') : 'live questions';
+                  return { 3: q, 6: q, 9: q, 15: q };
+                })()
+              : { 3: 'SOMI', 6: 'SOMI · WETH', 9: 'SOMI · WETH · WBTC', 15: 'ALL POOLS' };
+            const key = queueKey(turns, market);
+            const slot = queueSlots[key];
             const fighterName = slot
               ? (ROSTER.find(r => r.id === fighterIndexToId(slot.fighter))?.name ?? `FIGHTER #${slot.fighter}`)
               : null;
@@ -354,7 +372,7 @@ export default function LobbyPage() {
 
             return (
               <div
-                key={turns}
+                key={key}
                 className="card pad-16 col gap-12 flex-1"
                 style={{ minWidth: 'min(100%, 200px)', flex: '1 1 200px' }}
               >
@@ -362,6 +380,16 @@ export default function LobbyPage() {
                 <div className="row jc-sb ai-c">
                   <span className="t-display t-up" style={{ fontSize: 18, letterSpacing: '0.08em', color: 'var(--text)' }}>
                     {turns} ROUNDS
+                    <span
+                      className="t-mono t-xs"
+                      style={{
+                        marginLeft: 8,
+                        letterSpacing: '0.1em',
+                        color: MARKET_ACCENT[market],
+                      }}
+                    >
+                      {MARKET_LABEL[market]}
+                    </span>
                   </span>
                   {slot ? (
                     <Chip variant="live"><Dot variant="a" pulse /> WAITING</Chip>
@@ -374,8 +402,8 @@ export default function LobbyPage() {
                     in arrival order as running duels finish. */}
                 <div className="row jc-sb ai-c">
                   <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>QUEUED PAIRS</span>
-                  <span className="t-mono t-xs t-num" style={{ color: (pendingCounts[turns] ?? 0) > 0 ? 'var(--text)' : 'var(--text-faint)' }}>
-                    {pendingCounts[turns] ?? 0}
+                  <span className="t-mono t-xs t-num" style={{ color: (pendingCounts[key] ?? 0) > 0 ? 'var(--text)' : 'var(--text-faint)' }}>
+                    {pendingCounts[key] ?? 0}
                   </span>
                 </div>
 

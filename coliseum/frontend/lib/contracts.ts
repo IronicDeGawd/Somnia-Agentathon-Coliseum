@@ -1,27 +1,33 @@
 import { parseAbi } from 'viem';
 
 export const CONTRACT_ADDRESSES = {
-  // Concurrency migration (deploy block 459909804). The Arena runs up to
-  // maxActiveDuels fights at once (default 3) instead of exactly one, and a
-  // matched pair that finds every ring full waits in a FIFO queue rather than
-  // being turned away. Reactivity is opt-in here: neither Arena nor Bookmaker
-  // subscribes at construction, so nothing bills per block until resubscribe().
+  // Router split (deploy block 461199047). Arena is now one address made of a
+  // router that holds the storage and the funds plus four parts reached by
+  // delegatecall — it no longer fit under the 24576-byte contract limit as a
+  // single contract. None of that is visible here: the address, the function
+  // signatures and the events are unchanged, and every event is still emitted
+  // from the Arena address below.
+  //
+  // Arena also accepts a third market set, the event-contract desks, so a fight
+  // can run on dreamDEX prediction windows instead of spot pools.
   //
   // Bookmaker and Matchmaker hold Arena immutable, so all four redeployed
   // together. FighterRegistry is reused (personas are live-editable via
-  // setPrompt). DuelHistory is fresh one last time — its `arena` is mutable now
-  // (owner-only setArena), so the next Arena redeploy can keep the leaderboard.
+  // setPrompt).
   //
   // Arena is linked against a deployed ArenaUtils library
-  // (0x27715e9610f3bf3a2ec614a8c88e4927eb3f5740) — it exceeded the 24576-byte
-  // contract limit with the prompt builders inlined.
-  Arena: '0xFC7F1E4B815D840307Bdbb7D2B8407E8507c7050' as const,
-  Bookmaker: '0xb44c8e0b357e5de27282504c5462480a31da4366' as const,
+  // (0x02d3135d8187875ee3dd16e521e5ceb018fc1f28). Parts:
+  //   ArenaVaultPart 0xbe0d1c7c78c80bc91345da603af0ec180a9ec80e
+  //   ArenaDuelPart  0x3729e1a46c7f548ac428a558912c75e1a3e1fce2
+  //   ArenaTurnPart  0x80dd8b1e0084ddbe4098eaa8d22a86f32207ca2f
+  //   ArenaViewPart  0x291edb2f537413de16970582320fb3fa64f14044
+  Arena: '0x301d9364BDb2fd76E33c13eBE8FCc956BAcfbeD6' as const,
+  Bookmaker: '0xea808eac9798e2eda1a937d3d2be8541258e3802' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0xcbf4b434f02e00d64d0350e39a2301fa489f038b' as const,
+  Matchmaker: '0x6b7e255a3420c7846a15e963589ffd5504773b0a' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
-  DuelHistory: '0xb38278AB551F284C7Ff29921f83Bc0bE73ba266e' as `0x${string}`,
+  DuelHistory: '0x11Ac9B65b05dfb1406618Bda649b410B8e8F7108' as `0x${string}`,
 };
 
 /**
@@ -46,7 +52,7 @@ export const DUEL_HISTORY_DEPLOYED =
  * (deployments/somnia.json `block`). Used as the lower bound for getLogs so we
  * never ask a public RPC to scan from genesis — that gets rejected/throttled.
  */
-export const BOOKMAKER_DEPLOY_BLOCK = BigInt(459909804);
+export const BOOKMAKER_DEPLOY_BLOCK = BigInt(461199047);
 
 /**
  * Active dreamDEX pools the Arena trades on, keyed by the poolMask bit.
@@ -85,6 +91,56 @@ export const SIM_MARKET_ENABLED = true;
 export function POOLS_FOR(simulated: boolean): typeof POOLS | typeof SIM_POOLS {
   return simulated ? SIM_POOLS : POOLS;
 }
+
+/**
+ * Which markets a fight trades on. Mirrors ArenaTypes.MarketKind.
+ *
+ * Spot is the real coin books — a nine-round fight there needs about 150 USDso,
+ * because one minimum WBTC order alone costs a few dollars and the deposit must
+ * cover every fighter trading every round. Events fills all three slots with
+ * live prediction questions instead, which brings the same fight under two.
+ * Both are offered; neither replaced the other.
+ *
+ * The numbering is on-chain and stored in every past fight — never reorder it.
+ * `Events` was called `Mixed` while it still kept the SOMI coin book in one
+ * slot; the coin was dropped because it had become the expensive one.
+ */
+export enum MarketKind {
+  Spot = 0,
+  Practice = 1,
+  Events = 2,
+}
+
+/**
+ * The lobby menu: which round counts are offered on which market.
+ *
+ * Two players match only if they pick the same row, so every row is a separate
+ * waiting line and adding rows thins them. Kept deliberately short for that
+ * reason: events at every length, spot only where the deposit is not punishing,
+ * and practice only at the two lengths the house bot actually fills — a row
+ * nobody can be matched on is worse than no row at all.
+ *
+ * Practice is left off at three rounds on purpose: only one market trades there,
+ * so both fighters face a single choice each turn and the fight converges to a
+ * near-tie. It is a poor first impression, which is the one thing practice is for.
+ */
+export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
+  { turns: 3,  market: MarketKind.Events },
+  { turns: 3,  market: MarketKind.Spot },
+  { turns: 6,  market: MarketKind.Events },
+  ...(SIM_MARKET_ENABLED ? [{ turns: 6, market: MarketKind.Practice }] : []),
+  { turns: 9,  market: MarketKind.Events },
+  { turns: 9,  market: MarketKind.Spot },
+  ...(SIM_MARKET_ENABLED ? [{ turns: 9, market: MarketKind.Practice }] : []),
+  { turns: 15, market: MarketKind.Events },
+  { turns: 15, market: MarketKind.Spot },
+];
+
+export const MARKET_LABEL: Record<MarketKind, string> = {
+  [MarketKind.Spot]: 'SPOT',
+  [MarketKind.Practice]: 'PRACTICE',
+  [MarketKind.Events]: 'EVENTS',
+};
 
 /** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
 export const FIGHTER_ACTIONS = [
@@ -152,9 +208,17 @@ export const ABIS = {
     'function maxActiveDuels() view returns (uint16)',
     'function minDepositFor(uint16 turns) view returns (uint256)',
     'function minDepositForMarket(uint16 turns, bool simulated) view returns (uint256)',
+    'function minDepositForKind(uint16 turns, uint8 marketKind) view returns (uint256)',
+    // Which questions the events market currently asks. They are re-bound between
+    // fights, so the lobby reads them rather than hard-coding asset names.
+    'function EVENT_POOL_WETH() view returns (address)',
+    'function EVENT_POOL_WBTC() view returns (address)',
+    'function EVENT_POOL_SOMI() view returns (address)',
+    'function poolQuestion(address pool) view returns (bytes8)',
     'function nextDuelId() view returns (uint256)',
     'function platformFee(uint16 turns) view returns (uint256)',
     'function TURN_INTERVAL_BLOCKS() view returns (uint256)',
+    'function startDuelOn(uint8 fighterA, uint8 fighterB, uint16 turns, uint8 marketKind) returns (uint256)',
     'function startDuel(uint8 fighterA, uint8 fighterB, uint16 turns, bool simulated) external returns (uint256)',
     'function finalizeDuel(uint256 duelId) external',
     'function recoverFunds(uint256 duelId) external',
@@ -230,18 +294,18 @@ export const ABIS = {
   ]),
 
   Matchmaker: parseAbi([
-    'function queue(uint8 fighter, uint16 turns, bool simulated) external',
-    'function cancelQueue(uint16 turns, bool simulated) external',
-    'function triggerPendingMatch(uint16 turns, bool simulated) external',
+    'function queue(uint8 fighter, uint16 turns, uint8 marketKind) external',
+    'function cancelQueue(uint16 turns, uint8 marketKind) external',
+    'function triggerPendingMatch(uint16 turns, uint8 marketKind) external',
     'function claimWinnings(uint256 duelId) external',
-    'function halfDeposit(uint16 turns, bool simulated) view returns (uint256)',
-    'function getSlot(uint16 turns, bool simulated) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
+    'function halfDeposit(uint16 turns, uint8 marketKind) view returns (uint256)',
+    'function getSlot(uint16 turns, uint8 marketKind) view returns (address player, uint8 fighter, uint256 deposit, uint64 queuedAt)',
     'function arenaFree() view returns (bool)',
     'function slots(uint16 turns) view returns (address player, uint8 fighter, uint256 deposit)',
     // Matched pairs waiting for a free ring, oldest first.
-    'function pendingCount(uint16 turns, bool simulated) view returns (uint256)',
-    'function getPendingPositions(uint16 turns, bool simulated) view returns (uint256[])',
-    'function cancelPending(uint16 turns, bool simulated, uint256 position) external',
+    'function pendingCount(uint16 turns, uint8 marketKind) view returns (uint256)',
+    'function getPendingPositions(uint16 turns, uint8 marketKind) view returns (uint256[])',
+    'function cancelPending(uint16 turns, uint8 marketKind, uint256 position) external',
     'function matches(uint256 duelId) view returns (address playerA, address playerB, uint256 totalPot, bool recovered, bool settledA, bool settledB)',
     'event Queued(address indexed player, uint8 indexed fighter, uint16 turns, uint256 deposit)',
     'event QueueCancelled(address indexed player, uint16 turns, uint256 refund)',

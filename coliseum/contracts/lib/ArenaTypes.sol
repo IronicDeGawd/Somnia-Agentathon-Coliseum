@@ -42,6 +42,28 @@ library ArenaTypes {
     uint8 internal constant TIER_9_MASK  = POOL_BIT_SOMI | POOL_BIT_WETH | POOL_BIT_WBTC;
     uint8 internal constant TIER_15_MASK = POOL_BIT_SOMI | POOL_BIT_WETH | POOL_BIT_WBTC;
 
+    /// @notice Which set of markets a fight trades on.
+    ///
+    ///         `Spot` is the real coin books. `Events` fills all three slots with
+    ///         live prediction questions, which is what takes a nine-round fight
+    ///         from about 150 USDso to under two. `Practice` is the mock books.
+    ///
+    ///         The two real kinds coexist rather than replace each other: every
+    ///         fight records its own three markets at the start, so a spot fight
+    ///         and an events fight run side by side without touching each other.
+    ///
+    /// @dev    Numbering is deliberate. The old flag was `bool simulated`, and
+    ///         false/true land on Spot/Practice, so every stored value and every
+    ///         caller that has not been updated still means what it used to.
+    ///         NEVER reorder: the value is stored in every past fight.
+    ///
+    ///         `Events` was named `Mixed` while it still kept the SOMI coin book
+    ///         in one slot. The coin was dropped because on this market it had
+    ///         become the expensive leg — a smallest coin order costs about nine
+    ///         cents against a third of a cent for a question — so the mix was
+    ///         99% coin by cost. Nothing about a coin is traded there any more.
+    enum MarketKind { Spot, Practice, Events }
+
     // ─── Structs ─────────────────────────────────────────────────────────────
 
     struct Duel {
@@ -69,6 +91,13 @@ library ArenaTypes {
     }
 
     /// @notice Per-pool ABI metadata cached at construction.
+    /// @dev DO NOT add fields. Arena's router is deployed once and kept at its
+    ///      address while its parts are replaced, so the router's bytecode holds
+    ///      the auto-generated `poolMeta` getter compiled against THIS shape. A new
+    ///      field would make the live getter return fewer values than every
+    ///      consumer's description promises, and every read of it would fail to
+    ///      decode. Per-pool additions go in their own appended mapping instead —
+    ///      see `poolLabel` in ArenaStorage.
     struct PoolMeta {
         uint8   baseDecimals;
         uint256 minQuantity;
@@ -106,12 +135,26 @@ library ArenaTypes {
     error InvalidFighterPair();
     error ReactivityUnderfunded();
     error InvalidTurnCount();        // turns not in {3, 6, 9, 15}
+    error InvalidMarketKind();       // not one of Spot, Practice, Events
     error DepositTooLow(uint256 required, uint256 provided);
     error NotDuelCreator();
     error DuelNotResolved();
     error NothingToRecover();
     error AlreadyRecovered();
     error CannotSweepUSDso();
+
+    /// @notice A call arrived for a function no part has claimed. Reverting is
+    ///         deliberate: an unrouted selector must never look like a success.
+    error NoPart(bytes4 selector);
+    /// @notice Parts may only be rewired while nothing is at stake — no duel
+    ///         running and no deposit escrowed — so the rules of a fight already
+    ///         underway cannot be changed and money in flight cannot be touched.
+    error ArenaNotEmpty();
+    /// @notice Refuses a part address with no code. A delegatecall to an address
+    ///         holding no code SUCCEEDS and returns nothing, so wiring a selector
+    ///         to a plain wallet by mistake would silently answer every call with
+    ///         empty data instead of failing.
+    error PartHasNoCode(address part);
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -181,4 +224,13 @@ library ArenaTypes {
     event MarkPriceSnapshot(uint256 indexed duelId, address indexed pool, uint256 markPrice, uint16 turnNum);
     /// @notice The owner changed how many duels may run at once.
     event MaxActiveDuelsSet(uint16 maxActiveDuels);
+
+    /// @notice A function was pointed at a part. Emitted once per selector so the
+    ///         full routing table can be rebuilt from logs.
+    event PartSet(bytes4 indexed selector, address indexed part);
+
+    /// @notice The event-contract pool set was pointed at new addresses. Emitted
+    ///         on every registration because prediction windows are short-lived
+    ///         and the current set is otherwise only visible by polling.
+    event EventDesksSet(address weth, address wbtc, address somi);
 }

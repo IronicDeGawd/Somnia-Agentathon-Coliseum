@@ -18,7 +18,8 @@
  *
  * Env (coliseum/.env):
  *   HOUSE_PRIVATE_KEY  — required, the house wallet (gen-bot-key.mjs)
- *   HOUSE_MARKETS      — "sim,real" (default) | "sim" | "real"
+ *   HOUSE_MARKETS      — "practice,events" (default) | any of practice|events|spot
+ *                        ("sim"/"real" still accepted, meaning practice/spot)
  *   HOUSE_TIERS        — "3,6,9,15" (default)
  *   HOUSE_GRACE_S      — seconds a player must wait alone before the house steps
  *                        in (default 15) — leaves room for a real opponent.
@@ -55,20 +56,24 @@ const ERC20_ABI = [
 ] as const;
 
 const MM_ABI = [
-  { name: "getSlot", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ name: "player", type: "address" }, { name: "fighter", type: "uint8" }, { name: "deposit", type: "uint256" }, { name: "queuedBlock", type: "uint64" }] },
-  { name: "halfDeposit", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ type: "uint256" }] },
+  { name: "getSlot", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [{ name: "player", type: "address" }, { name: "fighter", type: "uint8" }, { name: "deposit", type: "uint256" }, { name: "queuedBlock", type: "uint64" }] },
+  { name: "halfDeposit", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [{ type: "uint256" }] },
   { name: "arenaFree", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
-  { name: "queue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "fighter", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
-  { name: "cancelQueue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
+  { name: "queue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "fighter", type: "uint8" }, { name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [] },
+  { name: "cancelQueue", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [] },
   { name: "claimWinnings", type: "function", stateMutability: "nonpayable", inputs: [{ name: "duelId", type: "uint256" }], outputs: [] },
-  { name: "pendingCount", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [{ type: "uint256" }] },
-  { name: "triggerPendingMatch", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "simulated", type: "bool" }], outputs: [] },
+  { name: "pendingCount", type: "function", stateMutability: "view", inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [{ type: "uint256" }] },
+  { name: "triggerPendingMatch", type: "function", stateMutability: "nonpayable", inputs: [{ name: "turns", type: "uint16" }, { name: "marketKind", type: "uint8" }], outputs: [] },
 ] as const;
 
 // Every tier/market, regardless of HOUSE_TIERS/HOUSE_MARKETS — a pending match
 // is two REAL players already paired and waiting; we trigger it as a public good.
 const ALL_TIERS: (3 | 6 | 9 | 15)[] = [3, 6, 9, 15];
-const ALL_MARKETS: boolean[] = [true, false];
+
+/** Mirrors ArenaTypes.MarketKind. */
+const SPOT = 0, PRACTICE = 1, EVENTS = 2;
+const MARKET_NAME: Record<number, string> = { 0: "spot", 1: "practice", 2: "events" };
+const ALL_MARKETS: number[] = [SPOT, PRACTICE, EVENTS];
 
 // keccak256("MatchStarted(uint256,address,address,uint8,uint8,uint16)") — the
 // first three parameters are indexed, so topics[1] carries the duel id.
@@ -107,9 +112,14 @@ async function main() {
   const pk = process.env.HOUSE_PRIVATE_KEY;
   if (!pk) throw new Error("HOUSE_PRIVATE_KEY not set (run gen-bot-key.mjs HOUSE_PRIVATE_KEY)");
 
-  const markets = (process.env.HOUSE_MARKETS ?? "sim,real").split(",").map((s) => s.trim().toLowerCase());
-  const doSim = markets.includes("sim");
-  const doReal = markets.includes("real");
+  // "events" is the affordable game and the default the house plays; "spot" is the
+  // real-coin game, whose long tiers cost far more than the demo bankroll.
+  // "mixed" is the old name for events, still accepted so a running config keeps working.
+  const markets = (process.env.HOUSE_MARKETS ?? "practice,events").split(",").map((s) => s.trim().toLowerCase());
+  const marketFlags: number[] = [];
+  if (markets.includes("practice") || markets.includes("sim")) marketFlags.push(PRACTICE);
+  if (markets.includes("events") || markets.includes("mixed")) marketFlags.push(EVENTS);
+  if (markets.includes("spot") || markets.includes("real")) marketFlags.push(SPOT);
   // Default to tier 6 + 9. Tier 3 is dropped because it trades SOMI only, so both
   // fighters face one choice per turn and the duel converges to a near-tie. Real
   // tiers 9/15 need 91/151 USDso per side — beyond the demo bankroll, so the house
@@ -143,10 +153,6 @@ async function main() {
     log(`  bankroll: ${fmtU(bal)} USDso  ${fmtU(stt)} STT`);
   }
 
-  const marketFlags: boolean[] = [];
-  if (doSim) marketFlags.push(true);
-  if (doReal) marketFlags.push(false);
-
   const seenAt = new Map<string, number>();      // "tier:sim" → first time a lonely player was seen
   const ourQueuedAt = new Map<string, number>(); // "tier:sim" → when WE queued (self-cancel safety)
   const started: { duelId: bigint; claimed: boolean }[] = [];
@@ -168,7 +174,7 @@ async function main() {
       for (const turns of ALL_TIERS) {
         for (const sim of ALL_MARKETS) {
           if (!running) break;
-          const pkey = `${turns}:${sim ? "sim" : "real"}`;
+          const pkey = `${turns}:${MARKET_NAME[sim]}`;
           let waiting = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "pendingCount", args: [turns, sim] }) as bigint;
           while (running && waiting > 0n) {
             if (!(await pub.readContract({ address: MM, abi: MM_ABI, functionName: "arenaFree" }))) break; // every ring busy
@@ -189,7 +195,7 @@ async function main() {
       for (const turns of tiers) {
         for (const sim of marketFlags) {
           if (!running) break;
-          const key = `${turns}:${sim ? "sim" : "real"}`;
+          const key = `${turns}:${MARKET_NAME[sim]}`;
 
           const slot = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "getSlot", args: [turns, sim] }) as readonly [`0x${string}`, number, bigint, bigint];
           const player = slot[0];
