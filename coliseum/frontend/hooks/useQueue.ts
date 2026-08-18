@@ -216,7 +216,13 @@ export function useQueue(
         functionName: 'cancelQueue',
         args: [turns, market],
         gasPrice,
-        gas: BigInt(200000),
+        // Leaving a queue is a refund and a storage delete, and it measured 96,117
+        // gas — but an attempt at 400,000 still failed, and the estimator quotes
+        // 1,144,175 for the same call. Whatever accounts for that spread, a player
+        // who cannot cancel cannot get their deposit back until someone matches them,
+        // so this is sized for the estimate rather than the observed cost. Unused gas
+        // is not charged.
+        gas: BigInt(1500000),
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await refetchHalfDeposit();
