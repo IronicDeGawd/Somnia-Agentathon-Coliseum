@@ -192,10 +192,11 @@ contract Matchmaker {
     /// @notice Enter the matchmaking queue.
     /// @param fighter    Your FighterRegistry index (0 to FIGHTER_COUNT-1).
     /// @param turns      Tier: 3, 6, 9, or 15 rounds.
-    /// @param marketKind 0 spot coins, 1 practice, 2 events (three prediction
-    ///        prediction questions). Queues are kept separate per market, so you
-    ///        only ever match someone who chose the same one — a spot fight and a
-    ///        events fight cost wildly different amounts and could not share a pot.
+    /// @param marketKind 0 spot coins, 1 practice, 2 events (three live prediction
+    ///        questions), 3 perps (three leveraged futures markets, where a fighter
+    ///        may also bet a market DOWN). Queues are kept separate per market, so you
+    ///        only ever match someone who chose the same one — the four cost wildly
+    ///        different amounts and could not share a pot.
     ///
     /// Approve this contract for halfDeposit(turns, marketKind) USDso first.
     function queue(uint8 fighter, uint16 turns, uint8 marketKind) external {
@@ -203,7 +204,7 @@ contract Matchmaker {
             revert InvalidTier();
         // Arena would reject an unknown market anyway, but only after both
         // deposits had been taken and the pair matched.
-        if (marketKind > 2) revert InvalidMarket();
+        if (marketKind > 3) revert InvalidMarket();
 
         // Validate fighter index against the FighterRegistry (M-1 fix).
         // NOTE: FIGHTER_COUNT lives on the registry, not on Arena.

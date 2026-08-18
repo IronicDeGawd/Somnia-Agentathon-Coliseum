@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "./ArenaTypes.sol";
 import "../interfaces/ISpotPool.sol";
+import "../interfaces/IPerps.sol";
 
 /// @title ArenaUtils
 /// @notice Pure/view helpers for the Arena system. No state, no auth.
@@ -35,7 +36,16 @@ library ArenaUtils {
     ///
     ///         So on events, every tier trades every slot and the tiers differ only
     ///         in how long the fight runs.
+    ///
+    ///         Perps behaves like events and for the same reason: the slots cost
+    ///         roughly comparable margin rather than wildly different face values,
+    ///         so there is no expensive slot to ration, and narrowing to one slot
+    ///         would leave both fighters facing the same single option every turn.
     function poolMaskFor(uint16 turns, ArenaTypes.MarketKind kind) internal pure returns (uint8) {
+        if (kind == ArenaTypes.MarketKind.Perps) {
+            if (!isValidTurnCount(turns)) revert ArenaTypes.InvalidTurnCount();
+            return ArenaTypes.POOL_BIT_WETH | ArenaTypes.POOL_BIT_WBTC | ArenaTypes.POOL_BIT_SOMI;
+        }
         if (kind == ArenaTypes.MarketKind.Events) {
             if (!isValidTurnCount(turns)) revert ArenaTypes.InvalidTurnCount();
             return ArenaTypes.POOL_BIT_WETH | ArenaTypes.POOL_BIT_WBTC | ArenaTypes.POOL_BIT_SOMI;
@@ -45,6 +55,34 @@ library ArenaUtils {
 
     function isValidTurnCount(uint16 turns) internal pure returns (bool) {
         return turns == 3 || turns == 6 || turns == 9 || turns == 15;
+    }
+
+    // ─── The perps budget ladder ─────────────────────────────────────────────
+    //
+    // On every other market the entry price is DERIVED: read the books, add up what
+    // a smallest order costs on each active slot, multiply by the round count. That
+    // is honest and it is also why a nine-round spot fight costs $95.64 and why the
+    // number moves between the moment a lobby quotes it and the moment a player
+    // pays.
+    //
+    // Perps inverts the arithmetic. The budget is FIXED and advertised, and the
+    // question becomes which markets that budget can afford — answered at duel start
+    // by the registry, against live margin factors. So this function reads no book
+    // and cannot move.
+    //
+    // The rungs are not a design; they fall out of measured margin costs
+    // (2026-08-19, initial margin for one smallest position): XRP $0.050,
+    // ADA $0.175, SOL $0.385, BNB $0.603, ETH $0.958, BTC $12.054. Two dollars
+    // carries five of the six markets, with Ethereum a tight two-position squeeze so
+    // that choices cost something; eighteen unlocks Bitcoin at exactly one position.
+
+    /// @notice Collateral ONE fighter is given on a perps fight, in 18-decimal USDso.
+    function perpBudget(uint16 turns) internal pure returns (uint256) {
+        if (turns == 3)  return 2e18;
+        if (turns == 6)  return 6e18;
+        if (turns == 9)  return 12e18;
+        if (turns == 15) return 18e18;
+        revert ArenaTypes.InvalidTurnCount();
     }
 
     // ─── Minimum deposit calculation ─────────────────────────────────────────
@@ -73,6 +111,13 @@ library ArenaUtils {
         address poolSomi,
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta
     ) internal view returns (uint256 total) {
+        // A fixed, advertised entry price — doubled for the two fighters, matching
+        // the convention that this function returns the COMBINED figure and
+        // `initialUsdsoPerFighter` is half of it. Deliberately before any pool read,
+        // because the whole point of the perps tier is that its price does not depend
+        // on what the books happen to say when someone opens the lobby.
+        if (kind == ArenaTypes.MarketKind.Perps) return perpBudget(turns) * 2;
+
         uint8 mask = poolMaskFor(turns, kind);
         address[3] memory pools = [poolWeth, poolWbtc, poolSomi];
         uint8[3] memory bits = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
@@ -194,26 +239,48 @@ library ArenaUtils {
     // falls outside the set and every event trade becomes a silent Hold — which is
     // indistinguishable from a fighter that simply chose not to trade.
 
-    /// @notice Per-slot question labels, in slot order [WETH, WBTC, SOMI].
-    ///         An empty entry means that slot is an ordinary spot pool.
+    /// @notice Per-slot labels, in slot order [WETH, WBTC, SOMI], plus which slots
+    ///         are perp markets.
+    ///
+    ///         A label with `perp` false is a prediction question; with `perp` true
+    ///         it is a market name ("ETH"). An empty label means the slot is an
+    ///         ordinary spot pool and names its own asset.
+    ///
+    ///         `perp` is a third MODE rather than a different label, because the two
+    ///         differences are not sayable in a label: a perps slot's actions are
+    ///         directions rather than a purchase and a sale, and a fighter with
+    ///         nothing may still take one of them.
     struct Vocab {
         bytes8[3] label;
+        bool[3]   perp;
     }
 
     /// @notice Read the vocabulary off the pools a duel actually recorded, so it
     ///         cannot drift when the desks are later re-pointed at new questions.
     function vocabFor(
         address[3] memory pools,
-        mapping(address => bytes8) storage poolLabel
+        mapping(address => bytes8) storage poolLabel,
+        mapping(address => bool) storage poolIsPerp
     ) internal view returns (Vocab memory v) {
-        for (uint256 i = 0; i < 3; i++) v.label[i] = poolLabel[pools[i]];
+        for (uint256 i = 0; i < 3; i++) {
+            v.label[i] = poolLabel[pools[i]];
+            v.perp[i]  = poolIsPerp[pools[i]];
+        }
     }
 
-    /// @dev Action ids pair up per slot: 1/2 WBTC, 3/4 WETH, 5/6 SOMI.
+    /// @dev Action ids pair up per slot: 1/2 WBTC, 3/4 WETH, 5/6 SOMI. The enum is
+    ///      deliberately NOT extended for perps — the existing two ids per slot
+    ///      become the two directions, so the odd id is Long where it used to be Buy
+    ///      and the even id is Short where it used to be Sell. Closing a position is
+    ///      taking the other side, which needs no third action.
     function actionName(uint8 a, Vocab memory v) internal pure returns (string memory) {
         if (a == 0 || a > 6) return "Hold";
         uint256 slot = a <= 2 ? 1 : (a <= 4 ? 0 : 2);
         bool buy = a % 2 == 1;
+        if (v.perp[slot]) {
+            string memory m = labelText(v.label[slot]);
+            return buy ? string.concat("Long", m) : string.concat("Short", m);
+        }
         if (v.label[slot] != bytes8(0)) {
             string memory q = labelText(v.label[slot]);
             return buy ? string.concat("Back", q) : string.concat("Drop", q);
@@ -261,6 +328,28 @@ library ArenaUtils {
         );
     }
 
+    /// @notice The same question for a perps slot, which cannot be answered from a
+    ///         token balance because a position is signed and can be negative.
+    ///
+    ///         This one function is what makes shorting possible at all. The spot
+    ///         rule is "you may sell what you hold"; the perps rule is "you may take
+    ///         either direction you can post margin for, and you may always turn
+    ///         back". A fighter holding nothing is therefore offered Short, and
+    ///         taking it opens a negative position.
+    ///
+    ///         Asked of the desk rather than computed here, because the answer needs
+    ///         the fighter's live margin health, its current position on that market,
+    ///         and the market's effective margin factor — none of which Arena holds.
+    ///         A desk that cannot answer offers nothing, which costs a fighter one
+    ///         option rather than its turn.
+    function perpTradability(address desk, uint256 duelId, uint8 fighterId)
+        internal view returns (bool canLong, bool canShort)
+    {
+        try IPerpDesk(desk).fighterTradability(duelId, fighterId) returns (bool l, bool s) {
+            return (l, s);
+        } catch { return (false, false); }
+    }
+
     /// @dev Is anyone actually resting an order on this side right now?
     ///      A buy needs someone selling, a sell needs someone buying.
     function _hasSize(address pool, bool isBid) private view returns (bool) {
@@ -286,7 +375,8 @@ library ArenaUtils {
         address poolWbtc,
         address poolSomi,
         mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
-        mapping(address => ArenaTypes.PoolMeta) storage poolMeta
+        mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
+        mapping(address => bool) storage poolIsPerp
     ) public view returns (uint8[] memory) {
         uint8[7] memory buf;
         uint256 n = 0;
@@ -294,12 +384,15 @@ library ArenaUtils {
 
         address[3] memory pools = [poolWbtc, poolWeth, poolSomi];
         uint8[3]   memory bits  = [ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_SOMI];
-        // Buy/sell action ids per pool, matching the FighterAction enum order.
+        // Buy/sell action ids per pool, matching the FighterAction enum order. On a
+        // perps slot the same two ids mean long and short.
         uint8[3]   memory buys  = [uint8(1), uint8(3), uint8(5)];
 
         for (uint256 i = 0; i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
-            (bool canBuy, bool canSell) = tradability(pools[i], duelId, fighterId, fighterBalances, poolMeta);
+            (bool canBuy, bool canSell) = poolIsPerp[pools[i]]
+                ? perpTradability(pools[i], duelId, fighterId)
+                : tradability(pools[i], duelId, fighterId, fighterBalances, poolMeta);
             if (canBuy)  buf[n++] = buys[i];
             if (canSell) buf[n++] = buys[i] + 1;
         }
@@ -387,7 +480,8 @@ library ArenaUtils {
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
         mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
         mapping(uint256 => mapping(address => uint256)) storage prevMarkSnapshots,
-        mapping(address => bytes8) storage poolLabel
+        mapping(address => bytes8) storage poolLabel,
+        mapping(address => bool) storage poolIsPerp
     ) public view returns (string memory) {
         uint16 turnNum = duel.completedCallbacks / 2 + 1;
         // lastAction is uint8[2], indexed by SLOT (0=fighterA, 1=fighterB) — NOT
@@ -396,7 +490,7 @@ library ArenaUtils {
 
         address[3] memory pools  = [poolWeth, poolWbtc, poolSomi];
         uint8[3]   memory bits   = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
-        Vocab memory v = vocabFor(pools, poolLabel);
+        Vocab memory v = vocabFor(pools, poolLabel, poolIsPerp);
 
         string memory summary = string.concat(
             "This is turn ", turnWord(turnNum), " of ", turnWord(duel.turns),
@@ -406,13 +500,13 @@ library ArenaUtils {
         for (uint256 i = 0; i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
             summary = string.concat(summary, " ", holdingLine(
-                i, v.label[i], pools[i], duelId, fighterId,
+                i, v.label[i], v.perp[i], pools[i], duelId, fighterId,
                 fighterBalances, poolMeta, markSnapshots, prevMarkSnapshots
             ));
         }
 
         string[] memory names = actionNames(legalActions(
-            duelId, fighterId, duel, poolWeth, poolWbtc, poolSomi, fighterBalances, poolMeta
+            duelId, fighterId, duel, poolWeth, poolWbtc, poolSomi, fighterBalances, poolMeta, poolIsPerp
         ), v);
         summary = string.concat(summary, " Allowed actions: ", join(names), ".");
         return summary;
@@ -429,9 +523,13 @@ library ArenaUtils {
     ///         as a price is how a fighter comes to read a market backwards.
     /// @param slot 0 WETH, 1 WBTC, 2 SOMI — names the asset when the slot is spot.
     /// @param label the slot's question, or empty when it holds a plain asset.
+    /// @param perp true when the slot is a perp market, whose position is a
+    ///        DIRECTION rather than a holding — so it is described as being long,
+    ///        short, or flat, and never as holding some or none of a thing.
     function holdingLine(
         uint256 slot,
         bytes8  label,
+        bool    perp,
         address pool,
         uint256 duelId,
         uint8   fighterId,
@@ -448,6 +546,20 @@ library ArenaUtils {
         uint256 prev = prevMarkSnapshots[duelId][pool];
 
         bool holds = meta.minQuantity > 0 && bal.baseTokenAmount >= meta.minQuantity;
+
+        if (perp) {
+            // A price move, and which way this fighter is facing. Deliberately not a
+            // profit figure: that would be a digit in the prompt, and the whole
+            // decision path is kept digit-free because the inference agent extracts
+            // the first integer it finds and a fighter once sold a token it did not
+            // hold because of an echoed price.
+            int8 side = 0;
+            try IPerpDesk(pool).fighterSide(duelId, fighterId) returns (int8 s) { side = s; } catch {}
+            return string.concat(
+                labelText(label), " ", moveWord(cur, prev), ". You are ",
+                side > 0 ? "long this market." : (side < 0 ? "short this market." : "not in this market.")
+            );
+        }
 
         if (label != bytes8(0)) {
             return string.concat(

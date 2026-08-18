@@ -62,7 +62,19 @@ library ArenaTypes {
     ///         become the expensive leg — a smallest coin order costs about nine
     ///         cents against a third of a cent for a question — so the mix was
     ///         99% coin by cost. Nothing about a coin is traded there any more.
-    enum MarketKind { Spot, Practice, Events }
+    ///
+    ///         `Perps` fills all three slots with dreamDEX perpetual futures. It is
+    ///         the answer to the two problems the other real markets have: a perp
+    ///         position is MARGINED rather than bought, so a real asset costs a
+    ///         fraction of its face where a smallest Bitcoin purchase costs $64; and
+    ///         nothing ever expires, so none of the rebinding machinery a prediction
+    ///         window needs applies. Fighters may bet a market DOWN here, which no
+    ///         other market allows, and are scored on account equity rather than
+    ///         cash-plus-holdings.
+    ///
+    ///         Appended LAST and never reordered, for the same reason as the others:
+    ///         the value is stored in every past fight.
+    enum MarketKind { Spot, Practice, Events, Perps }
 
     // ─── Structs ─────────────────────────────────────────────────────────────
 
@@ -135,7 +147,15 @@ library ArenaTypes {
     error InvalidFighterPair();
     error ReactivityUnderfunded();
     error InvalidTurnCount();        // turns not in {3, 6, 9, 15}
-    error InvalidMarketKind();       // not one of Spot, Practice, Events
+    error InvalidMarketKind();       // not one of Spot, Practice, Events, Perps
+
+    /// @notice A perps fight was asked for before the desks were registered.
+    error PerpRegistryUnset();
+    /// @notice Fewer than three perp markets could be priced, were two-sided, and
+    ///         fit the tier's budget — so there is no three-slot fight to run.
+    ///         Reverting is deliberate: starting one anyway would give both fighters
+    ///         a dead slot they are offered and cannot trade.
+    error NotEnoughPerpMarkets(uint256 found);
     error DepositTooLow(uint256 required, uint256 provided);
     error NotDuelCreator();
     error DuelNotResolved();
@@ -240,4 +260,30 @@ library ArenaTypes {
     ///         on every registration because prediction windows are short-lived
     ///         and the current set is otherwise only visible by polling.
     event EventDesksSet(address weth, address wbtc, address somi);
+
+    // ─── Perps ───────────────────────────────────────────────────────────────
+
+    /// @notice The permanent perp desks and their account registry were wired.
+    ///         Emitted once in normal operation, unlike EventDesksSet — a perp market
+    ///         does not expire, so there is nothing to re-point.
+    event PerpDesksSet(address registry, address[] desks);
+
+    /// @notice Which three of the registered markets this fight was given, decided
+    ///         at duel start from what the tier's budget could actually afford.
+    ///         Recorded because the set is computed rather than configured, so it is
+    ///         otherwise unreconstructable after the fact — the effective margin
+    ///         factor that excluded a market will have moved on by then.
+    event PerpMarketsSelected(uint256 indexed duelId, address[3] desks, uint256 budget);
+
+    /// @notice A fighter was given its own trading address and funded.
+    event PerpAccountLeased(uint256 indexed duelId, uint8 indexed fighterId, address indexed account, uint256 budget);
+
+    /// @notice A fighter's positions were closed and its collateral taken back.
+    ///         `clean` false means the account could not be flattened and has been
+    ///         quarantined for retry — the fight still resolved.
+    event PerpAccountReleased(uint256 indexed duelId, uint8 indexed fighterId, uint256 reclaimed, bool clean);
+
+    /// @notice A fighter's score, read as account equity. Negative is possible and
+    ///         means the fighter was liquidated into a deficit; it counts as zero.
+    event PerpFighterScored(uint256 indexed duelId, uint8 indexed fighterId, int256 equity, bool live);
 }

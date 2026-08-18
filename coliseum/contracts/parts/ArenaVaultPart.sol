@@ -6,6 +6,7 @@ import "../lib/ArenaTypes.sol";
 import "../interfaces/ISpotPool.sol";
 import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/ISomniaReactivityPrecompile.sol";
+import "../interfaces/IPerps.sol";
 
 /// @title ArenaVaultPart
 /// @notice Everything that moves money in or out of Arena: seeding the pool
@@ -109,6 +110,98 @@ contract ArenaVaultPart is ArenaStorage {
         EVENT_POOL_SOMI = pools[2];
         eventPoolsSet = true;
         emit ArenaTypes.EventDesksSet(pools[0], pools[1], pools[2]);
+    }
+
+    // ─── Perp desks (owner-only) ──────────────────────────────────────────────
+
+    /// @notice Register the permanent perp desks and the registry that leases fighter
+    ///         accounts behind them.
+    ///
+    ///         Unlike `setEventDesks`, this is expected to be called ONCE. A
+    ///         prediction window opens at a fresh address every few minutes, which is
+    ///         why an event desk is re-pointed constantly; the six perp markets were
+    ///         deployed once and never expire. Re-calling it is still allowed — a desk
+    ///         can be redeployed, and cached trading rules can go stale — but a desk
+    ///         already registered is never un-registered, because a fight that started
+    ///         on it must keep working.
+    ///
+    /// @param desks_ every desk, in any order. There is no [WETH, WBTC, SOMI] slot
+    ///        meaning here: which three a fight gets is chosen per fight from what its
+    ///        budget affords, so the set registered is a MENU, not a lineup.
+    /// @param baseDecimals each market's base-asset decimals, supplied rather than
+    ///        read on chain because a perp's base asset is synthetic and has no token
+    ///        to ask. Derive them from the desk's own `oneBase()` — never a table.
+    /// @param labels the market's name in a few characters ("ETH"). This becomes part
+    ///        of the action the model answers with, so it is the difference between a
+    ///        fighter being offered `LongETH` and being offered nothing it recognises.
+    function setPerpDesks(
+        address          registry_,
+        address[] calldata desks_,
+        uint8[]   calldata baseDecimals,
+        bytes8[]  calldata labels
+    ) external onlyOwner {
+        if (registry_ == address(0)) revert ArenaTypes.InvalidPool(registry_);
+        if (desks_.length == 0 || desks_.length != baseDecimals.length || desks_.length != labels.length)
+            revert ArenaTypes.ZeroAmount();
+
+        // MOVING THE REGISTRY IS ONLY SAFE WHILE NOTHING IS RUNNING.
+        //
+        // A desk is bound to its registry at construction and cannot be re-pointed,
+        // but Arena's pointer can — and a running perps fight reads it twice more:
+        // once to score each fighter and once to close their positions. Swap it
+        // mid-fight and both reads go to a registry that has never heard of that
+        // duel: the fighters would score off stale snapshots and their collateral
+        // would sit in the old registry with nothing pointing at it. Adding desks to
+        // the SAME registry is always fine, which is the case that actually happens.
+        if (perpDesksSet && registry_ != perpRegistry && activeDuelIds.length != 0)
+            revert ArenaTypes.ArenaNotEmpty();
+        for (uint256 i = 0; i < desks_.length; i++) {
+            if (desks_[i] == address(0)) revert ArenaTypes.InvalidPool(desks_[i]);
+            // Before caching, so `_requireValidPool` already accepts the address and
+            // the ordering can never be the thing that breaks a re-registration.
+            poolIsPerp[desks_[i]] = true;
+            _cachePoolMeta(desks_[i], baseDecimals[i], labels[i]);
+        }
+        perpRegistry = registry_;
+        perpDesksSet = true;
+        emit ArenaTypes.PerpDesksSet(registry_, desks_);
+    }
+
+    /// @notice Lend USDso to the registry, which is what funds each fighter's margin.
+    ///
+    ///         This is the ONE structural difference from spot in how money moves. On
+    ///         spot the players' pot is the trading capital: it is seeded into the
+    ///         vaults and traded directly. On perps the pot stays escrowed and is
+    ///         returned in full — what the fighters actually risk is Arena's own seed,
+    ///         lent out at the start of each fight and reclaimed at the end. So a
+    ///         liquidation costs the house, never the players, which is the right way
+    ///         round: nobody should lose their stake because a model over-traded.
+    ///
+    ///         Tracked in `seedLiquidity` like every other owner seed, so it comes
+    ///         back out through `ownerWithdrawSeed` and can never be mistaken for
+    ///         depositor principal.
+    function fundPerpFloat(uint256 amount) external onlyOwner {
+        if (amount == 0) revert ArenaTypes.ZeroAmount();
+        if (!perpDesksSet) revert ArenaTypes.PerpRegistryUnset();
+        bool ok = IERC20Minimal(USDSO).transferFrom(msg.sender, address(this), amount);
+        if (!ok) revert ArenaTypes.TransferFailed();
+        ok = IERC20Minimal(USDSO).approve(perpRegistry, amount);
+        if (!ok) revert ArenaTypes.ApproveFailed();
+        IPerpRegistry(perpRegistry).fundFloat(amount);
+        seedLiquidity += amount;
+        emit ArenaTypes.PoolsFunded(amount, amount);
+    }
+
+    /// @notice Pull unlent collateral back from the registry into Arena's own balance,
+    ///         where `ownerWithdrawSeed` can pay it out. Two steps rather than one on
+    ///         purpose: the seed ceiling that stops a withdrawal touching depositor
+    ///         money lives in that function, and routing around it to save a call
+    ///         would route around the check as well.
+    function withdrawPerpFloat(uint256 amount) external onlyOwner {
+        if (amount == 0) revert ArenaTypes.ZeroAmount();
+        if (!perpDesksSet) revert ArenaTypes.PerpRegistryUnset();
+        IPerpRegistry(perpRegistry).releaseFloat(amount, address(this));
+        emit ArenaTypes.VaultWithdrawn(perpRegistry, USDSO, amount);
     }
 
     /// @notice Re-read the trading rules of pools Arena already knows, without

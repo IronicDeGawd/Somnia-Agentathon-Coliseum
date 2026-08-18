@@ -7,6 +7,7 @@ import "../lib/ArenaUtils.sol";
 import "../interfaces/IFighterRegistry.sol";
 import "../interfaces/ISpotPool.sol";
 import "../interfaces/ISomniaAgents.sol";
+import "../interfaces/IPerps.sol";
 
 /// @title ArenaTurnPart
 /// @notice A duel's middle: advancing turns, snapshotting prices, asking each
@@ -87,6 +88,28 @@ contract ArenaTurnPart is ArenaStorage {
                 emit ArenaTypes.MarkPriceSnapshot(duelId, pools[i], mp, turnNum);
             }
         }
+
+        // On a perps fight the score is not cash plus holdings, it is account equity —
+        // a live oracle read. So the score itself needs the same protection the mark
+        // prices above get: one reading per turn, taken while the market is known
+        // healthy, for finalize to fall back on if the oracle is stale at the moment
+        // the fight ends. Without it a stale feed at exactly the wrong block would
+        // score both fighters zero and turn a decided fight into a draw.
+        if (poolIsPerp[pools[0]]) {
+            _snapshotPerpEquity(duelId, duel.fighterA);
+            _snapshotPerpEquity(duelId, duel.fighterB);
+        }
+    }
+
+    /// @dev A failed read leaves the previous snapshot in place rather than
+    ///      overwriting it with a zero, because "we could not see it" and "it is
+    ///      gone" are very different claims about a fighter's money.
+    function _snapshotPerpEquity(uint256 duelId, uint8 fighterId) internal {
+        address reg = perpRegistry;
+        if (reg == address(0)) return;
+        try IPerpRegistry(reg).equityOf(duelId, fighterId) returns (bool ok, int256 equity) {
+            if (ok) perpEquitySnapshots[duelId][fighterId] = equity > 0 ? uint256(equity) : 0;
+        } catch {}
     }
 
     // ─── LLM request / response ───────────────────────────────────────────────
@@ -102,7 +125,7 @@ contract ArenaTurnPart is ArenaStorage {
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2],
             fighterBalances, poolMeta,
-            duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel
+            duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel, poolIsPerp
         );
         // Ask by NAME, constrained to the actions this fighter can execute.
         //
@@ -118,8 +141,8 @@ contract ArenaTurnPart is ArenaStorage {
         string[] memory allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2],
-            fighterBalances, poolMeta
-        ), ArenaUtils.vocabFor(mPools, poolLabel));
+            fighterBalances, poolMeta, poolIsPerp
+        ), ArenaUtils.vocabFor(mPools, poolLabel, poolIsPerp));
         bytes memory payload = abi.encodeWithSelector(
             ILLMInferenceAgent.inferString.selector,
             marketSummary,
@@ -185,12 +208,12 @@ contract ArenaTurnPart is ArenaStorage {
         uint8[] memory legal = ArenaUtils.legalActions(
             pt.duelId, pt.fighterId, duels[pt.duelId],
             cPools[0], cPools[1], cPools[2],
-            fighterBalances, poolMeta
+            fighterBalances, poolMeta, poolIsPerp
         );
 
         (bool decoded, string memory answer) = ArenaUtils.decodeStringResult(responses[0].result);
         (bool inSet, uint8 chosen) = decoded
-            ? ArenaUtils.matchAction(legal, answer, ArenaUtils.vocabFor(cPools, poolLabel))
+            ? ArenaUtils.matchAction(legal, answer, ArenaUtils.vocabFor(cPools, poolLabel, poolIsPerp))
             : (false, uint8(ArenaTypes.FighterAction.Hold));
 
         // An answer outside the executable set must not burn the turn. The player
@@ -290,8 +313,24 @@ contract ArenaTurnPart is ArenaStorage {
         ArenaTypes.PoolBalance storage bal    = fighterBalances[pool][duelId][fighterId];
         uint256 baseUnit = 10 ** uint256(meta.baseDecimals);
         uint256 desired;
+        bool    isPerp = poolIsPerp[pool];
 
-        if (isBid) {
+        if (isPerp) {
+            // ONE smallest position, either direction, every time.
+            //
+            // Both of the balance gates below are meaningless here and would be
+            // actively wrong. A perps fighter's spending power is not a quote balance
+            // in a vault — it is margin health held by the protocol, which is already
+            // what decided whether this action was offered at all (see
+            // `perpTradability`). And a sell does not need a holding to sell: that is
+            // the entire point of this market, and reading `bal.baseTokenAmount` here
+            // would refuse every short.
+            //
+            // Fixed size rather than "as much as it can afford" so the fight stays
+            // legible: every move is one step in a direction, and a fighter cannot
+            // put its whole budget on one turn and have nothing left to play with.
+            desired = meta.minQuantity;
+        } else if (isBid) {
             if (bal.quoteTokenAmount == 0) {
                 _reject(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
@@ -327,8 +366,22 @@ contract ArenaTurnPart is ArenaStorage {
                 : (price / meta.tickSize) * meta.tickSize;
         }
 
-        (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600);
-        if (ok) {
+        // The fighter's identity rides on `userData`, which Arena hard-coded to zero
+        // until now. A perp desk needs it because all six desks converge on ONE
+        // account per fighter, so the desk cannot work out whose order this is from
+        // its own address. Left at zero for spot and events, where nothing reads it
+        // and a change would be a change for its own sake.
+        uint64 userData = isPerp ? uint64((duelId << 8) | uint256(fighterId)) : 0;
+
+        (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600, userData);
+
+        // A perps position is held by the protocol, against the fighter's own
+        // address, and scored as account equity at the end. Mirroring it into the
+        // virtual ledger would be keeping a second set of books that can only
+        // disagree with the first — and the quote side of that ledger is what
+        // `recoverFunds` pays the creator from, so writing to it here would quietly
+        // change what the players get back.
+        if (ok && !isPerp) {
             uint256 quoteCost = (price * quantity) / baseUnit;
             if (isBid) {
                 if (quoteCost > bal.quoteTokenAmount) quoteCost = bal.quoteTokenAmount;
@@ -350,7 +403,8 @@ contract ArenaTurnPart is ArenaStorage {
         uint256 price,
         uint256 quantity,
         uint8   orderType,
-        uint64  expireOffsetSec
+        uint64  expireOffsetSec,
+        uint64  userData
     ) internal returns (bool ok, uint128 orderId) {
         _requireValidPool(pool);
         if (expireOffsetSec == 0 || expireOffsetSec > MAX_EXPIRE_OFFSET_SEC) revert ArenaTypes.InvalidExpiry();
@@ -358,7 +412,7 @@ contract ArenaTurnPart is ArenaStorage {
 
         uint64 expireTimestampNs = (uint64(block.timestamp) + expireOffsetSec) * 1_000_000_000;
 
-        try ISpotPool(pool).placeOrder(isBid, 0, price, quantity, expireTimestampNs, orderType, 0, address(0), 0)
+        try ISpotPool(pool).placeOrder(isBid, userData, price, quantity, expireTimestampNs, orderType, 0, address(0), 0)
             returns (bool success, uint128 returnedId)
         {
             if (!success) {
