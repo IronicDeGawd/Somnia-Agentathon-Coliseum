@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { usePublicClient } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { CONTRACT_ADDRESSES, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, actionLabels, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import type { SlotKind } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 
 const FIGHTER_MOVE_EVENT = parseAbiItem(
@@ -34,10 +35,19 @@ export function useDuelTranscript(
   startBlock?: bigint,
   turns?: number,
   lastTurnBlock?: bigint,
+  /**
+   * What the fight's three slots hold, from `useDuelSlots`. Without it a move is
+   * named after the coin book that slot would hold on a spot fight — which is the
+   * wrong market's name on an events or perps fight, not merely a vaguer one.
+   */
+  slots?: SlotKind[],
 ): { entries: TranscriptEntry[]; isLoading: boolean } {
   const publicClient = usePublicClient();
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [isLoading, setLoading] = useState(true);
+
+  const labels = actionLabels(slots);
+  const labelKey = labels.join('|');
 
   useEffect(() => {
     if (!publicClient || duelId <= BigInt(0)) return;
@@ -57,7 +67,7 @@ export function useDuelTranscript(
           block: m.blockNumber ?? BigInt(0),
           logIndex: m.logIndex ?? 0,
           fighterId: Number(m.args.fighterId),
-          action: FIGHTER_ACTIONS[Number(m.args.action)] ?? 'HOLD',
+          action: labels[Number(m.args.action)] ?? 'HOLD',
           reason: null as string | null,
           failed: false,
         })),
@@ -85,7 +95,11 @@ export function useDuelTranscript(
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [publicClient, duelId, startBlock, turns, lastTurnBlock]);
+  // labelKey rather than `labels`: a fresh array every render would re-run this on
+  // every paint, and the join changes exactly when a name actually changes — which
+  // is when the slot reads land and the transcript must be relabelled.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicClient, duelId, startBlock, turns, lastTurnBlock, labelKey]);
 
   return { entries, isLoading };
 }

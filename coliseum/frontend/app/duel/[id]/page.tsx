@@ -652,15 +652,23 @@ export default function ArenaPage() {
             <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
               {markets.map((m) => (
                 <div key={m.poolKey} className="col gap-2" style={{ flexShrink: 0 }}>
-                  {/* A question slot is a probability, not a price: no currency
-                      symbol and no traded-pair suffix, or 0.845 reads as 84 cents
-                      of WETH when it means an 84% chance. */}
-                  <span className="label-tiny">{m.isQuestion ? m.poolKey : `${m.poolKey}/USDso`}</span>
+                  {/* Three kinds of slot, three ways to read the number. A question
+                      is a probability: no currency symbol and no pair suffix, or
+                      0.845 reads as 84 cents of WETH when it means an 84% chance. A
+                      perpetual carries a label like a question does but quotes a
+                      PRICE, so the same treatment would print Bitcoin as
+                      6,400,000%. A coin book is an ordinary traded pair. */}
+                  <span className="label-tiny">
+                    {m.isPerp ? `${m.poolKey}-PERP` : m.isQuestion ? m.poolKey : `${m.poolKey}/USDso`}
+                  </span>
                   <span className="t-num" style={{ fontSize: 18 }}>
                     {m.markPrice > BigInt(0)
                       ? (m.isQuestion
                           ? `${(m.markPriceNum * 100).toFixed(1)}%`
-                          : `$${m.markPriceNum.toFixed(4)}`)
+                          : `$${m.markPriceNum.toLocaleString('en-US', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: m.markPriceNum < 10 ? 4 : 2,
+                            })}`)
                       : '—'}
                   </span>
                 </div>

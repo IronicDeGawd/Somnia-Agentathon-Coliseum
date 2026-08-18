@@ -128,6 +128,12 @@ export const POOL_SLOTS = [
  * live prediction questions instead, which brings the same fight under two.
  * Both are offered; neither replaced the other.
  *
+ * Perps trades real assets on margin, so a nine-round fight costs about 13 USDso
+ * rather than 150 — a position is posted against, not bought outright. It is
+ * also the only market where a fighter can bet an asset DOWN, and the only one
+ * whose three assets are not fixed: which of the six a fight gets is decided at
+ * the moment it starts, from what its budget can post margin for right then.
+ *
  * The numbering is on-chain and stored in every past fight — never reorder it.
  * `Events` was called `Mixed` while it still kept the SOMI coin book in one
  * slot; the coin was dropped because it had become the expensive one.
@@ -136,6 +142,7 @@ export enum MarketKind {
   Spot = 0,
   Practice = 1,
   Events = 2,
+  Perps = 3,
 }
 
 /**
@@ -153,13 +160,17 @@ export enum MarketKind {
  */
 export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
   { turns: 3,  market: MarketKind.Events },
+  { turns: 3,  market: MarketKind.Perps },
   { turns: 3,  market: MarketKind.Spot },
   { turns: 6,  market: MarketKind.Events },
+  { turns: 6,  market: MarketKind.Perps },
   ...(SIM_MARKET_ENABLED ? [{ turns: 6, market: MarketKind.Practice }] : []),
   { turns: 9,  market: MarketKind.Events },
+  { turns: 9,  market: MarketKind.Perps },
   { turns: 9,  market: MarketKind.Spot },
   ...(SIM_MARKET_ENABLED ? [{ turns: 9, market: MarketKind.Practice }] : []),
   { turns: 15, market: MarketKind.Events },
+  { turns: 15, market: MarketKind.Perps },
   { turns: 15, market: MarketKind.Spot },
 ];
 
@@ -167,12 +178,75 @@ export const MARKET_LABEL: Record<MarketKind, string> = {
   [MarketKind.Spot]: 'SPOT',
   [MarketKind.Practice]: 'PRACTICE',
   [MarketKind.Events]: 'EVENTS',
+  [MarketKind.Perps]: 'PERPS',
 };
 
-/** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
+/**
+ * FighterAction enum (0..6) → label, for a fight on the plain coin books.
+ *
+ * ONLY correct on a spot or practice fight. The same six ids mean different
+ * things depending on what a fight's three slots hold, so anything showing a
+ * real fight's moves must use `actionLabels` below instead. Kept for the one
+ * place that has no duel in hand: a fight whose markets have not loaded yet.
+ */
 export const FIGHTER_ACTIONS = [
   'HOLD', 'BUY WBTC', 'SELL WBTC', 'BUY WETH', 'SELL WETH', 'BUY SOMI', 'SELL SOMI',
 ] as const;
+
+/** A slot's on-chain label ("BTCUP", "BTC"), or null for a plain coin book. */
+export function slotLabel(raw?: `0x${string}`): string | null {
+  if (!raw || /^0x0+$/.test(raw)) return null;
+  let out = '';
+  for (let i = 2; i < raw.length; i += 2) {
+    const code = parseInt(raw.slice(i, i + 2), 16);
+    if (code === 0) break;
+    out += String.fromCharCode(code);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** What one of a fight's three slots holds, in the [WETH, WBTC, SOMI] order Arena stores. */
+export interface SlotKind {
+  /** The slot's on-chain label, or null for a plain coin book. */
+  label: string | null;
+  /** True when the slot is a perpetual futures market. */
+  isPerp: boolean;
+}
+
+/**
+ * The seven action labels for ONE fight, derived from what its slots actually hold.
+ *
+ * Six ids, two per slot, and what each pair means depends entirely on the market:
+ * buy and sell on a coin book, back and drop on a prediction question, long and
+ * short on a perpetual. A flat table cannot be right for all three, and the cost
+ * of getting it wrong is not cosmetic — a fighter that went short Bitcoin would be
+ * shown as having bought Ethereum.
+ *
+ * Mirrors `ArenaUtils.actionName`, including its slot order, which is NOT
+ * sequential: ids 1 and 2 are slot 1, ids 3 and 4 are slot 0, ids 5 and 6 are
+ * slot 2. Odd ids are the upward direction.
+ */
+export function actionLabels(slots: readonly SlotKind[] | undefined): string[] {
+  const out = ['HOLD'];
+  for (let id = 1; id <= 6; id++) {
+    const slotIndex = id <= 2 ? 1 : id <= 4 ? 0 : 2;
+    const up = id % 2 === 1;
+    const slot = slots?.[slotIndex];
+    if (!slot) {
+      out.push(FIGHTER_ACTIONS[id]);
+      continue;
+    }
+    if (slot.isPerp && slot.label) {
+      out.push(`${up ? 'LONG' : 'SHORT'} ${slot.label}`);
+    } else if (slot.label) {
+      out.push(`${up ? 'BACK' : 'DROP'} ${slot.label}`);
+    } else {
+      const asset = slotIndex === 0 ? 'WETH' : slotIndex === 1 ? 'WBTC' : 'SOMI';
+      out.push(`${up ? 'BUY' : 'SELL'} ${asset}`);
+    }
+  }
+  return out;
+}
 
 export enum DuelStatus {
   None = 0,
@@ -242,6 +316,20 @@ export const ABIS = {
     'function EVENT_POOL_WBTC() view returns (address)',
     'function EVENT_POOL_SOMI() view returns (address)',
     'function poolQuestion(address pool) view returns (bytes8)',
+    // Perps. A perps slot carries a LABEL like a question does, but its number is
+    // a price and not a probability — so a slot's label alone cannot say how to
+    // render it, and this is the read that separates the two.
+    'function isPerpPool(address pool) view returns (bool)',
+    'function perpStatus() view returns (bool ready, address registry)',
+    // Which three of the six perp markets a tier would be offered right now. Not a
+    // fixed set: the margin a market costs scales with its open interest, so a
+    // market drops out of the cheap tiers by itself and walks back in later.
+    'function perpMarketsFor(uint16 turns) view returns (address[3])',
+    'function perpBudgetFor(uint16 turns) view returns (uint256)',
+    // `live` false means the oracle could not be read just now, and `snapshot` is
+    // what a finalize at this moment would score instead. Both come back so a
+    // client can tell a genuinely flat fighter from an unreadable market.
+    'function perpPositionOf(uint256 duelId, uint8 fighterId) view returns (bool live, int256 equity, uint256 snapshot, address account, uint8 marginStatus)',
     // The three markets a fight is actually bound to, [WETH, WBTC, SOMI].
     // Recorded per duel at startDuel. There is no way to infer this: `simulated`
     // is two-valued (practice or not), so a spot fight and an events fight both

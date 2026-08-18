@@ -2,7 +2,7 @@
 
 import { useReadContracts } from 'wagmi';
 import { type Address } from 'viem';
-import { CONTRACT_ADDRESSES, ABIS } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES, ABIS, slotLabel } from '@/lib/contracts';
 import { config } from '@/lib/chain';
 
 const ARENA = CONTRACT_ADDRESSES.Arena as Address;
@@ -47,13 +47,5 @@ export function useEventQuestions(): { questions: string[]; isLoading: boolean }
 
 /** bytes8 of ASCII, zero-padded on the right. */
 function decodeLabel(raw: `0x${string}`): string {
-  if (!raw || raw === '0x0000000000000000') return '';
-  const hex = raw.slice(2);
-  let out = '';
-  for (let i = 0; i < hex.length; i += 2) {
-    const code = parseInt(hex.slice(i, i + 2), 16);
-    if (code === 0) break;
-    out += String.fromCharCode(code);
-  }
-  return out;
+  return slotLabel(raw) ?? '';
 }

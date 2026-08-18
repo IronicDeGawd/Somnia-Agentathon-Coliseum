@@ -8,6 +8,7 @@ import { useQueue } from '@/hooks/useQueue';
 import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useQueueState, queueKey } from '@/hooks/useQueueState';
 import { useEventQuestions } from '@/hooks/useEventQuestions';
+import { usePerpMarkets } from '@/hooks/usePerpMarkets';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, SIM_MARKET_ENABLED } from '@/lib/contracts';
 import { getWsClient } from '@/lib/wsClient';
@@ -38,6 +39,12 @@ const MARKET_CHOICES: ReadonlyArray<{
     hint: 'Three live prediction questions. Cheap at every length — even the longest fight costs about a USDso.',
   },
   {
+    kind: MarketKind.Perps,
+    label: '◇ PERPS',
+    accent: '#f472b6',
+    hint: 'Real assets on margin, so a fighter can bet one DOWN as well as up. A position is posted against rather than bought, which makes a long fight cost about a tenth of what spot does.',
+  },
+  {
     kind: MarketKind.Spot,
     label: '⚡ SPOT',
     accent: '#5eead4',
@@ -56,9 +63,18 @@ const MARKET_CHOICES: ReadonlyArray<{
 /// Events trades every question at every length, so this does not vary by tier.
 /// The names come from the chain — the desks are re-pointed at fresh questions
 /// between fights, so anything written in here would go stale within the hour.
-function poolsFor(turns: number, market: MarketKind, questions: string[]): string[] {
-  if (market !== MarketKind.Events) return TIER_POOLS[turns];
-  return questions.length ? questions : ['live questions'];
+function poolsFor(
+  turns: number,
+  market: MarketKind,
+  questions: string[],
+  perpMarkets: string[],
+): string[] {
+  if (market === MarketKind.Events) return questions.length ? questions : ['live questions'];
+  // Perps picks its three from six at the moment a fight starts, sized to what the
+  // budget can post margin for right then. So this is read from the chain per
+  // tier, and two fights at the same length can legitimately differ.
+  if (market === MarketKind.Perps) return perpMarkets.length ? perpMarkets : ['selected at start'];
+  return TIER_POOLS[turns];
 }
 
 /** Round counts the lobby offers on a given market. */
@@ -116,6 +132,8 @@ function QueueInner({
 
   const { slots, isLoading: slotLoading, refetch: refetchSlots } = useQueueState();
   const { questions: eventQuestions } = useEventQuestions();
+  const { offers: perpOffers } = usePerpMarkets();
+  const perpFor = (t: number) => perpOffers.find((o) => o.turns === t)?.markets ?? [];
 
   const { isConnected, address } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -306,7 +324,7 @@ function QueueInner({
             {fighterRoster?.name ?? `FIGHTER ${fighter}`}
           </div>
           <div className="t-sm t-dim">
-            {turns}-round tier · {poolsFor(turns, market, eventQuestions).join(' + ')}
+            {turns}-round tier · {poolsFor(turns, market, eventQuestions, perpFor(turns)).join(' + ')}
           </div>
 
           {/* Animated pulse indicator */}
@@ -486,7 +504,7 @@ function QueueInner({
         >
           {tiersFor(market).map((t) => {
             const selected = turns === t;
-            const pools = poolsFor(t, market, eventQuestions);
+            const pools = poolsFor(t, market, eventQuestions, perpFor(t));
             return (
               <button
                 key={t}

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient, useReadContracts } from 'wagmi';
 import { parseAbiItem, formatUnits } from 'viem';
-import { ABIS, CONTRACT_ADDRESSES, POOL_SLOTS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { ABIS, CONTRACT_ADDRESSES, POOL_SLOTS, actionLabels, slotLabel, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import type { SlotKind } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { getWsClient } from '@/lib/wsClient';
 import type { DuelData } from '@/hooks/useDuelState';
@@ -39,6 +40,12 @@ export interface PoolMarket {
    * not be shown with a currency symbol or a "/USDso" pair suffix.
    */
   isQuestion: boolean;
+  /**
+   * True when this slot is a perpetual futures market. It carries a label like a
+   * question does, but its number is a PRICE — so the two cannot be told apart by
+   * the label alone.
+   */
+  isPerp: boolean;
 }
 
 export interface DuelLiveResult {
@@ -80,20 +87,8 @@ const EMPTY_RESULT: DuelLiveResult = {
   isLoading: false,
 };
 
-/**
- * A slot's question, as a few characters ("BTCUP"), or null for a plain coin book.
- * Stored as 8 raw bytes on-chain and right-padded with zeros.
- */
-function questionLabel(raw?: `0x${string}`): string | null {
-  if (!raw || raw === '0x0000000000000000') return null;
-  let out = '';
-  for (let i = 2; i < raw.length; i += 2) {
-    const code = parseInt(raw.slice(i, i + 2), 16);
-    if (code === 0) break;
-    out += String.fromCharCode(code);
-  }
-  return out.length > 0 ? out : null;
-}
+/** A slot's label ("BTCUP", "BTC"), or null for a plain coin book. */
+const questionLabel = slotLabel;
 
 function bigintToNum(v: bigint, decimals: number): number {
   return Number(formatUnits(v, decimals));
@@ -107,14 +102,17 @@ function bigintToNum(v: bigint, decimals: number): number {
 // restored seen-keys so nothing is double-counted. Bump the version on shape change.
 interface LiveCache {
   markPrices: [string, { price: string; history: number[] }][];
-  lastActions: [number, string][];
+  lastActions: [number, number][];
   thinking: [number, boolean][];
   seenMarkPrices: string[];
   seenMoves: string[];
   seenRequests: string[];
 }
 
-const liveCacheKey = (duelId: bigint) => `coliseum:duellive:v1:${duelId.toString()}`;
+// v2 stores action IDs rather than labels. What an id MEANS depends on which
+// markets the fight is on, and those are not known at the moment a move arrives —
+// so a label baked in at ingest could be wrong and then cached as wrong.
+const liveCacheKey = (duelId: bigint) => `coliseum:duellive:v2:${duelId.toString()}`;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -137,7 +135,7 @@ export function useDuelLive(
 
   // ── Last action state per fighter (registry index) ─────────────────────────
   // keyed by fighterId (registry index)
-  const [lastActions, setLastActions] = useState<Map<number, string>>(new Map());
+  const [lastActions, setLastActions] = useState<Map<number, number>>(new Map());
 
   // ── Thinking state: fighterId → bool ──────────────────────────────────────
   const [thinking, setThinking] = useState<Map<number, boolean>>(new Map());
@@ -235,8 +233,10 @@ export function useDuelLive(
         seenMoves.current.add(key);
         const fid = args.fighterId ?? -1;
         const action = args.action ?? 0;
-        const actionLabel = FIGHTER_ACTIONS[action] ?? 'HOLD';
-        setLastActions((prev) => new Map(prev).set(fid, actionLabel));
+        // The ID, not a label. Which market each id refers to is only known once
+        // the fight's three slots have been read, and that read may not have
+        // returned yet — see `slotKinds` below.
+        setLastActions((prev) => new Map(prev).set(fid, action));
         // Once a FighterMove arrives, thinking is done for that fighter
         setThinking((prev) => new Map(prev).set(fid, false));
       }
@@ -378,6 +378,16 @@ export function useDuelLive(
         functionName: 'poolQuestion' as const,
         args: [addr] as [`0x${string}`],
       },
+      {
+        // A perps slot ALSO carries a label ("BTC"), so the label alone no longer
+        // says how to read the number behind it. A question's number is a chance
+        // between zero and one; a perp's is a price in the tens of thousands. Ask
+        // outright, or Bitcoin at $64,000 renders as 6,400,000%.
+        address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+        abi: ABIS.Arena,
+        functionName: 'isPerpPool' as const,
+        args: [addr] as [`0x${string}`],
+      },
     ]),
     query: { enabled: !!duelPools },
   });
@@ -388,12 +398,15 @@ export function useDuelLive(
         if ((duel.poolMask & slot.bit) === 0) return [];
         const address = duelPools[i];
         if (!address || /^0x0+$/.test(address)) return [];
-        const meta = metaReads?.[i * 2]?.result as readonly [number, bigint, bigint, bigint] | undefined;
-        const question = metaReads?.[i * 2 + 1]?.result as `0x${string}` | undefined;
+        const meta = metaReads?.[i * 3]?.result as readonly [number, bigint, bigint, bigint] | undefined;
+        const question = metaReads?.[i * 3 + 1]?.result as `0x${string}` | undefined;
+        const isPerp = metaReads?.[i * 3 + 2]?.result === true;
         const label = questionLabel(question);
         return [{
           key: label ?? (slot.key as string),
-          isQuestion: label !== null,
+          // A perps slot has a label but quotes a price, so it is NOT a question.
+          isQuestion: label !== null && !isPerp,
+          isPerp,
           bit: slot.bit as number,
           address,
           // Fall back to 18 only while the read is in flight; every registered pool
@@ -401,6 +414,23 @@ export function useDuelLive(
           decimals: meta ? Number(meta[0]) : 18,
         }];
       });
+
+  // ── What each of the three slots holds ────────────────────────────────────
+  // Kept in slot order and NOT filtered by the mask, because the action ids are
+  // numbered against slots rather than against the markets a fight happens to use.
+  const slotKinds: SlotKind[] | undefined = duelPools && metaReads
+    ? POOL_SLOTS.map((_, i) => ({
+        label: questionLabel(metaReads[i * 3 + 1]?.result as `0x${string}` | undefined),
+        isPerp: metaReads[i * 3 + 2]?.result === true,
+      }))
+    : undefined;
+
+  // Six ids, two per slot, and what a pair MEANS depends on the market behind it:
+  // buy and sell on a coin book, back and drop on a question, long and short on a
+  // perpetual. Undefined until the slots are read, so a move reads by its
+  // spot-book name for a moment rather than by the wrong market's name forever.
+  const moveLabels = actionLabels(slotKinds);
+  const labelOf = (id?: number) => (id === undefined ? '' : moveLabels[id] ?? 'HOLD');
 
   // ── Read fighterBalances for each active pool × 2 fighters ────────────────
   // Build batched contract reads: [poolA×fighterA, poolA×fighterB, poolB×fighterA, …]
@@ -488,6 +518,7 @@ export function useDuelLive(
       markPriceNum: bigintToNum(price, 18),
       history: entry?.history ?? [],
       isQuestion: pool.isQuestion,
+      isPerp: pool.isPerp,
     };
   });
 
@@ -504,7 +535,7 @@ export function useDuelLive(
     pnl: pnlA,
     pnlNum: Number(formatUnits(pnlA, 18)),
     holdings: holdingsA,
-    lastAction: lastActions.get(fighterAIndex) ?? '',
+    lastAction: labelOf(lastActions.get(fighterAIndex)),
     thinking: duelOver ? false : (thinking.get(fighterAIndex) ?? false),
   };
 
@@ -513,7 +544,7 @@ export function useDuelLive(
     pnl: pnlB,
     pnlNum: Number(formatUnits(pnlB, 18)),
     holdings: holdingsB,
-    lastAction: lastActions.get(fighterBIndex) ?? '',
+    lastAction: labelOf(lastActions.get(fighterBIndex)),
     thinking: duelOver ? false : (thinking.get(fighterBIndex) ?? false),
   };
 
