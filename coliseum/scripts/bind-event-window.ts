@@ -15,11 +15,13 @@
 //
 // Env:
 //   MIN_LIFE_SEC — window must outlive this, in seconds (default 1200).
-//   INTERVALS    — acceptable window lengths in minutes (default "60,240").
+//   INTERVALS    — preferred window lengths in minutes (default "60,240").
 //                  Among these, the window priced NEAREST EVEN MONEY wins — see
 //                  the note on pickWindow for why that beats picking by length.
 //   INTERVALS    — see above; three DISTINCT questions are bound, so at least
 //                  three (asset, window-length) pairs must be available.
+//   FALLBACK_INTERVALS — lengths used only to fill slots the preferred lengths
+//                  could not (default "1440"). Set empty to refuse the reserve.
 //   FUND_EACH    — collateral per desk, whole tokens; default from the manifest.
 //   RELEASE      — set to 1 to mark every desk free and exit, without binding.
 //   FORCE        — set to 1 to rebind even while the current questions are
@@ -121,11 +123,25 @@ async function main() {
   // ── pick the windows ──────────────────────────────────────────────────────
   const minLife = Number(process.env.MIN_LIFE_SEC ?? 1200);
   const intervals = (process.env.INTERVALS ?? "60,240").split(",").map((s) => Number(s.trim()) * 60);
+  // Lengths accepted only to fill a slot the preferred lengths could not.
+  //
+  // Measured over eleven hours of this venue: it publishes BTC and ETH and
+  // nothing else, and three quarters of everything it makes is a fifteen-minute
+  // question, which can never be used — a long fight would outlive it. That
+  // leaves hourly and four-hourly as the whole usable supply: four
+  // (asset, length) pairs for three slots, which is how the market ran dry.
+  //
+  // A daily question fixes the supply and costs some drama: over the fifteen
+  // minutes of a fight, a question with a day to run barely moves. So it is a
+  // reserve, not an equal — reached for only when the lively lengths cannot fill
+  // three slots, and even then the nearest-even-money rule still decides which.
+  const fallbackIntervals = (process.env.FALLBACK_INTERVALS ?? "1440")
+    .split(",").filter(Boolean).map((s) => Number(s.trim()) * 60);
   const now = Math.floor(Date.now() / 1000);
 
-  const live = (await scanWindows(pub)).filter(
-    (w) => w.expiry > now + minLife && intervals.includes(w.intervalSec),
-  );
+  const alive = (await scanWindows(pub)).filter((w) => w.expiry > now + minLife);
+  const live = alive.filter((w) => intervals.includes(w.intervalSec));
+  const reserve = alive.filter((w) => fallbackIntervals.includes(w.intervalSec));
 
   /**
    * Choose the window priced NEAREST EVEN MONEY.
@@ -144,19 +160,34 @@ async function main() {
   // Score every candidate once, then take the three most uncertain, never
   // repeating an (asset, window-length) pair — three copies of the same question
   // would give a fighter three ways to say the same thing.
-  const priced = await Promise.all(
-    live.map(async (w) => ({ w, mid: await midPrice(pub, w.pool) })),
-  );
-  priced.sort((a, b) => distanceFromEven(a.mid) - distanceFromEven(b.mid));
+  const score = async (ws: Window[]) => {
+    const out = await Promise.all(ws.map(async (w) => ({ w, mid: await midPrice(pub, w.pool) })));
+    return out.sort((a, b) => distanceFromEven(a.mid) - distanceFromEven(b.mid));
+  };
 
   const chosen: { w: Window; mid: number | null; label: string }[] = [];
   const takenPairs = new Set<string>();
-  for (const cand of priced) {
-    const pair = `${cand.w.asset.toUpperCase()}:${cand.w.intervalSec}`;
-    if (takenPairs.has(pair)) continue;
-    takenPairs.add(pair);
-    chosen.push({ ...cand, label: "" });
-    if (chosen.length === 3) break;
+  const take = (cands: { w: Window; mid: number | null }[]) => {
+    for (const cand of cands) {
+      if (chosen.length === 3) return;
+      const pair = `${cand.w.asset.toUpperCase()}:${cand.w.intervalSec}`;
+      if (takenPairs.has(pair)) continue;
+      takenPairs.add(pair);
+      chosen.push({ ...cand, label: "" });
+    }
+  };
+
+  take(await score(live));
+  if (chosen.length < 3 && reserve.length) {
+    const shortBy = 3 - chosen.length;
+    take(await score(reserve));
+    const used = chosen.length - (3 - shortBy);
+    if (used > 0) {
+      console.log(
+        `only ${3 - shortBy} lively question(s) available — filled ${used} slot(s) from the ` +
+        `longer-dated reserve, whose odds move less during a fight`,
+      );
+    }
   }
   if (chosen.length < 3) {
     const msg =
@@ -198,11 +229,56 @@ async function main() {
     );
   }
 
-  // ── claim three idle desks ────────────────────────────────────────────────
-  const free: typeof desks = [];
-  for (const desk of desks) if (!(await desk.read.inUse())) free.push(desk);
+  // ── gather three desks: re-point the ones already in the Arena's slots ────
+  //
+  // The desks the Arena currently points at are exactly the ones whose questions
+  // are being replaced, so they are the right ones to reuse. Taking a fresh trio
+  // instead leaks desks: the old three stay claimed until their old windows
+  // expire on their own, so a six-desk pool drains in two rebinds and the market
+  // sits with a dead slot until the leftovers time out. That is what happened —
+  // five of six desks held, one spare, and a slot that could not be refilled.
+  //
+  // A desk claimed but NOT in a slot is such a leftover. Since nothing is running
+  // (checked at the top), hand it straight back rather than waiting it out.
+  const registered = new Set<string>();
+  for (const fn of ["EVENT_POOL_WETH", "EVENT_POOL_WBTC", "EVENT_POOL_SOMI"] as const) {
+    try {
+      const a = (await (arena.read as Record<string, () => Promise<unknown>>)[fn]()) as string;
+      if (a && a !== "0x0000000000000000000000000000000000000000") registered.add(a.toLowerCase());
+    } catch { /* slots not registered yet */ }
+  }
+
+  const reusable: typeof desks = [];
+  const idle: typeof desks = [];
+  for (const desk of desks) {
+    const inSlot = registered.has(desk.address.toLowerCase());
+    const claimed = (await desk.read.inUse()) as boolean;
+    if (inSlot) { reusable.push(desk); continue; }
+    if (!claimed) { idle.push(desk); continue; }
+    const hash = await desk.write.setInUse([false]);
+    await pub.waitForTransactionReceipt({ hash });
+    idle.push(desk);
+    console.log(`handed back ${desk.address} — claimed but not in a slot`);
+  }
+
+  // Reuse first, then spares. A reused desk is already claimed; setInUse(true)
+  // below is idempotent, so the binding path does not need to know the difference.
+  const free: typeof desks = [...reusable, ...idle];
   if (free.length < 3) {
-    throw new Error(`only ${free.length} idle desk(s); a finished fight has not released its desks. Run with RELEASE=1.`);
+    const msg =
+      `only ${free.length} idle desk(s); the desks holding the last questions have not been ` +
+      `handed back yet. Run with RELEASE=1 to force it.`;
+    // Ordinary sequencing, not a fault: the watcher hands a desk back once its
+    // own window has expired, and this runs on its own schedule, so it can
+    // easily arrive in the seconds before that happens. The next run finds them
+    // free. Fail loudly only when nothing is standing to fall back on.
+    const stillStanding = ((ev.bound ?? []) as { expiry: number }[])
+      .filter((b) => b.expiry > Math.floor(Date.now() / 1000)).length;
+    if (stillStanding > 0) {
+      console.log(`${msg}\nWaiting for the referee — ${stillStanding} slot(s) still open meanwhile.`);
+      return;
+    }
+    throw new Error(msg);
   }
 
   const fundEach = BigInt(process.env.FUND_EACH ?? "0") * 10n ** 6n || BigInt(ev.fundEach ?? "50000000");
@@ -210,6 +286,15 @@ async function main() {
 
   for (const c of chosen) {
     const desk = free.shift()!;
+
+    // A claimed desk refuses to be re-pointed — that guard is what stops a desk
+    // moving under a live fight. Nothing is running (checked at the top), so a
+    // desk being reused is released for the moment it takes to re-point it, then
+    // claimed again below.
+    if ((await desk.read.inUse()) as boolean) {
+      const rel = await desk.write.setInUse([false]);
+      await pub.waitForTransactionReceipt({ hash: rel });
+    }
 
     // bind() retreats from any previous window first, collecting winnings and
     // pulling collateral back, so nothing is stranded in a pool nobody watches.
