@@ -503,6 +503,36 @@ describe("Bookmaker", function () {
       expect(await bookmaker.read.armedForBlock()).to.equal(0n);
     });
 
+    it("settling an OLD duel does not kill the open line's tick", async function () {
+      const { bookmaker, mockArena } = await deployWithInterval();
+      await bookmaker.write.resubscribe();
+
+      // Duel 1 is over and unsettled; duel 2 is the fight now running with a line
+      // open. This is the ordinary state of a freshly deployed Bookmaker: the keeper
+      // walks back through every finished duel to catch up on settlement.
+      await mockArena.write.setDuelStatus([1n, DUEL_RESOLVED_STATUS]);
+      await mockArena.write.setWinnerSlot([1n, 0]);
+      await mockArena.write.setActiveDuelId([2n]);
+      await mockArena.write.setDuelStatus([2n, DUEL_ACTIVE_STATUS]);
+      const opened = await bookmaker.write.initializeOdds([2n, 6000, 4000]);
+      expect((await armedTargets(opened))[0], "opening the line arms a tick").to.be.greaterThan(0n);
+
+      // Settling the OLD duel must still leave a tick aimed at the running fight. A
+      // blind cancel here stopped the odds updating for the rest of that fight.
+      const settledOld = await bookmaker.write.settleBets([1n]);
+      expect(await bookmaker.read.duelSettled([1n])).to.equal(true);
+      const stillArmed = await armedTargets(settledOld);
+      expect(stillArmed, "the live line must still be aimed at").to.have.lengthOf(1);
+      expect(stillArmed[0]).to.be.greaterThan(0n);
+
+      // Settling the RUNNING duel is what should stand it down: nothing left to price.
+      await mockArena.write.setDuelStatus([2n, DUEL_RESOLVED_STATUS]);
+      await mockArena.write.setWinnerSlot([2n, 1]);
+      const settledLive = await bookmaker.write.settleBets([2n]);
+      expect(await armedTargets(settledLive), "nothing left to re-price").to.have.lengthOf(0);
+      expect(await bookmaker.read.armedForBlock()).to.equal(0n);
+    });
+
     it("only the owner may switch it off", async function () {
       const { bookmaker } = await deployWithInterval();
       const [, nonOwner] = await hre.viem.getWalletClients();

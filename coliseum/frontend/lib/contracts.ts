@@ -16,13 +16,21 @@ export const CONTRACT_ADDRESSES = {
   // setPrompt).
   //
   // Arena is linked against a deployed ArenaUtils library
-  // (0x02d3135d8187875ee3dd16e521e5ceb018fc1f28). Parts:
-  //   ArenaVaultPart 0xbe0d1c7c78c80bc91345da603af0ec180a9ec80e
-  //   ArenaDuelPart  0x3729e1a46c7f548ac428a558912c75e1a3e1fce2
-  //   ArenaTurnPart  0x80dd8b1e0084ddbe4098eaa8d22a86f32207ca2f
-  //   ArenaViewPart  0x291edb2f537413de16970582320fb3fa64f14044
+  // (0x1fd61d6cf1a414ac329b0af692a61b33dab940ee). Parts, as rewired for one-shot
+  // Reactivity ticks on 2026-08-18:
+  //   ArenaVaultPart 0xdd09ae5c9d1cc923e4ec22b7385b3d8313d5c12a
+  //   ArenaDuelPart  0x63605f9dc2fc95b2065df5847e74c09fb3e97e7e
+  //   ArenaTurnPart  0x380e678126dcb60823d7085add70835fe53d63a3
+  //   ArenaViewPart  0x27cabce1f4308282070dbc76e253ebe592a478af
+  // The router's address never moves, so nothing here changes when parts do.
   Arena: '0x301d9364BDb2fd76E33c13eBE8FCc956BAcfbeD6' as const,
-  Bookmaker: '0xea808eac9798e2eda1a937d3d2be8541258e3802' as const,
+  // Redeployed 2026-08-18 for one-shot Reactivity ticks. Unlike Arena it is an
+  // ordinary contract with no swappable parts, so new code means a new address.
+  // Predecessors, both fully settled and drained before being left behind:
+  //   0xea808eac9798e2eda1a937d3d2be8541258e3802  (pre-Reactivity)
+  //   0x976f627041100dd09c1b0fe57599c0d4c15e46b5  (cancelled the live line's tick
+  //                                                when settling an older duel)
+  Bookmaker: '0x73d0a884f563c454ca0d05bd09b0643c0204b755' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
   Matchmaker: '0x6b7e255a3420c7846a15e963589ffd5504773b0a' as const,

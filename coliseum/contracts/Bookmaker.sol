@@ -572,10 +572,16 @@ contract Bookmaker is IBookmaker {
 
         emit BetsSettled(duelId, winnerId, totalPayout, rake);
 
-        // The line is closed, so stop paying for ticks. Last thing in the function on
-        // purpose: settlement can still revert above this point, and a cancel that is
-        // rolled back with it is a cancel that never happened.
-        _cancelTick();
+        // Re-aim rather than cancel outright. Settling THIS duel leaves nothing to
+        // re-price, so this cancels — but the watcher also settles OLD duels, and a
+        // blind cancel here killed the live line's tick the moment it caught up on a
+        // finished fight. Measured on testnet: settleBets(2) cancelled the tick that
+        // had just been armed for duel 11, and the odds sat at 50/50 for the rest of
+        // that fight.
+        //
+        // Last thing in the function on purpose: settlement can still revert above
+        // this point, and a teardown rolled back with it never happened.
+        _scheduleNextTick();
     }
 
     function withdrawRake(uint256 duelId, address to) external onlyOwner {
