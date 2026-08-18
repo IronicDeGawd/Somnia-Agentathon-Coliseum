@@ -55,12 +55,19 @@ async function queueAsPlayer(
   await page.goto('/duel');
   await expect(page.getByText(/USDso/).first()).toBeVisible({ timeout: 60_000 });
   await page.getByRole('button', { name: /create new duel|expand to start/i }).first().click();
-  await page.getByRole('button', { name: CARD[market] }).first().click();
+
+  // EVERY creator interaction is scoped to the creator panel. The lobby also renders
+  // a card per waiting line and a card per live fight, and those carry round numbers
+  // too — so an unscoped "the button starting with 9" matched a live fight's card
+  // once duel 27 existed, navigating away instead of picking a tier, and the wallet
+  // never signed anything.
+  const panel = page.locator('#duel-creator-panel');
+  await panel.getByRole('button', { name: CARD[market] }).first().click();
 
   // Tier buttons read as the round count followed by the assets that tier trades,
   // and those come from the chain — so match the number and a letter, never a name.
-  await page.locator('button').filter({ hasText: new RegExp(`^${turns}[A-Za-z]`) }).first().click();
-  await page.getByRole('button', { name: fighter }).first().click();
+  await panel.locator('button').filter({ hasText: new RegExp(`^${turns}[A-Za-z]`) }).first().click();
+  await panel.getByRole('button', { name: fighter }).first().click();
 
   // A wallet too poor for this tier is the one failure worth naming outright: the
   // button simply reads INSUFFICIENT and a timeout would blame the site.
@@ -69,7 +76,7 @@ async function queueAsPlayer(
     `${market} ${turns}r: wallet ${w.address} cannot cover the deposit`,
   ).toHaveCount(0);
 
-  const enter = page.getByRole('button', { name: /ENTER QUEUE/ });
+  const enter = panel.getByRole('button', { name: /ENTER QUEUE/ });
   await expect(enter.first()).toBeEnabled({ timeout: 60_000 });
   await enter.first().click();
 
@@ -109,6 +116,14 @@ for (const e of MATRIX) {
       Number(p2.page.url().match(/\/duel\/(\d+)/)![1]),
       'both players must land in the SAME fight',
     ).toBe(duelId);
+
+    // The fight must be a NEW one. Landing on any /duel/N is not proof of a match:
+    // the lobby will happily navigate a player into somebody else's live fight, and
+    // this assertion passed four times in a row on a fight neither player was in
+    // while all four of their queue transactions had quietly failed.
+    const floor = Number(process.env.MIN_DUEL ?? '0');
+    expect(duelId, `duel ${duelId} predates this run — no new fight was started`)
+      .toBeGreaterThanOrEqual(floor);
 
     fs.appendFileSync(
       process.env.RESULT_FILE!,
