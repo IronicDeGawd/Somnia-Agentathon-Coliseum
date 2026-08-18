@@ -33,7 +33,11 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0x73d0a884f563c454ca0d05bd09b0643c0204b755' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0x6b7e255a3420c7846a15e963589ffd5504773b0a' as const,
+  // Redeployed 2026-08-19 to accept the perps market. Its market gate is a
+  // hardcoded constant, so a new market means a new Matchmaker; it holds Arena
+  // immutable but needs no authorisation, since starting a duel is permissionless.
+  // Predecessor, drained and idle: 0x6b7e255a3420c7846a15e963589ffd5504773b0a
+  Matchmaker: '0x6ba7969f16655fca3b39b557d9a98b376f6a149c' as const,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0x11Ac9B65b05dfb1406618Bda649b410B8e8F7108' as `0x${string}`,
 };
