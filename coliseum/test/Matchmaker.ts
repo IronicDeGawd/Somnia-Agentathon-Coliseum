@@ -504,10 +504,28 @@ describe("Matchmaker", () => {
     });
 
     it("rejects a market that does not exist", async () => {
+      // 4, not 3: perps became market 3, and the point of this test is the market
+      // one PAST the last real one. Left at 3 it would still fail — on the deposit
+      // allowance rather than the market check — and would go on passing for the
+      // wrong reason, which is exactly how a widened gate ships unnoticed.
       const { mm, alice } = await deploy();
       await expect(
-        mm.write.queue([0, 3, 3], { account: alice.account })
+        mm.write.queue([0, 3, 4], { account: alice.account })
       ).to.be.rejectedWith("InvalidMarket");
+    });
+
+    it("accepts perps as market three", async () => {
+      // The gate and the Arena enum have to agree. If Matchmaker still stopped at 2
+      // a player could never reach the perps queue at all, and if it allowed 4 the
+      // pair would be taken and matched before Arena refused the market.
+      const { mm, alice } = await deploy();
+      await expect(
+        mm.write.queue([0, 3, 4], { account: alice.account })
+      ).to.be.rejectedWith("InvalidMarket");
+      // Market 3 gets past the market check and fails on the deposit instead.
+      await expect(
+        mm.write.queue([0, 3, 3], { account: alice.account })
+      ).to.be.rejectedWith("allowance");
     });
   });
 });
