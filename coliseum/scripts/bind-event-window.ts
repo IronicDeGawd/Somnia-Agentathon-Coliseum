@@ -22,6 +22,9 @@
 //                  three (asset, window-length) pairs must be available.
 //   FUND_EACH    — collateral per desk, whole tokens; default from the manifest.
 //   RELEASE      — set to 1 to mark every desk free and exit, without binding.
+//   FORCE        — set to 1 to rebind even while the current questions are
+//                  healthy. Without it the script exits early in that case, so
+//                  it is safe to run on a schedule.
 // ============================================================================
 
 import hre from "hardhat";
@@ -72,6 +75,35 @@ async function main() {
     return;
   }
 
+  // ── nothing to do while the current questions are still alive ────────────
+  //
+  // This runs on a schedule, so most of the time it finds a perfectly healthy
+  // set of slots. Re-pointing them anyway would move collateral into a new
+  // market every quarter of an hour for no gain, and would swap the question
+  // out from under a player who read the lobby a moment ago. So: if all three
+  // of Arena's slots still outlive a fight, do nothing and exit.
+  //
+  // FORCE=1 rebinds regardless — for picking a better-priced window by hand.
+  const minLifeCheck = Number(process.env.MIN_LIFE_SEC ?? 1200);
+  if (process.env.FORCE !== "1") {
+    const bound = (ev.bound ?? []) as { label: string; desk: string; pool: string; expiry: number }[];
+    const nowSec = Math.floor(Date.now() / 1000);
+    const healthy = bound.filter((b) => b.expiry > nowSec + minLifeCheck);
+    if (bound.length === 3 && healthy.length === 3) {
+      const soonest = Math.min(...bound.map((b) => b.expiry)) - nowSec;
+      console.log(
+        `all three slots still open (${bound.map((b) => b.label).join(", ")}); ` +
+        `soonest expires in ${Math.floor(soonest / 60)} min — nothing to do`,
+      );
+      return;
+    }
+    if (bound.length) {
+      console.log(
+        `rebinding: ${bound.length - healthy.length} of ${bound.length} slots have expired or are about to`,
+      );
+    }
+  }
+
   // ── pick the windows ──────────────────────────────────────────────────────
   const minLife = Number(process.env.MIN_LIFE_SEC ?? 1200);
   const intervals = (process.env.INTERVALS ?? "60,240").split(",").map((s) => Number(s.trim()) * 60);
@@ -113,10 +145,21 @@ async function main() {
     if (chosen.length === 3) break;
   }
   if (chosen.length < 3) {
-    throw new Error(
+    const msg =
       `only ${chosen.length} distinct question(s) with >${minLife}s left; three slots need three. ` +
-      `Widen INTERVALS or lower MIN_LIFE_SEC.`,
-    );
+      `Widen INTERVALS or lower MIN_LIFE_SEC.`;
+    // Running on a schedule, this is an ordinary condition rather than a fault:
+    // the venue simply has not opened enough fresh windows yet. Leaving the
+    // existing binding in place is strictly better than tearing it down, and
+    // exiting loudly here would make a routine quiet period look like a broken
+    // deployment. Fail only when there is nothing left standing to fall back on.
+    const stillStanding = ((ev.bound ?? []) as { expiry: number }[])
+      .filter((b) => b.expiry > Math.floor(Date.now() / 1000)).length;
+    if (stillStanding > 0) {
+      console.log(`${msg}\nKeeping the current binding — ${stillStanding} slot(s) still open.`);
+      return;
+    }
+    throw new Error(msg);
   }
 
   // Name each slot. The label is what the fighter reads AND the word it answers
