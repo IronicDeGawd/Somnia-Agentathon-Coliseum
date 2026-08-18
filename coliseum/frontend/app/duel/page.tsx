@@ -25,6 +25,14 @@ import { useAccount } from 'wagmi';
 // as fighters that no longer exist, so the headline duel card mislabelled them.
 // The rest of this page already used the shared helper; the hero now does too.
 
+/** One colour per market, so a card is identifiable before its label is read.
+ *  Matches the market picker in DuelCreator. */
+const MARKET_ACCENT: Record<MarketKind, string> = {
+  [MarketKind.Events]: 'var(--gold)',
+  [MarketKind.Spot]: '#5eead4',
+  [MarketKind.Practice]: '#a78bfa',
+};
+
 export default function LobbyPage() {
   const router = useRouter();
   const [creatorExpanded, setCreatorExpanded] = useState(false);
@@ -377,7 +385,7 @@ export default function LobbyPage() {
                       style={{
                         marginLeft: 8,
                         letterSpacing: '0.1em',
-                        color: market === MarketKind.Events ? 'var(--gold)' : '#5eead4',
+                        color: MARKET_ACCENT[market],
                       }}
                     >
                       {MARKET_LABEL[market]}

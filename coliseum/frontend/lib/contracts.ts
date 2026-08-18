@@ -116,17 +116,25 @@ export enum MarketKind {
  *
  * Two players match only if they pick the same row, so every row is a separate
  * waiting line and adding rows thins them. Kept deliberately short for that
- * reason: events at every length, spot only where the deposit is not punishing.
+ * reason: events at every length, spot only where the deposit is not punishing,
+ * and practice only at the two lengths the house bot actually fills — a row
+ * nobody can be matched on is worse than no row at all.
+ *
+ * Practice is left off at three rounds on purpose: only one market trades there,
+ * so both fighters face a single choice each turn and the fight converges to a
+ * near-tie. It is a poor first impression, which is the one thing practice is for.
  */
 export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
   { turns: 3,  market: MarketKind.Events },
   { turns: 3,  market: MarketKind.Spot },
   { turns: 6,  market: MarketKind.Events },
+  ...(SIM_MARKET_ENABLED ? [{ turns: 6, market: MarketKind.Practice }] : []),
   { turns: 9,  market: MarketKind.Events },
   { turns: 9,  market: MarketKind.Spot },
+  ...(SIM_MARKET_ENABLED ? [{ turns: 9, market: MarketKind.Practice }] : []),
   { turns: 15, market: MarketKind.Events },
   { turns: 15, market: MarketKind.Spot },
-] as const;
+];
 
 export const MARKET_LABEL: Record<MarketKind, string> = {
   [MarketKind.Spot]: 'SPOT',
