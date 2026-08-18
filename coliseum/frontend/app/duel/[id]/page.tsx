@@ -652,9 +652,16 @@ export default function ArenaPage() {
             <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
               {markets.map((m) => (
                 <div key={m.poolKey} className="col gap-2" style={{ flexShrink: 0 }}>
-                  <span className="label-tiny">{m.poolKey}/USDso</span>
+                  {/* A question slot is a probability, not a price: no currency
+                      symbol and no traded-pair suffix, or 0.845 reads as 84 cents
+                      of WETH when it means an 84% chance. */}
+                  <span className="label-tiny">{m.isQuestion ? m.poolKey : `${m.poolKey}/USDso`}</span>
                   <span className="t-num" style={{ fontSize: 18 }}>
-                    {m.markPrice > BigInt(0) ? `$${m.markPriceNum.toFixed(4)}` : '—'}
+                    {m.markPrice > BigInt(0)
+                      ? (m.isQuestion
+                          ? `${(m.markPriceNum * 100).toFixed(1)}%`
+                          : `$${m.markPriceNum.toFixed(4)}`)
+                      : '—'}
                   </span>
                 </div>
               ))}
