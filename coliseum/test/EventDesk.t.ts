@@ -537,4 +537,45 @@ describe("EventDesk", () => {
       ).to.be.rejected;
     });
   });
+  /**
+   * The scaling factor is DERIVED from the market's own collateral unit, not fixed
+   * at compile time. It was `constant 1e12` — right only for 6-decimal collateral,
+   * so a port to 18-decimal USDso would have mispriced every order, book level and
+   * balance by a trillion with nothing to notice.
+   */
+  describe("collateral scale is derived, not assumed", function () {
+    it("6-decimal collateral gives a scale of 1e12", async function () {
+      const f = await deploy();
+      expect(await f.desk.read.scale()).to.equal(10n ** 12n);
+      expect(await f.desk.read.oneCollateral()).to.equal(10n ** 6n);
+    });
+
+    it("18-decimal collateral gives a scale of 1, and prices pass through untouched", async function () {
+      const f = await deploy();
+      // The mainnet case: collateral IS 18-decimal USDso, so the shim is a no-op.
+      await f.pool.write.setOneCollateral([10n ** 18n]);
+      await f.desk.write.bind([f.pool.address, MARKET_ID]);
+      expect(await f.desk.read.scale()).to.equal(1n);
+
+      // A price quoted by the pool now reaches Arena unchanged. Under the old
+      // constant this same book would have come back 1e12 times too large.
+      await f.pool.write.setBookLevel([true, 400_000_000_000_000_000n, 1_000_000_000_000_000_000n]);
+      const bid = (await f.desk.read.getBookLevels([true, 1n])) as readonly { price: bigint }[];
+      expect(bid[0].price).to.equal(400_000_000_000_000_000n);
+    });
+
+    it("refuses a collateral unit it cannot represent exactly", async function () {
+      const f = await deploy();
+      for (const bad of [0n, 3n, 10n ** 19n]) {
+        await f.pool.write.setOneCollateral([bad]);
+        let caught: unknown;
+        await f.desk.write.bind([f.pool.address, MARKET_ID]).catch((e: unknown) => { caught = e; });
+        expect(caught, `expected a revert for oneCollateral=${bad}`).to.not.be.undefined;
+        expect(String(caught)).to.satisfy(
+          (m: string) => m.includes("UnsupportedCollateralUnit") || /0x[0-9a-f]{8}/.test(m),
+        );
+      }
+    });
+  });
+
 });

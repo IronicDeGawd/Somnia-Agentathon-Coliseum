@@ -27,6 +27,10 @@
 //   FORCE        — set to 1 to rebind even while the current questions are
 //                  healthy. Without it the script exits early in that case, so
 //                  it is safe to run on a schedule.
+//   FACTORY      — override the venue whose windows we consider. Normally read
+//                  from contracts.EventDesks.factory in the manifest; there is no
+//                  default, because scanning every venue on the chain is how a
+//                  desk ends up bound to somebody else's market.
 // ============================================================================
 
 import hre from "hardhat";
@@ -51,7 +55,7 @@ const label = (s: string) =>
 
 type Window = {
   asset: string; pool: `0x${string}`; marketId: `0x${string}`;
-  expiry: number; intervalSec: number;
+  expiry: number; intervalSec: number; collateral: `0x${string}`;
 };
 
 async function main() {
@@ -139,7 +143,18 @@ async function main() {
     .split(",").filter(Boolean).map((s) => Number(s.trim()) * 60);
   const now = Math.floor(Date.now() / 1000);
 
-  const alive = (await scanWindows(pub)).filter((w) => w.expiry > now + minLife);
+  // Which venue's windows we will consider. Pinned, not discovered — see scanWindows.
+  const factory = (process.env.FACTORY ?? ev.factory) as `0x${string}` | undefined;
+  if (!factory) {
+    throw new Error(
+      "no contracts.EventDesks.factory in the manifest. It is the contract that publishes " +
+      "MarketCreated for the venue we trade, and without it this script would scan every " +
+      "venue on the chain and could bind a desk to another operator's market. Set it, or " +
+      "pass FACTORY=0x… for a one-off run.",
+    );
+  }
+  const alive = (await scanWindows(pub, factory, ev.collateral))
+    .filter((w) => w.expiry > now + minLife);
   const live = alive.filter((w) => intervals.includes(w.intervalSec));
   const reserve = alive.filter((w) => fallbackIntervals.includes(w.intervalSec));
 
@@ -365,25 +380,57 @@ function distanceFromEven(mid: number | null): number {
   return mid === null ? Number.POSITIVE_INFINITY : Math.abs(mid - 0.5);
 }
 
-async function scanWindows(pub: any): Promise<Window[]> {
+/**
+ * Read the windows one venue has published.
+ *
+ * `factory` is NOT optional, and leaving it out was a real bug: a log query with
+ * no address matches that event shape from ANY contract on the chain. Somnia
+ * testnet has run a single prediction venue so far, so nothing went wrong — but
+ * the moment a second one appears, the highest-scoring window could belong to
+ * another operator, and a desk pointed at it adopts THAT market's collateral
+ * (EventDesk.bind reads it off the pool). The treasury holds none of that token,
+ * so funding fails and Arena ends up with a slot registered on a question that
+ * can never be traded: a dead slot, invisible until a fight's tape shows moves
+ * that never reached a market.
+ *
+ * `wantCollateral` is the second guard, for the case the venue itself lists a
+ * market denominated in something else. The event carries the collateral, and the
+ * earlier version threw that field away.
+ */
+async function scanWindows(
+  pub: any,
+  factory: `0x${string}`,
+  wantCollateral: `0x${string}`,
+): Promise<Window[]> {
   const head = await pub.getBlockNumber();
   const out: Window[] = [];
+  const want = wantCollateral.toLowerCase();
+  let foreign = 0;
   for (let i = 0; i < SCAN_CHUNKS; i++) {
     const to = head - BigInt(i) * CHUNK;
     if (to <= CHUNK) break;
     try {
-      const logs = await pub.getLogs({ event: MARKET_CREATED, fromBlock: to - (CHUNK - 1n), toBlock: to });
+      const logs = await pub.getLogs({
+        address: factory,
+        event: MARKET_CREATED,
+        fromBlock: to - (CHUNK - 1n),
+        toBlock: to,
+      });
       for (const l of logs) {
+        const collateral = String(l.args.collateral).toLowerCase() as `0x${string}`;
+        if (collateral !== want) { foreign++; continue; }
         out.push({
           asset: String(l.args.asset),
           pool: l.args.pool,
           marketId: l.args.marketId,
           expiry: Number(l.args.expiry),
           intervalSec: Number(l.args.intervalSec),
+          collateral,
         });
       }
     } catch { /* range unavailable */ }
   }
+  if (foreign) console.log(`  skipped ${foreign} window(s) denominated in another collateral`);
   return out;
 }
 

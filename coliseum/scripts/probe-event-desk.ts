@@ -14,8 +14,12 @@
 import hre from "hardhat";
 import { formatUnits, parseAbi, parseAbiItem } from "viem";
 
-const SCALE = 10n ** 12n;
+// Derived from the desk, not assumed. The desk itself computes this from the
+// market's collateral unit, so a probe that hardcodes 1e12 would silently compare
+// against the wrong numbers the moment the collateral changes decimals.
+let SCALE = 10n ** 12n;
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+const FACTORY = (process.env.FACTORY ?? "0x94d963b6670ab96e78c8d0c46ca35d196d606efe") as `0x${string}`;
 
 // MarketCreated on dreamDEX's market creator — the indexer-free discovery path.
 const MARKET_CREATED = parseAbiItem(
@@ -41,7 +45,10 @@ async function main() {
   for (let i = 0; i < 40; i++) {
     const to = head - BigInt(i * 1000);
     try {
-      const logs = await pub.getLogs({ event: MARKET_CREATED, fromBlock: to - 999n, toBlock: to });
+      // Pinned to our venue. Unpinned, this matches MarketCreated from any
+      // contract on the chain and the probe could walk off onto someone else's
+      // market — with different collateral, and therefore different decimals.
+      const logs = await pub.getLogs({ address: FACTORY, event: MARKET_CREATED, fromBlock: to - 999n, toBlock: to });
       found.push(...logs.map((l) => l.args));
     } catch { /* range unavailable */ }
   }
@@ -65,8 +72,10 @@ async function main() {
   const MODULE = "0x3ecC694Cef705358864a646142ac17A90E29e388";
   const desk = await hre.viem.deployContract("EventDesk", [me.account.address, MODULE]);
   await desk.write.bind([m.pool, m.marketId]);
+  SCALE = (await desk.read.scale()) as bigint;
   console.log(`\ndesk deployed and bound: ${desk.address}`);
   console.log(`  collateral : ${await desk.read.collateral()}`);
+  console.log(`  scale      : ${SCALE}  (derived from the market's collateral unit)`);
 
   const [base, quote, , , tick, minQty, lot] = await desk.read.getPoolParams();
   console.log(`  grid (18dp): tick=${tick} minQuantity=${minQty} lot=${lot}`);

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient, useReadContracts } from 'wagmi';
 import { parseAbiItem, formatUnits } from 'viem';
-import { ABIS, CONTRACT_ADDRESSES, POOLS_FOR, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { ABIS, CONTRACT_ADDRESSES, POOL_SLOTS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { getWsClient } from '@/lib/wsClient';
 import type { DuelData } from '@/hooks/useDuelState';
@@ -317,9 +317,54 @@ export function useDuelLive(
     };
   }, [subscribeEnabled, duelId, ingestMarkPriceLogs, ingestMoveLogs, ingestRequestLogs]);
 
-  // ── Active pools (from duel.poolMask) ─────────────────────────────────────
-  // Resolve pool addresses based on whether this is a simulated-market duel.
-  const activePools = !duel ? [] : POOLS_FOR(duel.simulated ?? false).filter((p) => (duel.poolMask & p.bit) !== 0);
+  // ── Active pools: asked, not guessed ──────────────────────────────────────
+  // This used to pick a hardcoded table from `duel.simulated`. That flag is
+  // two-valued — practice or not — so an EVENTS fight reported false and resolved
+  // to the real spot pools, and every balance read landed at an address where the
+  // fight holds nothing. Events desks also move to fresh addresses every few
+  // minutes, so no table could have been right. The Arena records each fight's
+  // three markets when it starts; read those, and read each one's base decimals
+  // rather than assuming (a desk presents 18, a real WBTC book is 8).
+  const { data: poolReads } = useReadContracts({
+    contracts: [
+      {
+        address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+        abi: ABIS.Arena,
+        functionName: 'duelPoolsOf' as const,
+        args: [duelId] as [bigint],
+      },
+    ],
+    query: { enabled: duelId > BigInt(0) },
+  });
+
+  const duelPools = (poolReads?.[0]?.result as readonly `0x${string}`[] | undefined) ?? undefined;
+
+  const { data: metaReads } = useReadContracts({
+    contracts: (duelPools ?? []).map((addr) => ({
+      address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+      abi: ABIS.Arena,
+      functionName: 'poolMeta' as const,
+      args: [addr] as [`0x${string}`],
+    })),
+    query: { enabled: !!duelPools },
+  });
+
+  const activePools = !duel || !duelPools
+    ? []
+    : POOL_SLOTS.flatMap((slot, i) => {
+        if ((duel.poolMask & slot.bit) === 0) return [];
+        const address = duelPools[i];
+        if (!address || /^0x0+$/.test(address)) return [];
+        const meta = metaReads?.[i]?.result as readonly [number, bigint, bigint, bigint] | undefined;
+        return [{
+          key: slot.key as string,
+          bit: slot.bit as number,
+          address,
+          // Fall back to 18 only while the read is in flight; every registered pool
+          // has this cached on-chain.
+          decimals: meta ? Number(meta[0]) : 18,
+        }];
+      });
 
   // ── Read fighterBalances for each active pool × 2 fighters ────────────────
   // Build batched contract reads: [poolA×fighterA, poolA×fighterB, poolB×fighterA, …]

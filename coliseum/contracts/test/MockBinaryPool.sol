@@ -30,6 +30,13 @@ contract MockBinaryPool {
 
     /// @dev Collateral paid out to the caller on a fill, mimicking the real pool.
     uint256 public payoutOnFill;
+
+    /// @notice Restate the market's collateral unit, so a desk can be tested against
+    ///         18-decimal collateral (the mainnet case) and against a unit it must
+    ///         refuse. The desk derives its whole scaling factor from this.
+    function setOneCollateral(uint256 one) external {
+        _params.oneCollateral = one;
+    }
     address public collateralToken;
 
     constructor(address _collateral, address _outcomeToken, address _market, uint64 _expiryNs) {
