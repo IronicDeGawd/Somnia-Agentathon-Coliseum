@@ -529,24 +529,43 @@ export function useDuelLive(
     return r.result as readonly [boolean, bigint, bigint, `0x${string}`, number];
   };
 
-  // The per-market breakdown needs the fighter's trading ADDRESS, which only the
-  // read above can supply — so this is a second round rather than one batch.
+  // The duel records the DESKS it trades, but the margin bank keys every position
+  // by the MARKET behind the desk — so looking a position up by the address the
+  // duel names finds nothing, silently, and every fighter reads as flat forever.
+  // The desk is asked to name its market first.
+  const { data: marketsRaw } = useReadContracts({
+    contracts: activePools.map((pool) => ({
+      address: pool.address,
+      abi: ABIS.PerpDesk,
+      functionName: 'market' as const,
+    })),
+    query: { enabled: enabled && isPerpDuel && activePools.length > 0 },
+  });
+
+  const perpMarketAddrs = activePools.map((_, i) => {
+    const r = marketsRaw?.[i];
+    return r?.status === 'success' ? (r.result as `0x${string}`) : undefined;
+  });
+
+  // The per-market breakdown also needs the fighter's trading ADDRESS, which only
+  // the read above can supply — so this is a second round rather than one batch.
   const perpAccounts = [perpResultOf(0)?.[3], perpResultOf(1)?.[3]];
   const haveAccounts = perpAccounts.every((a) => a && !/^0x0+$/.test(a));
+  const haveMarkets = perpMarketAddrs.every(Boolean);
 
   const { data: positionsRaw } = useReadContracts({
-    contracts: haveAccounts
+    contracts: haveAccounts && haveMarkets
       ? perpAccounts.flatMap((account) =>
-          activePools.map((pool) => ({
+          perpMarketAddrs.map((market) => ({
             address: CONTRACT_ADDRESSES.MarginBank,
             abi: ABIS.MarginBank,
             functionName: 'getPosition' as const,
-            args: [account as `0x${string}`, pool.address] as [`0x${string}`, `0x${string}`],
+            args: [account as `0x${string}`, market as `0x${string}`] as [`0x${string}`, `0x${string}`],
           })),
         )
       : [],
     query: {
-      enabled: enabled && isPerpDuel && haveAccounts && activePools.length > 0,
+      enabled: enabled && isPerpDuel && haveAccounts && haveMarkets && activePools.length > 0,
       refetchInterval: 10_000,
       refetchIntervalInBackground: true,
     },

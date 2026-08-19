@@ -456,6 +456,14 @@ export const ABIS = {
   // the fight's three markets the fighter is actually in, on which side, and at
   // what price it got in. `size` is signed: positive is long, negative is short,
   // and zero means the fighter is not in that market at all.
+  // A desk is the Arena's handle on a perpetual market; the market itself is a
+  // separate contract, and the margin bank keys every position by the MARKET. So a
+  // position cannot be looked up by the address the duel records — the desk has to
+  // name its market first.
+  PerpDesk: parseAbi([
+    'function market() view returns (address)',
+  ]),
+
   MarginBank: parseAbi([
     'function getPosition(address account, address perpPool) view returns (int128 size, uint128 avgEntryPrice, int256 entryFundingIndex, uint64 lastUpdatedTimestampNs)',
   ]),
