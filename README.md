@@ -415,9 +415,9 @@ then settled and claimed. All of them ran **The Degen** against **The Whale**.
 | [34](https://coliseum.somniaforge.com/duel/34/result) | Practice | 15 | 0 | draw | mock books |
 
 One row is marked rather than quietly counted: duel 31 was started by the operator, because at the
-time the site could not start a nine-round perps fight — a start there costs 29,200,558 gas and the
-queue was capped well below it. The cap is fixed and duel 35 proves it, having been started from the
-browser at the tier above.
+time the site could not start a nine-round perps fight — the queue asked to be given 29,200,558 gas
+and was capped well below it. The cap is fixed and duel 35 proves it, having been started from the
+browser at the tier above; that transaction went on to use 6,431,596 of the 40,000,000 it was given.
 
 Money reconciled to the wei afterwards: the perps float returned 149.41 of 150, every fighter account
 free, nothing quarantined, escrow zero, and every payout claimed.
@@ -454,7 +454,19 @@ Four faults that only appear under load, all found by this matrix and all fixed:
   is empty and millions when it is not, because the second player's transaction starts the fight. The
   floor was 5,000,000 and a six-round events start needs 5,223,101 — the player lost their gas and the
   site showed a failed queue with nothing explaining it. Twelve million then covered every tier except
-  perps at nine and fifteen rounds, where a start costs **29,200,558**.
+  perps at nine and fifteen rounds, which asked for **29,200,558**.
+
+  That last number is worth separating from the others, because it is not what a perps start costs.
+  It is what the network's gas *estimator* asked to be given, and the two differ here by a factor of
+  four and a half: the fight it was quoted for went on to use 6,431,596. The gap is structural rather
+  than a mistake. Choosing the three markets involves a chain of nested calls, and the innermost one
+  needs about 1.8 million gas to be AVAILABLE at its depth — not spent, available. A caller may only
+  pass on 63/64ths of what it holds, so meeting that floor several levels down requires a starting
+  limit far above anything the transaction will actually consume. The estimator finds the lowest limit
+  that works, and that is the number it reports. It also moves on its own, since which markets qualify
+  depends on what margin they demand at that moment. The fix is a generous floor rather than a clever
+  one: unused gas is refunded, so 40,000,000 costs nothing and stops the estimate's wandering from
+  ever reaching a player.
 - **A reactive firing advanced every active duel under a 15,000,000 gas cap.** A turn measured
   7,477,821 gas one hour and 29,382,823 the next — the variable part is the inference platform's, not
   ours. A firing that runs out of gas books no successor, so the chain ends silently: five concurrent
