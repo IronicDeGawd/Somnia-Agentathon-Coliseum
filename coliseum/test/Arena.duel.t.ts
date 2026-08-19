@@ -361,14 +361,60 @@ describe("Arena — Duel lifecycle", function () {
       `the arena holds no base, so no sell may be offered — got ${allowed.join(", ")}`,
     ).to.have.length(0);
 
-    // Hand the Arena the actual tokens and the sell becomes offerable, which is what
-    // proves the gate is the base holding rather than something else.
-    await poolSomi.write.creditVault([arena.address, base.address, parseEther("5")]);
+    // Hand the Arena the actual tokens — into its OWN balance, which is where a fill
+    // is delivered and where a sell has to come from — and the sell becomes offerable.
+    // That is what proves the gate is the base holding rather than something else.
+    await base.write.mint([arena.address, parseEther("5")]);
     const [, funded] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
     expect(
       funded.some((a) => a === "SellSOMI"),
       `real base holdings must offer the sell — got ${funded.join(", ")}`,
     ).to.equal(true);
+  });
+
+  // The functional half of the same discovery. A venue takes the quote for a buy out
+  // of what was deposited to it, but it DELIVERS the fill to the Arena's own balance —
+  // and a sell is then taken back out of that balance by transferFrom. With no
+  // allowance that transfer reverts, which is why every spot sell on the live venue
+  // failed with "pool reverted" and a fighter could buy an asset and never realise
+  // anything on it.
+  it("approves the base token to the pool before selling it", async function () {
+    const { arena, poolSomi, usdso, mockPlatform } = await deploy(true);
+    const base = await hre.viem.deployContract("MockERC20", ["Base", "BASE"]);
+    const ONE = 10n ** 18n;
+    await poolSomi.write.setPoolParams([base.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+    await base.write.mint([arena.address, parseEther("5")]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    expect(
+      await base.read.allowance([arena.address, poolSomi.address]),
+      "nothing should be approved before a sell is attempted",
+    ).to.equal(0n);
+
+    const drive = async (move: string) => {
+      await arena.write.testRequestFighterMove([duelId, FIGHTER_A]);
+      let requestId = 0n;
+      for (let id = 1n; id <= 12n; id++) {
+        const t = await arena.read.pendingTurns([id]) as [bigint, number, bigint, boolean];
+        if (t[3] && t[0] === duelId && t[1] === FIGHTER_A) { requestId = id; break; }
+      }
+      expect(requestId, `no pending turn for ${move}`).to.not.equal(0n);
+      await mockPlatform.write.dispatchSuccessString([arena.address, requestId, HANDLE_SELECTOR, move]);
+    };
+
+    // Buy first, so the fighter has something the sell can be sized against.
+    await drive("BuySOMI");
+    await drive("SellSOMI");
+
+    // The sell was sized at the fighter's whole holding, so the allowance the Arena
+    // granted is that holding — not zero, which is what the venue was being handed.
+    expect(
+      await base.read.allowance([arena.address, poolSomi.address]),
+      "the pool must be allowed to take the asset being sold",
+    ).to.be.greaterThan(0n);
   });
 
   it("records the resolved duel in DuelHistory when the sink is set", async function () {

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "./ArenaTypes.sol";
 import "../interfaces/ISpotPool.sol";
+import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/IPerps.sol";
 
 /// @title ArenaUtils
@@ -405,7 +406,7 @@ library ArenaUtils {
                 && _vaultHolds(pool, usdso, minCost)
                 && _hasSize(pool, false),
             bal.baseTokenAmount >= meta.minQuantity
-                && _vaultHoldsBase(pool, meta.minQuantity)
+                && _canDeliverBase(pool, meta.minQuantity)
                 && _hasSize(pool, true)
         );
     }
@@ -419,15 +420,28 @@ library ArenaUtils {
         } catch { return false; }
     }
 
-    /// @dev The same question for the asset being sold. The base token is asked of the
-    ///      pool rather than stored, so a re-pointed pool cannot leave this reading a
-    ///      stale token's balance.
-    function _vaultHoldsBase(address pool, uint256 need) internal view returns (bool) {
+    /// @dev Can this Arena actually deliver one smallest sell?
+    ///
+    ///      Deliberately NOT the pool-side balance, which is always zero for the base
+    ///      asset. A venue takes the quote for a buy out of what was deposited to it,
+    ///      but it DELIVERS a fill to the Arena's own wallet — so the tokens a sell
+    ///      has to hand over sit in this contract's ERC-20 balance, not in any vault.
+    ///      Measured live: the Arena's wallet held 0.002 of the WETH base after two
+    ///      filled buys while the pool reported nothing for it.
+    ///
+    ///      A base asset with no code is the NATIVE coin, and selling that means
+    ///      sending value with the order, which this contract does not do. Offering it
+    ///      spends a turn on an order the venue must refuse, so it is refused here
+    ///      instead. The base token is asked of the pool rather than stored, so a
+    ///      re-pointed pool cannot leave this reading a stale token's balance.
+    function _canDeliverBase(address pool, uint256 need) internal view returns (bool) {
         try ISpotPool(pool).getPoolParams() returns (
             address baseToken, address, uint256, uint256, uint256, uint256, uint256
         ) {
-            if (baseToken == address(0)) return false;
-            return _vaultHolds(pool, baseToken, need);
+            if (baseToken == address(0) || baseToken.code.length == 0) return false;
+            try IERC20Minimal(baseToken).balanceOf(address(this)) returns (uint256 held) {
+                return held >= need;
+            } catch { return false; }
         } catch { return false; }
     }
 

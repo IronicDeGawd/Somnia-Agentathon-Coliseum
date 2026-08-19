@@ -394,6 +394,16 @@ contract ArenaTurnPart is ArenaStorage {
         // and a change would be a change for its own sake.
         uint64 userData = isPerp ? uint64((duelId << 8) | uint256(fighterId)) : 0;
 
+        // A SELL has to hand real tokens over, and the venue takes them by
+        // `transferFrom` out of THIS contract's balance — which is where it delivered
+        // them when the buy filled, not into any vault. Without an allowance that
+        // transfer reverts, so every sell on every spot market failed and a fighter
+        // could buy an asset and never realise anything on it.
+        //
+        // Granted per order and for exactly this quantity, so no standing allowance is
+        // left behind for a pool that is later re-pointed.
+        if (!isPerp && !isBid) _approveBaseForSale(pool, quantity);
+
         (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600, userData);
 
         // A perps position is held by the protocol, against the fighter's own
@@ -415,6 +425,25 @@ contract ArenaTurnPart is ArenaStorage {
         }
     }
 
+
+    /// @dev Let `pool` take `quantity` of its own base asset from this contract, for
+    ///      one sell. Best-effort: a pool that will not name its base asset, or a
+    ///      token that refuses the approval, leaves the order to fail on its own
+    ///      rather than reverting the turn and costing the player their fight.
+    ///
+    ///      A base asset with no code is the native coin, which cannot be approved at
+    ///      all — selling it needs value sent with the order, which this path does not
+    ///      do. `tradability` already declines to offer that sell.
+    function _approveBaseForSale(address pool, uint256 quantity) internal {
+        address baseToken;
+        try ISpotPool(pool).getPoolParams() returns (
+            address b, address, uint256, uint256, uint256, uint256, uint256
+        ) { baseToken = b; } catch { return; }
+        if (baseToken == address(0) || baseToken.code.length == 0) return;
+        // Zero first, for tokens that refuse a non-zero-to-non-zero change.
+        try IERC20Minimal(baseToken).approve(pool, 0) returns (bool) {} catch { return; }
+        try IERC20Minimal(baseToken).approve(pool, quantity) returns (bool) {} catch { return; }
+    }
 
     function _placeOrderForFighter(
         uint256 duelId,
