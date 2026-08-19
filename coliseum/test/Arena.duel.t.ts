@@ -315,6 +315,62 @@ describe("Arena — Duel lifecycle", function () {
     ).to.equal(true);
   });
 
+  // The sell side of the same rule, and the sharper case of it: here the two numbers
+  // can genuinely disagree. Measured on duel 36, fighter 1's ledger recorded one whole
+  // SOMI while the Arena held none of it at that pool, so the fighter was offered a
+  // sell every turn and the venue refused every one. Whatever causes that gap, the
+  // fighter should not pay for it with its turn.
+  it("never offers a sell the arena holds no base token for", async function () {
+    const { arena, poolSomi, usdso, mockPlatform } = await deploy(true);
+    // A base token distinct from the quote, so the two balances can be told apart —
+    // the shared fixture uses USDso for both.
+    const base = await hre.viem.deployContract("MockERC20", ["Base", "BASE"]);
+    const ONE = 10n ** 18n;
+    await poolSomi.write.setPoolParams([base.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    // Buy SOMI for real, which is what credits the ledger. The mock venue records the
+    // order without moving tokens — exactly like the live one, whose fills leave the
+    // Arena holding no base at the pool.
+    await arena.write.testRequestFighterMove([duelId, FIGHTER_A]);
+    // The request id is the platform's own counter and a duel start may already have
+    // consumed one, so it is found rather than assumed.
+    let requestId = 0n;
+    for (let id = 1n; id <= 8n; id++) {
+      const t = await arena.read.pendingTurns([id]) as [bigint, number, bigint, boolean];
+      if (t[3] && t[0] === duelId && t[1] === FIGHTER_A) { requestId = id; break; }
+    }
+    expect(requestId, "no pending turn was created for this fighter").to.not.equal(0n);
+    // By NAME, because that is how a move is chosen now — a numeric reply matches
+    // nothing and is recorded as a coercion, which would leave the fighter flat and
+    // the test proving nothing.
+    await mockPlatform.write.dispatchSuccessString([
+      arena.address, requestId, HANDLE_SELECTOR, "BuySOMI",
+    ]);
+
+    const bal = await arena.read.fighterBalances([poolSomi.address, duelId, FIGHTER_A]) as [bigint, bigint];
+    expect(bal[0], "the buy must have credited the ledger, or this proves nothing")
+      .to.be.greaterThanOrEqual(ONE / 100n);
+
+    const [, allowed] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      allowed.filter((a) => a.startsWith("Sell")),
+      `the arena holds no base, so no sell may be offered — got ${allowed.join(", ")}`,
+    ).to.have.length(0);
+
+    // Hand the Arena the actual tokens and the sell becomes offerable, which is what
+    // proves the gate is the base holding rather than something else.
+    await poolSomi.write.creditVault([arena.address, base.address, parseEther("5")]);
+    const [, funded] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      funded.some((a) => a === "SellSOMI"),
+      `real base holdings must offer the sell — got ${funded.join(", ")}`,
+    ).to.equal(true);
+  });
+
   it("records the resolved duel in DuelHistory when the sink is set", async function () {
     const { arena, mockPlatform, poolSomi } = await deploy();
     const history = await hre.viem.deployContract("DuelHistory", [arena.address]);

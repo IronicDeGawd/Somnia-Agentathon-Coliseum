@@ -395,20 +395,39 @@ library ArenaUtils {
         // Measured on duel 36: both fighters attempted a buy every single turn and
         // every one was refused, because the spot vaults held 0.09, 2.00 and 0.87
         // USDso against a minimum Bitcoin lot costing 64.59.
+        // The SELL side needs the same treatment, and for a sharper reason: the two
+        // numbers can disagree. Measured on duel 36, fighter 1's ledger recorded one
+        // whole SOMI while the Arena's base holding at that pool was zero — so the
+        // fighter was offered a sell every turn and the venue refused every one.
+        // Whatever causes that gap, a fighter should not pay for it with its turn.
         return (
             bal.quoteTokenAmount >= minCost
-                && _vaultCovers(pool, usdso, minCost)
+                && _vaultHolds(pool, usdso, minCost)
                 && _hasSize(pool, false),
-            bal.baseTokenAmount >= meta.minQuantity && _hasSize(pool, true)
+            bal.baseTokenAmount >= meta.minQuantity
+                && _vaultHoldsBase(pool, meta.minQuantity)
+                && _hasSize(pool, true)
         );
     }
 
     /// @dev Can the Arena's own deposit in this pool fund one smallest buy? A pool
     ///      that cannot answer is treated as unable, so an unreadable venue costs a
     ///      fighter one option rather than its turn.
-    function _vaultCovers(address pool, address usdso, uint256 minCost) internal view returns (bool) {
-        try ISpotPool(pool).getWithdrawableBalance(address(this), usdso) returns (uint256 avail) {
-            return avail >= minCost;
+    function _vaultHolds(address pool, address token, uint256 need) internal view returns (bool) {
+        try ISpotPool(pool).getWithdrawableBalance(address(this), token) returns (uint256 avail) {
+            return avail >= need;
+        } catch { return false; }
+    }
+
+    /// @dev The same question for the asset being sold. The base token is asked of the
+    ///      pool rather than stored, so a re-pointed pool cannot leave this reading a
+    ///      stale token's balance.
+    function _vaultHoldsBase(address pool, uint256 need) internal view returns (bool) {
+        try ISpotPool(pool).getPoolParams() returns (
+            address baseToken, address, uint256, uint256, uint256, uint256, uint256
+        ) {
+            if (baseToken == address(0)) return false;
+            return _vaultHolds(pool, baseToken, need);
         } catch { return false; }
     }
 
