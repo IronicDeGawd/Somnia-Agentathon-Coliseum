@@ -240,10 +240,15 @@ function MarginWarning({ status }: { status: number }) {
   return (
     <div
       className="col gap-2"
+      // Announced, because this appears mid-fight without any user action and it is
+      // the most consequential thing that can happen to a fighter. A spectator who
+      // cannot see the card would otherwise be told nothing at all.
+      role="status"
+      aria-live="polite"
       style={{ border: '1px solid var(--loss)', padding: '4px 6px', marginTop: 4 }}
     >
       <span className="t-mono t-xs" style={{ color: 'var(--loss)', letterSpacing: '0.12em' }}>
-        ⚠ {word}
+        <span aria-hidden="true">⚠ </span>{word}
       </span>
       <span className="t-mono t-xs t-dim">{detail}</span>
     </div>
