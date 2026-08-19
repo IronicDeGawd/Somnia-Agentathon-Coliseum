@@ -392,10 +392,16 @@ token — a detail that costs an afternoon to rediscover.
 
 ## The test matrix — every tier, played on testnet
 
-Every tier the lobby offers, on every market, run end to end on 2026-08-19 against the finished
-contracts. Each fight is real — a real deposit, real orders on real markets, a real settled result and
-a page you can open — and each was started **from the site**, by a browser carrying its own wallet,
-then settled and claimed. All of them ran **The Degen** against **The Whale**.
+Every tier the lobby offers, on every market, run end to end on 2026-08-19. Each fight is real — a real
+deposit, real orders on real markets, a real settled result and a page you can open — and each was
+started **from the site**, by a browser carrying its own wallet, then settled and claimed. All of them
+ran **The Degen** against **The Whale**.
+
+> **The spot rows below are the OLD numbers, and they are kept deliberately.** Running this matrix is
+> what exposed why they were so low, and the three faults behind them are now fixed. Rerun on the fixed
+> contracts, a nine-round spot fight placed **16 orders across 18 moves with nothing refused**
+> ([duel 38](https://coliseum.somniaforge.com/duel/38/result)) — against four orders across the three
+> spot fights below combined. See *What running all of it broke*.
 
 | Duel | Market | Rounds | Orders | Result | Markets traded |
 |---|---|---|---|---|---|
@@ -448,7 +454,33 @@ the level last turn, the level at the open, the position and what it is worth.
 
 ### What running all of it broke
 
-Four faults that only appear under load, all found by this matrix and all fixed:
+**The largest one first: the spot market could never sell, and running this matrix is what revealed
+it.** With the old wording fighters held nearly every turn, so the failure had no way to show itself.
+Once they started trading, every sell came back refused.
+
+A dreamDEX pool takes the money for a buy out of what was deposited to it, but it hands the asset it
+bought to the buyer's own wallet — not into any deposit. Selling is the reverse: the venue reaches into
+that wallet and takes the asset back out. It was never given permission to. So every sell reverted, on
+every market, for the whole life of the project. Measured on
+[duel 36](https://coliseum.somniaforge.com/duel/36/result): one fighter tried to sell on nine
+consecutive turns and was refused nine times, while the Arena's own balance held the asset the whole
+while and the permission stood at zero.
+
+Two more faults were sitting in the same place. The list of moves a fighter is offered checked what the
+fighter was owed and whether the market had anything to trade against, but never whether the Arena
+could actually deliver — so fighters were offered buys the venue could not fund and sells nothing
+backed, and lost a turn to each. And the SOMI market's asset turns out to be the chain's own coin
+rather than a token, which has to be handed over differently again; those sells could never have
+worked at all, and it is no longer offered.
+
+All three are fixed and every gate has a test that fails when the gate is removed. The proof is
+[duel 38](https://coliseum.somniaforge.com/duel/38/result): a nine-round spot fight, 18 moves, **16
+orders, none refused**, including the first spot sell that has ever gone through.
+
+The settlement rules came from [somnia-primitives](https://github.com/IronicDeGawd/somnia-primitives),
+which is the only written source we found that states plainly where the money moves from and to.
+
+Four more faults that only appear under load, all found by this matrix and all fixed:
 
 - **The queue gas floor was too low, twice.** Queueing costs a few hundred thousand gas when the line
   is empty and millions when it is not, because the second player's transaction starts the fight. The
