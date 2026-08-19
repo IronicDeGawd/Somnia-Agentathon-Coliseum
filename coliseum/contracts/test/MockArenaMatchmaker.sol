@@ -70,7 +70,17 @@ contract MockArenaMatchmaker {
     ///         events queue really did start an events fight and not a spot one.
     mapping(uint256 => uint8) public duelMarketKind;
 
+    /// @notice Makes `startDuelOn` reject while capacity still reads as available.
+    ///         The real arena has several ways to do this that a busy flag cannot
+    ///         model — too few perp markets qualifying at that moment, a registry
+    ///         float too small to fund a fighter — and Matchmaker has to survive all
+    ///         of them without reverting the player's queue transaction.
+    bool public rejectStart;
+
+    function setRejectStart(bool v) external { rejectStart = v; }
+
     function startDuelOn(uint8 fA, uint8 fB, uint16 turns, uint8 marketKind) external returns (uint256 duelId) {
+        require(!rejectStart, "start rejected");
         require(!busy && activeCount < maxActive, "arena full");
         uint256 fee = platformFee(turns);
         uint256 required = 2e18 + fee;
