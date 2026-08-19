@@ -404,6 +404,10 @@ contract ArenaTurnPart is ArenaStorage {
         // left behind for a pool that is later re-pointed.
         if (!isPerp && !isBid) _approveBaseForSale(pool, quantity);
 
+        // The matching allowance for a BUY is granted inside `_placeOrderForFighter`,
+        // not here: this function is one local variable away from Solidity's stack limit
+        // and another call at this depth stops it compiling. See the note there.
+
         (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600, userData);
 
         // A perps position is held by the protocol, against the fighter's own
@@ -461,6 +465,41 @@ contract ArenaTurnPart is ArenaStorage {
         if (orderType > 3) revert ArenaTypes.BadOrderType();
 
         uint64 expireTimestampNs = (uint64(block.timestamp) + expireOffsetSec) * 1_000_000_000;
+
+        // Let the venue take the money for a buy out of this contract's own balance.
+        //
+        // Why this exists is a question rather than a known fault. Today a buy is paid
+        // from what was DEPOSITED to the pool: measured on duel 38, the WETH deposit
+        // fell 200.09 → 173.34 USDso, matching fourteen buys to the penny. Nothing ever
+        // refills that deposit — a fill is delivered to this contract's balance and a
+        // sale's proceeds land there too — so it drains to zero and then every buy is
+        // refused, which is exactly what happened before it was seeded again by hand.
+        //
+        // The protocol's own documentation says these pools take payment straight from
+        // the caller's balance by `transferFrom`, with no deposit step at all, and the
+        // sell path proves that mechanism works here. If it works for the quote too,
+        // the deposit is legacy and the drain simply stops. If the venue keeps
+        // preferring the deposit, this allowance is inert and costs nothing.
+        //
+        // So it is both the fix and the measurement: watch whether the deposit still
+        // falls across a fight — `scripts/check-arena-vaults.ts` reports both pots.
+        //
+        // The offer gate is deliberately NOT widened to match. It still requires the
+        // DEPOSIT to cover a lot, because offering buys before we know the venue will
+        // bill this contract directly would offer orders that revert, and a reverted
+        // order costs the fighter its turn — the very thing that gate exists to
+        // prevent. Widen it only once this measurement says the balance is enough.
+        //
+        // Best-effort, per order, for exactly this order's cost: a token that refuses
+        // the approval leaves the order to fail on its own rather than reverting the
+        // turn, and no standing allowance survives for a pool that is later re-pointed.
+        if (isBid && !poolIsPerp[pool]) {
+            uint256 cost = (price * quantity) / (10 ** uint256(poolMeta[pool].baseDecimals));
+            if (cost > 0) {
+                try IERC20Minimal(USDSO).approve(pool, 0) returns (bool) {} catch {}
+                try IERC20Minimal(USDSO).approve(pool, cost) returns (bool) {} catch {}
+            }
+        }
 
         try ISpotPool(pool).placeOrder(isBid, userData, price, quantity, expireTimestampNs, orderType, 0, address(0), 0)
             returns (bool success, uint128 returnedId)

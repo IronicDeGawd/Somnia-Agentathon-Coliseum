@@ -417,6 +417,43 @@ describe("Arena — Duel lifecycle", function () {
     ).to.be.greaterThan(0n);
   });
 
+  // The buy side of the same authorisation, and the reason it is worth having even
+  // though buys already work. A buy is currently paid from what was DEPOSITED to the
+  // pool, and nothing refills that deposit — a fill is delivered to the Arena's own
+  // balance and a sale's proceeds land there too. So it drains to zero and every buy
+  // is then refused. The venue's own documentation says it will take payment straight
+  // from the caller's balance instead, which is how selling already works here; this
+  // grants that permission so the venue can, and so it becomes measurable which pot
+  // actually pays.
+  it("approves the quote token to the pool before buying with it", async function () {
+    const { arena, poolSomi, usdso, mockPlatform } = await deploy(true);
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    expect(
+      await usdso.read.allowance([arena.address, poolSomi.address]),
+      "nothing should be approved before a buy is attempted",
+    ).to.equal(0n);
+
+    await arena.write.testRequestFighterMove([duelId, FIGHTER_A]);
+    let requestId = 0n;
+    for (let id = 1n; id <= 12n; id++) {
+      const t = await arena.read.pendingTurns([id]) as [bigint, number, bigint, boolean];
+      if (t[3] && t[0] === duelId && t[1] === FIGHTER_A) { requestId = id; break; }
+    }
+    expect(requestId, "no pending turn was created").to.not.equal(0n);
+    await mockPlatform.write.dispatchSuccessString([
+      arena.address, requestId, HANDLE_SELECTOR, "BuySOMI",
+    ]);
+
+    // One hundredth of a lot at the mock's 100 mark costs 1 USDso, so that is what the
+    // venue must be allowed to take — and it must be an amount, not a blanket approval.
+    const allowance = await usdso.read.allowance([arena.address, poolSomi.address]);
+    expect(allowance, "the pool must be allowed to take the cost of the buy").to.equal(parseEther("1"));
+  });
+
   it("records the resolved duel in DuelHistory when the sink is set", async function () {
     const { arena, mockPlatform, poolSomi } = await deploy();
     const history = await hre.viem.deployContract("DuelHistory", [arena.address]);
