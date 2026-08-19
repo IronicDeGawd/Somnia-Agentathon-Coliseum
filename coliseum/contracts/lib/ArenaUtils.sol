@@ -368,6 +368,7 @@ library ArenaUtils {
         address pool,
         uint256 duelId,
         uint8   fighterId,
+        address usdso,
         mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta
     ) internal view returns (bool canBuy, bool canSell) {
@@ -382,10 +383,33 @@ library ArenaUtils {
         // is now known — but accepts no orders, and a spot book can empty out.
         // Offering either got a fighter's order reverted and its turn lost, so
         // each side must have real size behind it before it is offered.
+        //
+        // THE VAULT IS THE THIRD CONDITION, and leaving it out cost real turns. A
+        // fighter's quote balance is a LEDGER entry — its share of the pot — while
+        // the money an order actually draws on is the Arena's own deposit in this
+        // pool, which is seeded separately and can run dry. The execution path
+        // checks it and refuses; this one did not and offered anyway, so a fighter
+        // was handed a buy that could never fill and lost its turn to it. That is
+        // the same fault as offering a sell to a fighter holding nothing.
+        //
+        // Measured on duel 36: both fighters attempted a buy every single turn and
+        // every one was refused, because the spot vaults held 0.09, 2.00 and 0.87
+        // USDso against a minimum Bitcoin lot costing 64.59.
         return (
-            bal.quoteTokenAmount >= minCost && _hasSize(pool, false),
+            bal.quoteTokenAmount >= minCost
+                && _vaultCovers(pool, usdso, minCost)
+                && _hasSize(pool, false),
             bal.baseTokenAmount >= meta.minQuantity && _hasSize(pool, true)
         );
+    }
+
+    /// @dev Can the Arena's own deposit in this pool fund one smallest buy? A pool
+    ///      that cannot answer is treated as unable, so an unreadable venue costs a
+    ///      fighter one option rather than its turn.
+    function _vaultCovers(address pool, address usdso, uint256 minCost) internal view returns (bool) {
+        try ISpotPool(pool).getWithdrawableBalance(address(this), usdso) returns (uint256 avail) {
+            return avail >= minCost;
+        } catch { return false; }
     }
 
     /// @notice The same question for a perps slot, which cannot be answered from a
@@ -434,6 +458,7 @@ library ArenaUtils {
         address poolWeth,
         address poolWbtc,
         address poolSomi,
+        address usdso,
         mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
         mapping(address => bool) storage poolIsPerp
@@ -452,7 +477,7 @@ library ArenaUtils {
             if (duel.poolMask & bits[i] == 0) continue;
             (bool canBuy, bool canSell) = poolIsPerp[pools[i]]
                 ? perpTradability(pools[i], duelId, fighterId)
-                : tradability(pools[i], duelId, fighterId, fighterBalances, poolMeta);
+                : tradability(pools[i], duelId, fighterId, usdso, fighterBalances, poolMeta);
             if (canBuy)  buf[n++] = buys[i];
             if (canSell) buf[n++] = buys[i] + 1;
         }
@@ -527,8 +552,12 @@ library ArenaUtils {
 
     // ─── LLM prompt builder ──────────────────────────────────────────────────
 
-    /// @notice Build the fighter's turn prompt. Contains no digits: see the note on
-    ///         the qualitative language helpers above for why.
+    /// @notice Build the fighter's turn prompt.
+    ///
+    ///         It carries numbers now, on every market except events. The old rule
+    ///         against digits was a fix for an agent that extracted a numeral and
+    ///         clamped it into an action id; moves are chosen by exact name against
+    ///         the executable set today, so a digit cannot become a trade.
     function buildMarketSummary(
         uint256 duelId,
         uint8   fighterId,
@@ -536,6 +565,7 @@ library ArenaUtils {
         address poolWeth,
         address poolWbtc,
         address poolSomi,
+        address usdso,
         mapping(address => mapping(uint256 => mapping(uint8 => ArenaTypes.PoolBalance))) storage fighterBalances,
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
         mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
@@ -575,7 +605,8 @@ library ArenaUtils {
         }
 
         string[] memory names = actionNames(legalActions(
-            duelId, fighterId, duel, poolWeth, poolWbtc, poolSomi, fighterBalances, poolMeta, poolIsPerp
+            duelId, fighterId, duel, poolWeth, poolWbtc, poolSomi, usdso,
+            fighterBalances, poolMeta, poolIsPerp
         ), v);
         summary = string.concat(summary, " Allowed actions: ", join(names), ".");
         return summary;

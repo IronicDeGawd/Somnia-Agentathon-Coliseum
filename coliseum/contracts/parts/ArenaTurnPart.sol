@@ -144,7 +144,7 @@ contract ArenaTurnPart is ArenaStorage {
         address[3] memory mPools = _duelPools(duelId);
         string memory marketSummary = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
-            mPools[0], mPools[1], mPools[2],
+            mPools[0], mPools[1], mPools[2], USDSO,
             fighterBalances, poolMeta,
             duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
         );
@@ -161,7 +161,7 @@ contract ArenaTurnPart is ArenaStorage {
         // lands outside the set and every event trade becomes a silent Hold.
         string[] memory allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
             duelId, fighterId, duels[duelId],
-            mPools[0], mPools[1], mPools[2],
+            mPools[0], mPools[1], mPools[2], USDSO,
             fighterBalances, poolMeta, poolIsPerp
         ), ArenaUtils.vocabFor(mPools, poolLabel, poolIsPerp));
         bytes memory payload = abi.encodeWithSelector(
@@ -228,7 +228,7 @@ contract ArenaTurnPart is ArenaStorage {
         address[3] memory cPools = _duelPools(pt.duelId);
         uint8[] memory legal = ArenaUtils.legalActions(
             pt.duelId, pt.fighterId, duels[pt.duelId],
-            cPools[0], cPools[1], cPools[2],
+            cPools[0], cPools[1], cPools[2], USDSO,
             fighterBalances, poolMeta, poolIsPerp
         );
 

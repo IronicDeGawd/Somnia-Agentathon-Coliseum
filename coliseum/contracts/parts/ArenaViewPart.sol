@@ -107,11 +107,11 @@ contract ArenaViewPart is ArenaStorage {
         address[3] memory mp = _duelPools(duelId);
         prompt = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
-            mp[0], mp[1], mp[2],
+            mp[0], mp[1], mp[2], USDSO,
             fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
         );
         allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
-            duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], fighterBalances, poolMeta, poolIsPerp
+            duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], USDSO, fighterBalances, poolMeta, poolIsPerp
         ), ArenaUtils.vocabFor(mp, poolLabel, poolIsPerp));
     }
 

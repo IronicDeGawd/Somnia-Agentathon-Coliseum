@@ -275,6 +275,46 @@ describe("Arena — Duel lifecycle", function () {
     expect(prompt, "and no zero price anywhere near it").to.not.match(/SOMI at 0/);
   });
 
+  // A fighter's quote balance is a LEDGER entry — its share of the pot. The money an
+  // order actually draws on is the Arena's own deposit in that pool, seeded
+  // separately, and it can run dry. The allow-list used to ignore it, so a fighter
+  // with a healthy ledger was offered a buy against an empty venue, the execution
+  // path refused it, and the turn was gone.
+  //
+  // Measured on duel 36: both fighters attempted a buy every single turn and every
+  // one was refused, because the spot vaults held 0.09, 2.00 and 0.87 USDso against a
+  // minimum Bitcoin lot costing 64.59. The fighters were doing nothing wrong.
+  it("never offers a buy the arena's own vault cannot fund", async function () {
+    const { arena, poolSomi, usdso } = await deploy(true);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    // The vault is empty, so no buy may be offered however rich the ledger is.
+    const [, empty] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      empty.filter((a) => a.startsWith("Buy")),
+      `an empty vault cannot fund a buy — got ${empty.join(", ")}`,
+    ).to.have.length(0);
+
+    // One lot costs 1 USDso at the mock's 100 mark and hundredth minimum, so a vault
+    // holding less than that still cannot fund one.
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("0.5")]);
+    const [, thin] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      thin.filter((a) => a.startsWith("Buy")),
+      `half a lot is still not a lot — got ${thin.join(", ")}`,
+    ).to.have.length(0);
+
+    // Fund it properly and the buy comes back, which is what proves the gate is the
+    // vault rather than something else having quietly turned trading off.
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+    const [, funded] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      funded.some((a) => a === "BuySOMI"),
+      `a funded vault must offer the buy — got ${funded.join(", ")}`,
+    ).to.equal(true);
+  });
+
   it("records the resolved duel in DuelHistory when the sink is set", async function () {
     const { arena, mockPlatform, poolSomi } = await deploy();
     const history = await hre.viem.deployContract("DuelHistory", [arena.address]);
