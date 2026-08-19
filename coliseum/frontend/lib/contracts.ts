@@ -16,12 +16,14 @@ export const CONTRACT_ADDRESSES = {
   // setPrompt).
   //
   // Arena is linked against a deployed ArenaUtils library
-  // (0xfd85c51c326662d79cba95e530bedc6d6306ede0). Parts, as rewired on
-  // 2026-08-19 to give a spot slot the numbers a trader decides on:
-  //   ArenaVaultPart 0x136a1b3d4b2238a9a30b2bee773b63372cca8ed7
-  //   ArenaDuelPart  0x03fc19b739a0dfff9401277086d86d819f10cef3
-  //   ArenaTurnPart  0x86853427bb61187536784fa467a7d772b1b3fa79
-  //   ArenaViewPart  0x8d172e656062ffc471ee414ad3de7a6b8509c401
+  // (0xb6fd414d29608a0b843b00dab5d9c156c1e4ef63). Parts, as rewired on
+  // 2026-08-19 for the numeric spot prompt and the trading gates it exposed —
+  // a sell now approves the asset to the pool, and neither side is offered
+  // unless the Arena can actually deliver it:
+  //   ArenaVaultPart 0x530f4581542ff83c83dc822459ef3a5b0110ff9a
+  //   ArenaDuelPart  0x3ed9a91ff94870c90c5a2c5ce2cf566b97609161
+  //   ArenaTurnPart  0x7dbc2de15791b261c2669fb80dbdb500f6fc8cb4
+  //   ArenaViewPart  0x11b377700f5ef2dd9d40c5db570231677fcb8ce9
   // The router's address never moves, so nothing here changes when parts do.
   Arena: '0x301d9364BDb2fd76E33c13eBE8FCc956BAcfbeD6' as const,
   // Redeployed 2026-08-18 for one-shot Reactivity ticks. Unlike Arena it is an
