@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient, useReadContracts } from 'wagmi';
 import { parseAbiItem, formatUnits } from 'viem';
-import { ABIS, CONTRACT_ADDRESSES, POOL_SLOTS, FIGHTER_ACTIONS, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import { ABIS, CONTRACT_ADDRESSES, POOL_SLOTS, actionLabels, slotLabel, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
+import type { SlotKind } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { getWsClient } from '@/lib/wsClient';
 import type { DuelData } from '@/hooks/useDuelState';
@@ -18,6 +19,45 @@ export interface PoolHolding {
   quoteAmount: string;    // formatted USDso amount
 }
 
+/**
+ * One market a perps fighter is actually in.
+ *
+ * `size` is SIGNED and that sign is the whole point: positive is a long, negative
+ * is a short, and zero means the fighter never entered this market. A holdings
+ * row cannot express that — an amount is a quantity owned, and a short owns
+ * nothing — which is why perps gets its own shape rather than being squeezed into
+ * the spot one.
+ */
+export interface PerpPosition {
+  market: string;               // slot label, e.g. "ETH"
+  poolAddress: `0x${string}`;
+  size: bigint;                 // signed, in base units
+  baseDecimals: number;
+  entryPrice: bigint;           // 18-dec USDso, the price it got in at
+  markPrice: bigint;            // 18-dec USDso, the price right now
+}
+
+/**
+ * What a perps fighter is worth, and why.
+ *
+ * A perps fighter has ONE account backing all three of its markets, so there is no
+ * per-market balance to add up — the score is account equity, which is collateral
+ * plus unrealised profit plus funding, and the Arena is the contract that decides
+ * it. `live` false means the oracle could not be read just now; `snapshot` is then
+ * what a finalize at this moment would score instead.
+ */
+export interface FighterPerp {
+  live: boolean;
+  equity: bigint;               // signed, 18 dec — only meaningful when `live`
+  snapshot: bigint;             // 18 dec, the last recorded score
+  account: `0x${string}`;
+  /** 0 healthy · 1 margin call · 2 partial liquidation · 3 close-out. */
+  marginStatus: number;
+  /** The collateral this fighter started with, which is what PnL is measured from. */
+  budget: bigint;
+  positions: PerpPosition[];
+}
+
 export interface FighterLive {
   valueUsdso: bigint;           // total portfolio value in USDso (18 dec)
   pnl: bigint;                  // value - initialUsdsoPerFighter (signed)
@@ -25,6 +65,11 @@ export interface FighterLive {
   holdings: PoolHolding[];      // per-pool base+quote amounts
   lastAction: string;           // e.g. "BUY WBTC", "HOLD", or "" if none yet
   thinking: boolean;            // FighterMoveRequested with no subsequent FighterMove
+  /**
+   * Present only on a perps fight, and when it is present it — not `holdings` —
+   * is where the fighter's value comes from. See `FighterPerp`.
+   */
+  perp?: FighterPerp;
 }
 
 export interface PoolMarket {
@@ -39,6 +84,12 @@ export interface PoolMarket {
    * not be shown with a currency symbol or a "/USDso" pair suffix.
    */
   isQuestion: boolean;
+  /**
+   * True when this slot is a perpetual futures market. It carries a label like a
+   * question does, but its number is a PRICE — so the two cannot be told apart by
+   * the label alone.
+   */
+  isPerp: boolean;
 }
 
 export interface DuelLiveResult {
@@ -80,20 +131,8 @@ const EMPTY_RESULT: DuelLiveResult = {
   isLoading: false,
 };
 
-/**
- * A slot's question, as a few characters ("BTCUP"), or null for a plain coin book.
- * Stored as 8 raw bytes on-chain and right-padded with zeros.
- */
-function questionLabel(raw?: `0x${string}`): string | null {
-  if (!raw || raw === '0x0000000000000000') return null;
-  let out = '';
-  for (let i = 2; i < raw.length; i += 2) {
-    const code = parseInt(raw.slice(i, i + 2), 16);
-    if (code === 0) break;
-    out += String.fromCharCode(code);
-  }
-  return out.length > 0 ? out : null;
-}
+/** A slot's label ("BTCUP", "BTC"), or null for a plain coin book. */
+const questionLabel = slotLabel;
 
 function bigintToNum(v: bigint, decimals: number): number {
   return Number(formatUnits(v, decimals));
@@ -107,14 +146,17 @@ function bigintToNum(v: bigint, decimals: number): number {
 // restored seen-keys so nothing is double-counted. Bump the version on shape change.
 interface LiveCache {
   markPrices: [string, { price: string; history: number[] }][];
-  lastActions: [number, string][];
+  lastActions: [number, number][];
   thinking: [number, boolean][];
   seenMarkPrices: string[];
   seenMoves: string[];
   seenRequests: string[];
 }
 
-const liveCacheKey = (duelId: bigint) => `coliseum:duellive:v1:${duelId.toString()}`;
+// v2 stores action IDs rather than labels. What an id MEANS depends on which
+// markets the fight is on, and those are not known at the moment a move arrives —
+// so a label baked in at ingest could be wrong and then cached as wrong.
+const liveCacheKey = (duelId: bigint) => `coliseum:duellive:v2:${duelId.toString()}`;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -137,7 +179,7 @@ export function useDuelLive(
 
   // ── Last action state per fighter (registry index) ─────────────────────────
   // keyed by fighterId (registry index)
-  const [lastActions, setLastActions] = useState<Map<number, string>>(new Map());
+  const [lastActions, setLastActions] = useState<Map<number, number>>(new Map());
 
   // ── Thinking state: fighterId → bool ──────────────────────────────────────
   const [thinking, setThinking] = useState<Map<number, boolean>>(new Map());
@@ -235,8 +277,10 @@ export function useDuelLive(
         seenMoves.current.add(key);
         const fid = args.fighterId ?? -1;
         const action = args.action ?? 0;
-        const actionLabel = FIGHTER_ACTIONS[action] ?? 'HOLD';
-        setLastActions((prev) => new Map(prev).set(fid, actionLabel));
+        // The ID, not a label. Which market each id refers to is only known once
+        // the fight's three slots have been read, and that read may not have
+        // returned yet — see `slotKinds` below.
+        setLastActions((prev) => new Map(prev).set(fid, action));
         // Once a FighterMove arrives, thinking is done for that fighter
         setThinking((prev) => new Map(prev).set(fid, false));
       }
@@ -378,6 +422,16 @@ export function useDuelLive(
         functionName: 'poolQuestion' as const,
         args: [addr] as [`0x${string}`],
       },
+      {
+        // A perps slot ALSO carries a label ("BTC"), so the label alone no longer
+        // says how to read the number behind it. A question's number is a chance
+        // between zero and one; a perp's is a price in the tens of thousands. Ask
+        // outright, or Bitcoin at $64,000 renders as 6,400,000%.
+        address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+        abi: ABIS.Arena,
+        functionName: 'isPerpPool' as const,
+        args: [addr] as [`0x${string}`],
+      },
     ]),
     query: { enabled: !!duelPools },
   });
@@ -388,12 +442,15 @@ export function useDuelLive(
         if ((duel.poolMask & slot.bit) === 0) return [];
         const address = duelPools[i];
         if (!address || /^0x0+$/.test(address)) return [];
-        const meta = metaReads?.[i * 2]?.result as readonly [number, bigint, bigint, bigint] | undefined;
-        const question = metaReads?.[i * 2 + 1]?.result as `0x${string}` | undefined;
+        const meta = metaReads?.[i * 3]?.result as readonly [number, bigint, bigint, bigint] | undefined;
+        const question = metaReads?.[i * 3 + 1]?.result as `0x${string}` | undefined;
+        const isPerp = metaReads?.[i * 3 + 2]?.result === true;
         const label = questionLabel(question);
         return [{
           key: label ?? (slot.key as string),
-          isQuestion: label !== null,
+          // A perps slot has a label but quotes a price, so it is NOT a question.
+          isQuestion: label !== null && !isPerp,
+          isPerp,
           bit: slot.bit as number,
           address,
           // Fall back to 18 only while the read is in flight; every registered pool
@@ -401,6 +458,23 @@ export function useDuelLive(
           decimals: meta ? Number(meta[0]) : 18,
         }];
       });
+
+  // ── What each of the three slots holds ────────────────────────────────────
+  // Kept in slot order and NOT filtered by the mask, because the action ids are
+  // numbered against slots rather than against the markets a fight happens to use.
+  const slotKinds: SlotKind[] | undefined = duelPools && metaReads
+    ? POOL_SLOTS.map((_, i) => ({
+        label: questionLabel(metaReads[i * 3 + 1]?.result as `0x${string}` | undefined),
+        isPerp: metaReads[i * 3 + 2]?.result === true,
+      }))
+    : undefined;
+
+  // Six ids, two per slot, and what a pair MEANS depends on the market behind it:
+  // buy and sell on a coin book, back and drop on a question, long and short on a
+  // perpetual. Undefined until the slots are read, so a move reads by its
+  // spot-book name for a moment rather than by the wrong market's name forever.
+  const moveLabels = actionLabels(slotKinds);
+  const labelOf = (id?: number) => (id === undefined ? '' : moveLabels[id] ?? 'HOLD');
 
   // ── Read fighterBalances for each active pool × 2 fighters ────────────────
   // Build batched contract reads: [poolA×fighterA, poolA×fighterB, poolB×fighterA, …]
@@ -425,6 +499,76 @@ export function useDuelLive(
   const { data: balancesRaw, isLoading: balancesLoading } = useReadContracts({
     contracts: balanceContracts,
     query: { enabled: enabled && activePools.length > 0, refetchInterval: 10_000, refetchIntervalInBackground: true },
+  });
+
+  // ── Perps: the score, and the positions behind it ─────────────────────────
+  // A perps fight is scored from account equity, NOT from the per-pool ledger read
+  // above. That ledger is credited with the full deposit on every pool at start and
+  // a perps trade never touches it again — so reading it makes both fighters look
+  // worth three times their deposit, unchanged, for the whole fight. Payouts were
+  // never affected (they come from equity), but the scoreboard was.
+  const isPerpDuel = activePools.some((p) => p.isPerp);
+
+  const { data: perpRaw, isLoading: perpLoading } = useReadContracts({
+    contracts: [fighterAIndex, fighterBIndex].map((f) => ({
+      address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+      abi: ABIS.Arena,
+      functionName: 'perpPositionOf' as const,
+      args: [duelId, f] as [bigint, number],
+    })),
+    query: {
+      enabled: enabled && isPerpDuel,
+      refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
+    },
+  });
+
+  const perpResultOf = (i: number) => {
+    const r = perpRaw?.[i];
+    if (r?.status !== 'success' || !r.result) return null;
+    return r.result as readonly [boolean, bigint, bigint, `0x${string}`, number];
+  };
+
+  // The duel records the DESKS it trades, but the margin bank keys every position
+  // by the MARKET behind the desk — so looking a position up by the address the
+  // duel names finds nothing, silently, and every fighter reads as flat forever.
+  // The desk is asked to name its market first.
+  const { data: marketsRaw } = useReadContracts({
+    contracts: activePools.map((pool) => ({
+      address: pool.address,
+      abi: ABIS.PerpDesk,
+      functionName: 'market' as const,
+    })),
+    query: { enabled: enabled && isPerpDuel && activePools.length > 0 },
+  });
+
+  const perpMarketAddrs = activePools.map((_, i) => {
+    const r = marketsRaw?.[i];
+    return r?.status === 'success' ? (r.result as `0x${string}`) : undefined;
+  });
+
+  // The per-market breakdown also needs the fighter's trading ADDRESS, which only
+  // the read above can supply — so this is a second round rather than one batch.
+  const perpAccounts = [perpResultOf(0)?.[3], perpResultOf(1)?.[3]];
+  const haveAccounts = perpAccounts.every((a) => a && !/^0x0+$/.test(a));
+  const haveMarkets = perpMarketAddrs.every(Boolean);
+
+  const { data: positionsRaw } = useReadContracts({
+    contracts: haveAccounts && haveMarkets
+      ? perpAccounts.flatMap((account) =>
+          perpMarketAddrs.map((market) => ({
+            address: CONTRACT_ADDRESSES.MarginBank,
+            abi: ABIS.MarginBank,
+            functionName: 'getPosition' as const,
+            args: [account as `0x${string}`, market as `0x${string}`] as [`0x${string}`, `0x${string}`],
+          })),
+        )
+      : [],
+    query: {
+      enabled: enabled && isPerpDuel && haveAccounts && haveMarkets && activePools.length > 0,
+      refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
+    },
   });
 
   // ── Derive per-fighter portfolio value ─────────────────────────────────────
@@ -477,6 +621,51 @@ export function useDuelLive(
     }
   });
 
+  // ── Perps override ─────────────────────────────────────────────────────────
+  // On a perps fight everything derived above is wrong by construction, so it is
+  // replaced rather than adjusted. Equity when the oracle answers; the last
+  // recorded score when it does not — never a blend of the two, because a client
+  // that cannot tell them apart cannot tell a flat fighter from a dark market.
+  const buildPerp = (i: number): FighterPerp | undefined => {
+    const r = perpResultOf(i);
+    if (!r) return undefined;
+    const [live, equity, snapshot, account, marginStatus] = r;
+    const positions: PerpPosition[] = activePools.flatMap((pool, pi) => {
+      const raw = positionsRaw?.[i * activePools.length + pi];
+      if (raw?.status !== 'success' || !raw.result) return [];
+      const [size, avgEntryPrice] = raw.result as readonly [bigint, bigint, bigint, bigint];
+      // A fighter that never entered a market has no position to show, and a row
+      // reading zero would be indistinguishable from one that closed out flat.
+      if (size === BigInt(0)) return [];
+      return [{
+        market: pool.key,
+        poolAddress: pool.address,
+        size,
+        baseDecimals: pool.decimals,
+        entryPrice: avgEntryPrice,
+        markPrice: markPrices.get(pool.address.toLowerCase())?.price ?? BigInt(0),
+      }];
+    });
+    return { live, equity, snapshot, account, marginStatus, budget: initialUsdso, positions };
+  };
+
+  const perpA = isPerpDuel ? buildPerp(0) : undefined;
+  const perpB = isPerpDuel ? buildPerp(1) : undefined;
+
+  /** A perps fighter's score: equity while the oracle answers, else the snapshot. */
+  const perpValue = (p?: FighterPerp) =>
+    p ? (p.live ? p.equity : p.snapshot) : undefined;
+
+  const perpValueA = perpValue(perpA);
+  const perpValueB = perpValue(perpB);
+  if (perpValueA !== undefined) valueA = perpValueA;
+  if (perpValueB !== undefined) valueB = perpValueB;
+  if (isPerpDuel) {
+    // One account backs all three markets, so there is no per-pool balance to list.
+    holdingsA.length = 0;
+    holdingsB.length = 0;
+  }
+
   // ── Markets ────────────────────────────────────────────────────────────────
   const markets: PoolMarket[] = activePools.map((pool) => {
     const entry = markPrices.get(pool.address.toLowerCase());
@@ -488,12 +677,20 @@ export function useDuelLive(
       markPriceNum: bigintToNum(price, 18),
       history: entry?.history ?? [],
       isQuestion: pool.isQuestion,
+      isPerp: pool.isPerp,
     };
   });
 
   // ── Compose result ─────────────────────────────────────────────────────────
-  const pnlA = valueA > BigInt(0) ? (valueA > initialUsdso ? valueA - initialUsdso : -(initialUsdso - valueA)) : BigInt(0);
-  const pnlB = valueB > BigInt(0) ? (valueB > initialUsdso ? valueB - initialUsdso : -(initialUsdso - valueB)) : BigInt(0);
+  // The zero guard means "no balances have been read yet", not "this fighter is
+  // worth nothing" — without it a fight shows a full loss for a moment while the
+  // first read is in flight. It does NOT apply to perps: a fighter whose equity is
+  // genuinely zero has lost its whole budget, and that is the one moment the
+  // scoreboard most needs to say so.
+  const pnlOf = (value: bigint, isPerp: boolean) =>
+    isPerp || value > BigInt(0) ? value - initialUsdso : BigInt(0);
+  const pnlA = pnlOf(valueA, perpValueA !== undefined);
+  const pnlB = pnlOf(valueB, perpValueB !== undefined);
 
   // A resolved duel is over — no fighter is "thinking". (Matters for replays of
   // finished duels, where a trailing FighterMoveRequested has no clearing move.)
@@ -504,8 +701,9 @@ export function useDuelLive(
     pnl: pnlA,
     pnlNum: Number(formatUnits(pnlA, 18)),
     holdings: holdingsA,
-    lastAction: lastActions.get(fighterAIndex) ?? '',
+    lastAction: labelOf(lastActions.get(fighterAIndex)),
     thinking: duelOver ? false : (thinking.get(fighterAIndex) ?? false),
+    perp: perpA,
   };
 
   const fB: FighterLive = {
@@ -513,14 +711,15 @@ export function useDuelLive(
     pnl: pnlB,
     pnlNum: Number(formatUnits(pnlB, 18)),
     holdings: holdingsB,
-    lastAction: lastActions.get(fighterBIndex) ?? '',
+    lastAction: labelOf(lastActions.get(fighterBIndex)),
     thinking: duelOver ? false : (thinking.get(fighterBIndex) ?? false),
+    perp: perpB,
   };
 
   return {
     fighterA: fA,
     fighterB: fB,
     markets,
-    isLoading: balancesLoading,
+    isLoading: balancesLoading || (isPerpDuel && perpLoading),
   };
 }

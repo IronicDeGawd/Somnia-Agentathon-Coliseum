@@ -5,6 +5,7 @@ import "./lib/ArenaTypes.sol";
 import "./interfaces/IFighterRegistry.sol";
 import "./interfaces/ISpotPool.sol";
 import "./interfaces/ISomniaReactivityPrecompile.sol";
+import "./interfaces/IPerps.sol";
 
 /// @title ArenaStorage
 /// @notice The single declaration of everything Arena remembers.
@@ -206,6 +207,61 @@ abstract contract ArenaStorage {
     ///         twice.
     uint64 internal armedForBlock;
 
+    // ─── Perps ────────────────────────────────────────────────────────────────
+    //
+    // All four are INTERNAL, and that is not a style choice. The router is never
+    // redeployed, so its compiled bytecode holds getters only for the public
+    // variables that existed when it shipped. A new `public` variable here would
+    // generate a getter on every freshly compiled part AND on a freshly compiled
+    // router — which means the deploy script, which only routes selectors the router
+    // does not already answer, would decline to route it. On the LIVE router, which
+    // has no such getter, that selector would then answer nothing. Appending
+    // internal state and reading it through ArenaViewPart is the pattern `poolLabel`
+    // and `reactivityOn` already established.
+
+    /// @notice Where fighter trading accounts are leased and orders are routed.
+    ///         Zero until `setPerpDesks`, and every perps path checks it.
+    address internal perpRegistry;
+
+    /// @notice True once the perp desks have been registered. Explicit rather than
+    ///         inferred from `perpRegistry`, matching `simPoolsSet`/`eventPoolsSet`.
+    bool internal perpDesksSet;
+
+    /// @notice Which addresses are perp desks. A mapping rather than named slots
+    ///         because there are six of them and `_requireValidPool`'s condition
+    ///         chain is already at the edge of readable — and because a mapping is
+    ///         what lets the trading and scoring paths ask "is this slot a perp"
+    ///         in one cheap read.
+    mapping(address => bool) internal poolIsPerp;
+
+    /// @notice Each fighter's last known equity in a perps fight, clamped at zero,
+    ///         written at the start of every turn.
+    ///
+    ///         Exists for exactly one reason: a perps fighter's score is a live
+    ///         oracle read, and an oracle that is stale at the moment of finalize
+    ///         would otherwise score both fighters zero and turn a real fight into a
+    ///         draw. Neither fighter chose the moment of finalize, so the last
+    ///         reading taken while the market was healthy is the better estimate —
+    ///         the same reasoning, and the same fallback shape, that
+    ///         `duelMarkSnapshots` already provides for a dark spot book.
+    mapping(uint256 => mapping(uint8 => uint256)) internal perpEquitySnapshots;
+
+    /// @notice The mark price each of a fight's markets opened at, written once on the
+    ///         first turn and never again.
+    ///
+    ///         For the turn prompt, and only reachable because of how slowly these
+    ///         markets move: a perp mark shifts a few basis points across a turn, so
+    ///         comparing against LAST turn tells a fighter almost nothing, while
+    ///         comparing against the price the fight opened at accumulates into a real
+    ///         trend. Measured 2026-08-19: eighteen moves across two fights, the
+    ///         largest a seven-basis-point step, every one reported as "flat" — and so
+    ///         every fighter held, every round, and both fights were draws.
+    ///
+    ///         Appended, internal, and read through `ArenaViewPart` like everything
+    ///         else added after the router shipped: the live router has no compiled
+    ///         getter for storage it did not know about.
+    mapping(uint256 => mapping(address => uint256)) internal duelOpenMarkSnapshots;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {
@@ -247,13 +303,32 @@ abstract contract ArenaStorage {
             if (!eventPoolsSet) revert ArenaTypes.InvalidPool(address(0));
             return [EVENT_POOL_WETH, EVENT_POOL_WBTC, EVENT_POOL_SOMI];
         }
+        // Perps has no fixed set to return: which three markets a fight gets is
+        // computed from its budget at the moment it starts, because the margin a
+        // market costs moves with open interest. Anything that needs the set must
+        // either ask the registry (`_selectPerpPools`) or read the duel's own
+        // recorded pools. Reverting here is what stops a caller silently starting a
+        // perps fight on the spot books.
+        if (kind == ArenaTypes.MarketKind.Perps) revert ArenaTypes.InvalidPool(address(0));
         return [POOL_WETH, POOL_WBTC, POOL_SOMI];
+    }
+
+    /// @notice The three perp desks a fight with this budget should be offered.
+    ///         Kept here rather than in a part because both the duel part (to start
+    ///         a fight) and the view part (to show a lobby what a tier currently
+    ///         offers) need it.
+    function _selectPerpPools(uint256 budget, uint256 salt) internal view returns (address[3] memory) {
+        if (!perpDesksSet || perpRegistry == address(0)) revert ArenaTypes.PerpRegistryUnset();
+        return IPerpRegistry(perpRegistry).selectMarkets(budget, salt);
     }
 
     /// @notice Reject any pool address Arena was never told about. Trading and
     ///         vault withdrawal both gate on this, so an arbitrary address can
     ///         never be handed a token approval or an order.
     function _requireValidPool(address pool) internal view {
+        // Six perp desks would make the condition below unreadable, and they are the
+        // one set whose membership is already recorded as a mapping.
+        if (poolIsPerp[pool]) return;
         if (pool != POOL_WETH && pool != POOL_WBTC && pool != POOL_SOMI
             && pool != SIM_POOL_WETH && pool != SIM_POOL_WBTC && pool != SIM_POOL_SOMI
             && pool != EVENT_POOL_WETH && pool != EVENT_POOL_WBTC && pool != EVENT_POOL_SOMI)
@@ -406,9 +481,16 @@ abstract contract ArenaStorage {
             // maxFeePerGas must be >= priorityFeePerGas + baseFee.
             maxFeePerGas:            50_000_000_000,
             // Arena _runTurn does pool snapshots + 2 LLM createRequest calls, and now
-            // also books the next tick (210,000 gas). 3M gas was tight; reactive txs
-            // were silently failing out-of-gas with no event. 15M, under the 200M cap.
-            gasLimit:                15_000_000,
+            // also books the next tick (210,000 gas). 3M was tight and reactive txs
+            // failed out-of-gas with no event; 15M then held for weeks — until the
+            // same turn on the same fight length measured 7,477,821 gas one hour and
+            // 29,382,823 the next. The variable part is the two `createRequest` calls,
+            // whose cost belongs to the inference platform, not to us, so there is no
+            // figure here that is safe by arithmetic. A firing that runs out of gas
+            // books no successor and the chain ends silently, so the limit is set well
+            // clear of the worst seen rather than just above it. Unused gas is not
+            // charged; being short costs every remaining turn of every live fight.
+            gasLimit:                60_000_000,
             isGuaranteed:            false,
             isCoalesced:             false
         });

@@ -323,6 +323,37 @@ describe("Arena — one-shot Reactivity ticks", function () {
     );
   });
 
+  it("advances ONE duel per firing, and re-arms for the next block", async function () {
+    // The failure this exists for: a firing used to advance every active duel in one
+    // transaction. A turn is two inference requests and their cost belongs to the
+    // platform — measured 7,477,821 gas one hour and 29,382,823 the next on the same
+    // fight length — so a firing carrying several duels ran out of gas. A firing that
+    // reverts books no successor, and the chain ends silently: five concurrent fights
+    // stalled for fifteen thousand blocks on chain with nothing reporting it.
+    const { arena } = await deploy();
+    await arena.write.resubscribe();
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+
+    const before = await Promise.all([1n, 2n, 3n].map((id) => lastTurnBlockOf(arena, id)));
+    // Past due for all three at once — the case that broke.
+    await mineBlock(Number(INTERVAL) + 2);
+    const hash = await fireTick(arena, await blockNumber());
+
+    const after = await Promise.all([1n, 2n, 3n].map((id) => lastTurnBlockOf(arena, id)));
+    const moved = after.filter((v, i) => v !== before[i]).length;
+    expect(moved, "exactly one duel should have taken a turn").to.equal(1);
+
+    // And the ones left behind must be picked up, so the next tick is aimed at the
+    // very next block rather than a full interval away. Read from the event: the
+    // precompile is codeless locally, so the stored id is always zero here.
+    const targets = await armedTargets(hash);
+    expect(targets, "the firing booked a successor").to.have.lengthOf(1);
+    expect(Number(targets[0]), "aimed at the next block for the duels still overdue")
+      .to.equal(Number(await blockNumber()) + 1);
+  });
+
   it("only the precompile can fire a tick", async function () {
     const { arena, owner } = await deploy();
     await arena.write.resubscribe();

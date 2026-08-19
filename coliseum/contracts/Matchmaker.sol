@@ -88,6 +88,10 @@ contract Matchmaker {
     // players after the duel starts, so drift can't silently kill a match.
     uint256 public constant DEPOSIT_BUFFER_BPS = 2500;
 
+    // The perps market. Its entry price is a fixed constant rather than a figure read
+    // off a book, so it takes no headroom — see `_bufferBpsFor`.
+    uint8 private constant KIND_PERPS = 3;
+
     // ─── Queue slots (one per tier) ───────────────────────────────────────────
 
     struct Slot {
@@ -192,10 +196,11 @@ contract Matchmaker {
     /// @notice Enter the matchmaking queue.
     /// @param fighter    Your FighterRegistry index (0 to FIGHTER_COUNT-1).
     /// @param turns      Tier: 3, 6, 9, or 15 rounds.
-    /// @param marketKind 0 spot coins, 1 practice, 2 events (three prediction
-    ///        prediction questions). Queues are kept separate per market, so you
-    ///        only ever match someone who chose the same one — a spot fight and a
-    ///        events fight cost wildly different amounts and could not share a pot.
+    /// @param marketKind 0 spot coins, 1 practice, 2 events (three live prediction
+    ///        questions), 3 perps (three leveraged futures markets, where a fighter
+    ///        may also bet a market DOWN). Queues are kept separate per market, so you
+    ///        only ever match someone who chose the same one — the four cost wildly
+    ///        different amounts and could not share a pot.
     ///
     /// Approve this contract for halfDeposit(turns, marketKind) USDso first.
     function queue(uint8 fighter, uint16 turns, uint8 marketKind) external {
@@ -203,7 +208,7 @@ contract Matchmaker {
             revert InvalidTier();
         // Arena would reject an unknown market anyway, but only after both
         // deposits had been taken and the pair matched.
-        if (marketKind > 2) revert InvalidMarket();
+        if (marketKind > 3) revert InvalidMarket();
 
         // Validate fighter index against the FighterRegistry (M-1 fix).
         // NOTE: FIGHTER_COUNT lives on the registry, not on Arena.
@@ -411,8 +416,19 @@ contract Matchmaker {
         uint256 minDep = arena.minDepositForKind(turns, marketKind);
         if (minDep == 0) minDep = 2e18;
         uint256 total  = minDep + arena.platformFee(turns);
-        total += (total * DEPOSIT_BUFFER_BPS) / 10_000; // headroom for price drift
+        total += (total * _bufferBpsFor(marketKind)) / 10_000;
         return (total + 1) / 2; // ceil — ensures combined >= required + buffer
+    }
+
+    /// @dev Headroom exists because `minDepositFor` reads a thin, volatile book, so
+    ///      the amount required at match time can be higher than the amount quoted at
+    ///      queue time. A perps entry is a fixed advertised constant computed before
+    ///      any pool is touched — it cannot drift, so there is nothing to leave room
+    ///      for. Charging it anyway turned an advertised 2.40 entry into 3.00 and then
+    ///      refunded the difference: two extra transfers, a larger approval for the
+    ///      player to grant, and a lobby price that did not match what was taken.
+    function _bufferBpsFor(uint8 marketKind) internal pure returns (uint256) {
+        return marketKind == KIND_PERPS ? 0 : DEPOSIT_BUFFER_BPS;
     }
 
     function getSlot(uint16 turns, uint8 marketKind)
@@ -487,7 +503,26 @@ contract Matchmaker {
         usdso.approve(address(arena), 0);
         if (!usdso.approve(address(arena), required)) revert ApproveFailed();
 
-        uint256 duelId = arena.startDuelOn(fA, fB, turns, marketKind);
+        // GUARDED, for the same reason the drift branch above exists: a revert here
+        // reverts the whole queue transaction, and that transaction belongs to the
+        // SECOND player. They would lose their gas, the first player would stay
+        // queued, and the site would show a failed queue with nothing explaining it.
+        // Perps adds several ways for this to fail that no other market has — too few
+        // markets qualifying for the tier at that moment, a registry float too small
+        // to fund a fighter, a full arena — and none of them is the player's fault.
+        uint256 duelId;
+        try arena.startDuelOn(fA, fB, turns, marketKind) returns (uint256 id) {
+            duelId = id;
+        } catch {
+            // Same shape as the drift refund: drop the approval, return every wei
+            // collected, and say so. Odd-wei dust to pB.
+            usdso.approve(address(arena), 0);
+            uint256 each = total / 2;
+            if (!usdso.transfer(pA, each)) revert TransferFailed();
+            if (!usdso.transfer(pB, total - each)) revert TransferFailed();
+            emit MatchRefunded(pA, pB, turns, each, "duel start rejected");
+            return;
+        }
 
         // H-4 fix: reset approval to zero after startDuel consumed it
         usdso.approve(address(arena), 0);

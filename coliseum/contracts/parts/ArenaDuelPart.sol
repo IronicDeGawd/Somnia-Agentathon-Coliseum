@@ -7,6 +7,7 @@ import "../lib/ArenaUtils.sol";
 import "../interfaces/IFighterRegistry.sol";
 import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/IDuelHistory.sol";
+import "../interfaces/IPerps.sol";
 
 /// @title ArenaDuelPart
 /// @notice A duel's beginning and end: taking the deposit, escrowing the pot,
@@ -72,7 +73,7 @@ contract ArenaDuelPart is ArenaStorage {
         uint16 turns,
         uint8  marketKind
     ) external returns (uint256 duelId) {
-        if (marketKind > uint8(ArenaTypes.MarketKind.Events)) revert ArenaTypes.InvalidMarketKind();
+        if (marketKind > uint8(ArenaTypes.MarketKind.Perps)) revert ArenaTypes.InvalidMarketKind();
         return _startOn(fighterA, fighterB, turns, ArenaTypes.MarketKind(marketKind));
     }
 
@@ -84,6 +85,18 @@ contract ArenaDuelPart is ArenaStorage {
     ) internal returns (uint256 duelId) {
         // `simulated` on the duel record still means only "the mock books", which
         // is what every consumer reading that flag has always assumed.
+        //
+        // Perps is the one market with no fixed pool set to look up. Which three of
+        // the six markets a fight gets is decided HERE, from what its budget can
+        // actually afford at this moment — because the margin a market costs scales
+        // with open interest and moves on its own. `nextDuelId` is the rotation salt,
+        // so two consecutive fights at the same tier are not the same fight.
+        if (kind == ArenaTypes.MarketKind.Perps) {
+            return _start(
+                fighterA, fighterB, turns, kind,
+                _selectPerpPools(ArenaUtils.perpBudget(turns), nextDuelId)
+            );
+        }
         return _start(fighterA, fighterB, turns, kind, _poolsFor(kind));
     }
 
@@ -193,12 +206,38 @@ contract ArenaDuelPart is ArenaStorage {
             fighterBalances[mPools[i]][duelId][fighterB].quoteTokenAmount = initialUsdsoPerFighter;
         }
 
+        // On perps each fighter also needs an ADDRESS of its own, because margin is
+        // cross and keyed on the trader's address: two fighters trading from Arena's
+        // address would share one margin pool, and a liquidation caused by one could
+        // seize collateral backing the other. One account per fighter for the whole
+        // fight — not one per market — so a fighter's three slots pool their margin
+        // the way a real trader's would.
+        //
+        // Deliberately NOT wrapped in try/catch. A fight whose fighters have no
+        // funded accounts is a fight where every move fails, and taking a player's
+        // deposit for that is worse than refusing to start.
+        if (kind == ArenaTypes.MarketKind.Perps) {
+            emit ArenaTypes.PerpMarketsSelected(duelId, mPools, initialUsdsoPerFighter);
+            _leasePerpAccount(duelId, fighterA, initialUsdsoPerFighter);
+            _leasePerpAccount(duelId, fighterB, initialUsdsoPerFighter);
+        }
+
         emit ArenaTypes.DuelStarted(duelId, fighterA, fighterB, msg.sender, turns, mask, block.number);
 
         // Arm the first tick. Nothing is armed while the arena is empty, so this is
         // what starts the chain — and if a duel already running is due sooner, this
         // leaves that earlier subscription alone.
         _scheduleNextTick();
+    }
+
+
+    function _leasePerpAccount(uint256 duelId, uint8 fighterId, uint256 budget) internal {
+        address account = IPerpRegistry(perpRegistry).lease(duelId, fighterId, budget);
+        // Seed the first score reading now, so a fight whose oracle goes stale before
+        // its first turn still has something truthful to fall back on rather than a
+        // zero that would read as a wiped-out fighter.
+        perpEquitySnapshots[duelId][fighterId] = budget;
+        emit ArenaTypes.PerpAccountLeased(duelId, fighterId, account, budget);
     }
 
 
@@ -233,7 +272,23 @@ contract ArenaDuelPart is ArenaStorage {
         uint256 valueA = 0;
         uint256 valueB = 0;
 
-        for (uint256 i = 0; i < 3; i++) {
+        // A perps fighter is not scored slot by slot. Its three slots share one
+        // margin pot, and the protocol already keeps the only correct total for that
+        // pot: account equity — collateral plus unrealised profit plus realised plus
+        // funding, in one signed number, measured exact to zero wei against
+        // `deposit + size x (mark - entry)`. Adding the slots up separately would
+        // count the same money three times.
+        //
+        // This is also the whole reason shorting was nearly free to add. Once the
+        // score is equity rather than cash-plus-holdings, a negative position is
+        // handled by the protocol's own arithmetic instead of by an accounting rewrite.
+        bool perps = poolIsPerp[pools[0]];
+        if (perps) {
+            valueA = _perpScore(duelId, duel.fighterA, useSnapshot);
+            valueB = _perpScore(duelId, duel.fighterB, useSnapshot);
+        }
+
+        for (uint256 i = 0; !perps && i < 3; i++) {
             if (duel.poolMask & bits[i] == 0) continue;
             address pool = pools[i];
             uint256 snap = duelMarkSnapshots[duelId][pool];
@@ -303,9 +358,75 @@ contract ArenaDuelPart is ArenaStorage {
             ) {} catch {}
         }
 
+        // Close both fighters' positions and take the collateral back into the float.
+        //
+        // AFTER the result is stored and emitted, and best-effort. The flatten can
+        // genuinely fail — a book can go dark, a market can flip to close-only — and a
+        // revert on this path would freeze the fight. A frozen fight is one where the
+        // players cannot recover their stake, which is far worse than seed collateral
+        // sitting in a quarantined account until someone retries it. Same rule, and
+        // the same shape, as the history-sink write above.
+        if (perps) {
+            _releasePerpAccount(duelId, duel.fighterA);
+            _releasePerpAccount(duelId, duel.fighterB);
+        }
+
         // Re-aim at whichever fight is now due soonest — or cancel outright, which
         // is what happens on the last one out. An idle arena pays nothing.
         _scheduleNextTick();
+    }
+
+
+    /// @dev A fighter's score: live equity, clamped at zero, with the last healthy
+    ///      reading as the fallback.
+    ///
+    ///      Clamped because a liquidated fighter's equity can go NEGATIVE, and a
+    ///      negative score would make the comparison below meaningless while telling
+    ///      the winner nothing they do not already know. Zero says the same thing:
+    ///      wiped out, lost.
+    ///
+    ///      The fallback matters more here than on a spot book. Equity is a live
+    ///      oracle read, and nobody chose the moment of finalize — so an oracle that
+    ///      happens to be stale at this block must not decide the fight. The snapshot
+    ///      is written at the start of every turn from the same source.
+    /// @param useSnapshot forces the last recorded score instead of the live one.
+    ///        This is what makes `emergencyFinalize` safe on a perps fight, and it is
+    ///        not optional. That function exists so the OWNER cannot pick the moment a
+    ///        stuck duel is scored — and a perps score is a live oracle read, so
+    ///        without this the owner could simply wait for a mark that favours the
+    ///        fighter they want to win. The spot path has always honoured this flag;
+    ///        the perps path read live equity regardless, which quietly re-opened
+    ///        exactly the hole the flag was added to close.
+    function _perpScore(uint256 duelId, uint8 fighterId, bool useSnapshot)
+        internal returns (uint256 score)
+    {
+        bool live;
+        int256 equity;
+        address reg = perpRegistry;
+        if (!useSnapshot && reg != address(0)) {
+            try IPerpRegistry(reg).equityOf(duelId, fighterId) returns (bool ok, int256 e) {
+                live = ok;
+                equity = e;
+            } catch {}
+        }
+        score = live
+            ? (equity > 0 ? uint256(equity) : 0)
+            : perpEquitySnapshots[duelId][fighterId];
+        emit ArenaTypes.PerpFighterScored(duelId, fighterId, equity, live);
+    }
+
+
+    function _releasePerpAccount(uint256 duelId, uint8 fighterId) internal {
+        address reg = perpRegistry;
+        if (reg == address(0)) return;
+        try IPerpRegistry(reg).release(duelId, fighterId) returns (uint256 reclaimed, bool clean) {
+            emit ArenaTypes.PerpAccountReleased(duelId, fighterId, reclaimed, clean);
+        } catch {
+            // The account keeps whatever it holds and stays leased, so
+            // `retryRelease` on the registry can pick it up later. Nothing about the
+            // fight's outcome or the players' money depends on this succeeding.
+            emit ArenaTypes.PerpAccountReleased(duelId, fighterId, 0, false);
+        }
     }
 
 

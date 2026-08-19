@@ -73,8 +73,38 @@ export function useQueue(
   // headroom, floor at 5M to survive the match race, fall back to 12M if the
   // Somnia estimator is momentarily unavailable. (ES2017 target: BigInt(), no n.)
   async function withGasHeadroom(estimate: () => Promise<bigint>): Promise<bigint> {
-    const FLOOR = BigInt(5000000);
-    const FALLBACK = BigInt(12000000);
+    // THE FLOOR HAS TO COVER THE MATCHING SIDE, not the cheap one.
+    //
+    // Queueing costs a few hundred thousand gas when the line is empty and MILLIONS
+    // when it is not, because the second player's transaction starts the fight
+    // inline. The estimate is taken when the button is clicked, so a player who
+    // clicks while the line looks empty and is matched before their transaction
+    // executes gets billed for the expensive path against an estimate for the cheap
+    // one — and the floor is the only thing standing between them and running out of
+    // gas.
+    //
+    // Measured 2026-08-19, start gas by market and tier:
+    //   spot 3r 4,121,508 · practice 6r 4,167,733 · practice 9r 4,641,014
+    //   events 3r 5,012,991 · events 9r 5,013,303 · events 6r 5,223,101
+    //   spot 9r 5,112,026 · perps 3r 6,426,405 · perps 6r 6,423,842
+    //   PERPS 9r 29,200,558
+    //
+    // The old floor was 5,000,000 and a six-round events start needed 5,223,101 — it
+    // failed by 223,101, the player lost their gas, the deposit was never taken, and
+    // the site showed a failed queue with nothing explaining it. Raising it to
+    // 12,000,000 fixed every tier except the two perps tiers that select Ethereum,
+    // where a start costs nearly thirty million and no browser attempt could ever
+    // have succeeded.
+    //
+    // The figure is only charged if it is used, so a generous ceiling costs a player
+    // nothing; being short costs them the whole transaction. Sized above the worst
+    // measured start with room for a market set that moves.
+    //
+    // WORTH REVISITING: a perps start at the nine-round tier is four and a half times
+    // any other, which is a large enough jump to be worth understanding rather than
+    // budgeting around.
+    const FLOOR = BigInt(40000000);
+    const FALLBACK = BigInt(40000000);
     try {
       const est = await estimate();
       const buffered = (est * BigInt(15)) / BigInt(10);
@@ -186,7 +216,13 @@ export function useQueue(
         functionName: 'cancelQueue',
         args: [turns, market],
         gasPrice,
-        gas: BigInt(200000),
+        // Leaving a queue is a refund and a storage delete, and it measured 96,117
+        // gas — but an attempt at 400,000 still failed, and the estimator quotes
+        // 1,144,175 for the same call. Whatever accounts for that spread, a player
+        // who cannot cancel cannot get their deposit back until someone matches them,
+        // so this is sized for the estimate rather than the observed cost. Unused gas
+        // is not charged.
+        gas: BigInt(1500000),
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await refetchHalfDeposit();

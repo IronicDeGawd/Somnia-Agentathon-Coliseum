@@ -17,6 +17,7 @@ import { ThinkingTicker } from '@/components/shared/ThinkingTicker';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelLive } from '@/hooks/useDuelLive';
+import type { FighterPerp } from '@/hooks/useDuelLive';
 import { useFighters } from '@/hooks/useFighters';
 import { FIGHTERS } from '@/lib/fighters';
 import { fmtUsd, fmtPct } from '@/lib/format';
@@ -116,16 +117,157 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
   );
 }
 
+/**
+ * A move, with its direction visible at a glance.
+ *
+ * Every move reads as a direction and a market — LONG ETH, SELL WBTC, DROP BTCUP —
+ * and the direction is the part a spectator is actually scanning for. Rendered as
+ * one flat string it is a wall of identical text, and on perps in particular a
+ * long and a short look the same until you read the word. So the first word is
+ * coloured by which way the fighter went, and the market keeps the ordinary
+ * weight.
+ */
+function MoveText({ move }: { move: string }) {
+  const [word, ...rest] = move.split(' ');
+  const up = word === 'LONG' || word === 'BUY' || word === 'BACK';
+  const down = word === 'SHORT' || word === 'SELL' || word === 'DROP';
+  return (
+    <span>
+      <span className="t-dim">{'> '}</span>
+      <span style={{ color: up ? 'var(--win)' : down ? 'var(--loss)' : 'var(--text-dim)' }}>{word}</span>
+      {rest.length > 0 && ` ${rest.join(' ')}`}
+    </span>
+  );
+}
+
+/**
+ * What a perps fighter is holding, which is not the same question as what a spot
+ * fighter is holding.
+ *
+ * A spot fighter owns tokens, so a quantity and a bar say everything. A perps
+ * fighter owns nothing — it has posted margin for exposure — so the row has to
+ * carry a DIRECTION, the price it got in at, the price now, and what the gap
+ * between them is currently worth. A bar chart of quantities would say nothing at
+ * all here, and a short would not even appear on one.
+ */
+function PositionsBlock({ perp, color }: { perp: FighterPerp; color: string }) {
+  const fmtPrice = (v: bigint) => {
+    const n = Number(formatUnits(v, 18));
+    return n === 0 ? '—' : n.toLocaleString(undefined, {
+      minimumFractionDigits: n < 10 ? 4 : 2,
+      maximumFractionDigits: n < 10 ? 4 : 2,
+    });
+  };
+
+  return (
+    <div className="col gap-6">
+      <span className="label-tiny">POSITIONS</span>
+      {perp.positions.length === 0 ? (
+        <span className="t-mono t-xs t-dim">FLAT — no market entered</span>
+      ) : (
+        <div className="col gap-6">
+          {perp.positions.map((p) => {
+            const long = p.size > BigInt(0);
+            const unit = BigInt(10) ** BigInt(p.baseDecimals);
+            // Unrealised is the gap between the entry and the mark across the
+            // position, and the signed size carries the direction — so a short
+            // gaining as the price falls needs no separate branch.
+            const unrealised = p.markPrice > BigInt(0)
+              ? (p.size * (p.markPrice - p.entryPrice)) / unit
+              : BigInt(0);
+            const up = unrealised >= BigInt(0);
+            const qty = Number(formatUnits(p.size < BigInt(0) ? -p.size : p.size, p.baseDecimals));
+            return (
+              <div key={p.poolAddress} className="col gap-2">
+                <div className="row jc-sb ai-c" style={{ gap: 12 }}>
+                  <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
+                    <span
+                      className="t-mono t-xs"
+                      style={{
+                        color: long ? 'var(--win)' : 'var(--loss)',
+                        border: `1px solid ${long ? 'var(--win)' : 'var(--loss)'}`,
+                        padding: '0 4px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {long ? 'LONG' : 'SHORT'}
+                    </span>
+                    <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>{p.market}</span>
+                  </span>
+                  <span className="t-num t-sm" style={{ whiteSpace: 'nowrap' }}>
+                    {qty.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                  </span>
+                </div>
+                <div className="row jc-sb ai-c t-mono t-xs t-dim" style={{ gap: 12 }}>
+                  <span style={{ whiteSpace: 'nowrap' }}>
+                    {fmtPrice(p.entryPrice)} → {fmtPrice(p.markPrice)}
+                  </span>
+                  <span
+                    className="t-num"
+                    style={{ color: up ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}
+                  >
+                    {up ? '+' : '-'}{fmtUsd(Math.abs(Number(formatUnits(unrealised, 18))))}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="row jc-sb ai-c" style={{ gap: 12, marginTop: 2 }}>
+        <span className="label-tiny">EQUITY</span>
+        <span className="t-num t-sm" style={{ color, whiteSpace: 'nowrap' }}>
+          {fmtUsd(Number(formatUnits(perp.live ? perp.equity : perp.snapshot, 18)))}
+          {!perp.live && <span className="t-mono t-xs t-dim"> (last known)</span>}
+        </span>
+      </div>
+      {perp.marginStatus > 0 && <MarginWarning status={perp.marginStatus} />}
+    </div>
+  );
+}
+
+/**
+ * A fighter in trouble. Deliberately loud: a margin call is the most dramatic
+ * thing that can happen in a perps fight, and a spectator who cannot see it
+ * reads a fighter being wiped out as the page having broken.
+ */
+function MarginWarning({ status }: { status: number }) {
+  const [word, detail] = status === 1
+    ? ['MARGIN CALL', 'equity has fallen to the maintenance line']
+    : status === 2
+      ? ['LIQUIDATING', 'the venue is closing part of this position']
+      : ['CLOSE-OUT', 'the position is being closed out entirely'];
+  return (
+    <div
+      className="col gap-2"
+      // Announced, because this appears mid-fight without any user action and it is
+      // the most consequential thing that can happen to a fighter. A spectator who
+      // cannot see the card would otherwise be told nothing at all.
+      role="status"
+      aria-live="polite"
+      style={{ border: '1px solid var(--loss)', padding: '4px 6px', marginTop: 4 }}
+    >
+      <span className="t-mono t-xs" style={{ color: 'var(--loss)', letterSpacing: '0.12em' }}>
+        <span aria-hidden="true">⚠ </span>{word}
+      </span>
+      <span className="t-mono t-xs t-dim">{detail}</span>
+    </div>
+  );
+}
+
 function FighterCardSplit({
   fighter,
   pnl,
   holdings,
+  perp,
   layout,
   winningVsOpponent,
 }: {
   fighter: { id: string; name: string; hex: string; side: 'a' | 'b'; tier: string; tagline: string; rank: string };
   pnl: number;
   holdings: Holding[];
+  /** Set on a perps fight, and then it replaces the holdings list entirely. */
+  perp?: FighterPerp;
   layout: Layout;
   winningVsOpponent: boolean | null;
 }) {
@@ -158,7 +300,9 @@ function FighterCardSplit({
                 </span>
               </div>
             </div>
-            {holdings.length > 0 && <HoldingsBlock holdings={holdings} color={hex} />}
+            {perp
+              ? <PositionsBlock perp={perp} color={hex} />
+              : holdings.length > 0 && <HoldingsBlock holdings={holdings} color={hex} />}
           </div>
         </div>
       </div>
@@ -190,10 +334,12 @@ function FighterCardSplit({
           </div>
         </div>
 
-        {holdings.length > 0 && (
+        {(perp || holdings.length > 0) && (
           <>
             <hr className="divider" />
-            <HoldingsBlock holdings={holdings} color={hex} />
+            {perp
+              ? <PositionsBlock perp={perp} color={hex} />
+              : <HoldingsBlock holdings={holdings} color={hex} />}
           </>
         )}
       </div>
@@ -349,10 +495,10 @@ export default function ArenaPage() {
   const whaleWinning = whalePnl > degenPnl ? true : whalePnl < degenPnl ? false : null;
 
   const degenCard = (
-    <FighterCardSplit fighter={degenF} pnl={degenPnl} holdings={degenHoldings} layout={layout} winningVsOpponent={degenWinning} />
+    <FighterCardSplit fighter={degenF} pnl={degenPnl} holdings={degenHoldings} perp={liveA.perp} layout={layout} winningVsOpponent={degenWinning} />
   );
   const whaleCard = (
-    <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} layout={layout} winningVsOpponent={whaleWinning} />
+    <FighterCardSplit fighter={whaleF} pnl={whalePnl} holdings={whaleHoldings} perp={liveB.perp} layout={layout} winningVsOpponent={whaleWinning} />
   );
 
   // ── Error state ──────────────────────────────────────────────────────────
@@ -601,7 +747,7 @@ export default function ArenaPage() {
                 {liveA.thinking ? (
                   <ThinkingTicker fighterId={degenF.id} startIndex={0} />
                 ) : liveA.lastAction ? (
-                  <span><span className="t-dim">{'> '}</span>{liveA.lastAction}</span>
+                  <MoveText move={liveA.lastAction} />
                 ) : (
                   <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
                 )}
@@ -624,7 +770,7 @@ export default function ArenaPage() {
                 {liveB.thinking ? (
                   <ThinkingTicker fighterId={whaleF.id} startIndex={2} />
                 ) : liveB.lastAction ? (
-                  <span><span className="t-dim">{'> '}</span>{liveB.lastAction}</span>
+                  <MoveText move={liveB.lastAction} />
                 ) : (
                   <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
                 )}
@@ -652,15 +798,23 @@ export default function ArenaPage() {
             <div className="row ai-c" style={{ gap: 'clamp(12px, 3vw, 32px)', flexWrap: 'wrap' }}>
               {markets.map((m) => (
                 <div key={m.poolKey} className="col gap-2" style={{ flexShrink: 0 }}>
-                  {/* A question slot is a probability, not a price: no currency
-                      symbol and no traded-pair suffix, or 0.845 reads as 84 cents
-                      of WETH when it means an 84% chance. */}
-                  <span className="label-tiny">{m.isQuestion ? m.poolKey : `${m.poolKey}/USDso`}</span>
+                  {/* Three kinds of slot, three ways to read the number. A question
+                      is a probability: no currency symbol and no pair suffix, or
+                      0.845 reads as 84 cents of WETH when it means an 84% chance. A
+                      perpetual carries a label like a question does but quotes a
+                      PRICE, so the same treatment would print Bitcoin as
+                      6,400,000%. A coin book is an ordinary traded pair. */}
+                  <span className="label-tiny">
+                    {m.isPerp ? `${m.poolKey}-PERP` : m.isQuestion ? m.poolKey : `${m.poolKey}/USDso`}
+                  </span>
                   <span className="t-num" style={{ fontSize: 18 }}>
                     {m.markPrice > BigInt(0)
                       ? (m.isQuestion
                           ? `${(m.markPriceNum * 100).toFixed(1)}%`
-                          : `$${m.markPriceNum.toFixed(4)}`)
+                          : `$${m.markPriceNum.toLocaleString('en-US', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: m.markPriceNum < 10 ? 4 : 2,
+                            })}`)
                       : '—'}
                   </span>
                 </div>

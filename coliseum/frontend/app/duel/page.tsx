@@ -12,6 +12,7 @@ import { useActiveDuels } from '@/hooks/useActiveDuels';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useQueueState, queueKey, type QueueTier } from '@/hooks/useQueueState';
 import { useEventQuestions } from '@/hooks/useEventQuestions';
+import { usePerpMarkets } from '@/hooks/usePerpMarkets';
 import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
@@ -29,6 +30,7 @@ import { useAccount } from 'wagmi';
  *  Matches the market picker in DuelCreator. */
 const MARKET_ACCENT: Record<MarketKind, string> = {
   [MarketKind.Events]: 'var(--gold)',
+  [MarketKind.Perps]: '#f472b6',
   [MarketKind.Spot]: '#5eead4',
   [MarketKind.Practice]: '#a78bfa',
 };
@@ -70,6 +72,7 @@ export default function LobbyPage() {
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
   const { questions: eventQuestions } = useEventQuestions();
+  const { offers: perpOffers } = usePerpMarkets();
   const { slots: queueSlots, pendingCounts, isLoading: isQueueLoading } = useQueueState();
   // Live betting odds for the active duel (real Bookmaker pools, 0 = disabled).
   const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
@@ -359,6 +362,21 @@ export default function LobbyPage() {
               ? (() => {
                   const q = eventQuestions.length ? eventQuestions.join(' · ') : 'live questions';
                   return { 3: q, 6: q, 9: q, 15: q };
+                })()
+              : market === MarketKind.Perps
+              // Perps is the one market whose assets differ BY TIER, and change on
+              // their own: a market leaves the cheap tiers when its margin rises
+              // with open interest, and walks back in when that eases. So each row
+              // is read from the chain, and a spot-book label here would name three
+              // assets the fight will not touch.
+              ? (() => {
+                  const named = (t: number) => {
+                    const o = perpOffers.find((x) => x.turns === t);
+                    if (!o) return 'reading…';
+                    if (o.unavailable) return 'not enough markets';
+                    return o.markets.length ? o.markets.join(' · ') : 'chosen at start';
+                  };
+                  return { 3: named(3), 6: named(6), 9: named(9), 15: named(15) };
                 })()
               : { 3: 'SOMI', 6: 'SOMI · WETH', 9: 'SOMI · WETH · WBTC', 15: 'ALL POOLS' };
             const key = queueKey(turns, market);

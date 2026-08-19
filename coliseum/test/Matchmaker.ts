@@ -4,6 +4,7 @@ import { expect } from "chai";
 const SPOT = 0;
 const PRACTICE = 1;
 const EVENTS = 2;
+const PERPS = 3;
 import hre from "hardhat";
 import { parseUnits, zeroAddress } from "viem";
 
@@ -38,6 +39,91 @@ async function deploy() {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("Matchmaker", () => {
+  describe("the deposit a player is asked for", () => {
+    // Headroom exists because the spot and events entry price is read off a thin,
+    // volatile book: the amount required when two players are matched can be higher
+    // than the amount quoted when the first one queued, and without slack the match
+    // refunds instead of starting.
+    it("carries headroom on a market whose price is read off a book", async () => {
+      const { mm, mockArena } = await deploy();
+      const bare = (await mockArena.read.minDepositForKind([6, SPOT]))
+        + (await mockArena.read.platformFee([6]));
+      const half = await mm.read.halfDeposit([6, SPOT]);
+      // 25% over the bare figure, halved and rounded up.
+      expect(half * 2n).to.be.greaterThanOrEqual((bare * 12500n) / 10000n);
+    });
+
+    // A perps entry is a fixed advertised constant, computed before any pool is
+    // touched. It cannot drift, so there is nothing to leave room for — and charging
+    // headroom anyway meant the lobby quoted one price and took a quarter more, then
+    // refunded the difference in two extra transfers after the fight had started.
+    it("charges no headroom on perps, whose price cannot drift", async () => {
+      const { mm, mockArena } = await deploy();
+      const bare = (await mockArena.read.minDepositForKind([6, PERPS]))
+        + (await mockArena.read.platformFee([6]));
+      const half = await mm.read.halfDeposit([6, PERPS]);
+      expect(half).to.equal((bare + 1n) / 2n);
+    });
+  });
+
+  describe("a duel start the arena rejects", () => {
+    // The second player's queue transaction is the one that starts the fight, so an
+    // unguarded revert inside the start lands on THEM: they lose their gas, the first
+    // player stays queued holding a deposit, and the site shows a failed queue with
+    // nothing explaining it. Perps adds several ways for a start to fail that no
+    // other market has — too few markets qualifying for the tier at that moment, a
+    // registry float too small to fund a fighter — and none of them is either
+    // player's fault.
+    it("refunds both players instead of reverting the queue transaction", async () => {
+      const { mm, mockUsdso, mockArena, alice, bob } = await deploy();
+      const half = await mm.read.halfDeposit([6, PERPS]);
+
+      const beforeA = await mockUsdso.read.balanceOf([alice.account.address]);
+      const beforeB = await mockUsdso.read.balanceOf([bob.account.address]);
+
+      await mockUsdso.write.approve([mm.address, half], { account: alice.account });
+      await mm.write.queue([0, 6, PERPS], { account: alice.account });
+
+      await mockArena.write.setRejectStart([true]);
+
+      await mockUsdso.write.approve([mm.address, half], { account: bob.account });
+      // The point of the whole fix: this call SUCCEEDS.
+      await mm.write.queue([1, 6, PERPS], { account: bob.account });
+
+      // Every wei collected is back with the players, and nothing is stranded here.
+      expect(await mockUsdso.read.balanceOf([alice.account.address])).to.equal(beforeA);
+      expect(await mockUsdso.read.balanceOf([bob.account.address])).to.equal(beforeB);
+      expect(await mockUsdso.read.balanceOf([mm.address])).to.equal(0n);
+
+      // And the line is empty, so neither player is left queued against a start that
+      // will only fail again.
+      const [player] = await mm.read.getSlot([6, PERPS]);
+      expect(player).to.equal(zeroAddress);
+
+      // No duel was recorded, so nothing downstream thinks there is a fight to claim.
+      expect(await mockArena.read.lastDuelId()).to.equal(0n);
+    });
+
+    it("starts normally again once the arena stops rejecting", async () => {
+      const { mm, mockUsdso, mockArena, alice, bob } = await deploy();
+      const half = await mm.read.halfDeposit([6, PERPS]);
+
+      await mockArena.write.setRejectStart([true]);
+      await mockUsdso.write.approve([mm.address, half], { account: alice.account });
+      await mm.write.queue([0, 6, PERPS], { account: alice.account });
+      await mockUsdso.write.approve([mm.address, half], { account: bob.account });
+      await mm.write.queue([1, 6, PERPS], { account: bob.account });
+      expect(await mockArena.read.lastDuelId()).to.equal(0n);
+
+      await mockArena.write.setRejectStart([false]);
+      await mockUsdso.write.approve([mm.address, half], { account: alice.account });
+      await mm.write.queue([0, 6, PERPS], { account: alice.account });
+      await mockUsdso.write.approve([mm.address, half], { account: bob.account });
+      await mm.write.queue([1, 6, PERPS], { account: bob.account });
+      expect(await mockArena.read.lastDuelId()).to.equal(1n);
+    });
+  });
+
   describe("queue()", () => {
     it("opens a slot when first player queues", async () => {
       const { mm, mockUsdso, alice } = await deploy();
@@ -504,10 +590,28 @@ describe("Matchmaker", () => {
     });
 
     it("rejects a market that does not exist", async () => {
+      // 4, not 3: perps became market 3, and the point of this test is the market
+      // one PAST the last real one. Left at 3 it would still fail — on the deposit
+      // allowance rather than the market check — and would go on passing for the
+      // wrong reason, which is exactly how a widened gate ships unnoticed.
       const { mm, alice } = await deploy();
       await expect(
-        mm.write.queue([0, 3, 3], { account: alice.account })
+        mm.write.queue([0, 3, 4], { account: alice.account })
       ).to.be.rejectedWith("InvalidMarket");
+    });
+
+    it("accepts perps as market three", async () => {
+      // The gate and the Arena enum have to agree. If Matchmaker still stopped at 2
+      // a player could never reach the perps queue at all, and if it allowed 4 the
+      // pair would be taken and matched before Arena refused the market.
+      const { mm, alice } = await deploy();
+      await expect(
+        mm.write.queue([0, 3, 4], { account: alice.account })
+      ).to.be.rejectedWith("InvalidMarket");
+      // Market 3 gets past the market check and fails on the deposit instead.
+      await expect(
+        mm.write.queue([0, 3, 3], { account: alice.account })
+      ).to.be.rejectedWith("allowance");
     });
   });
 });

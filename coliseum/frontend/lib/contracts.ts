@@ -16,12 +16,14 @@ export const CONTRACT_ADDRESSES = {
   // setPrompt).
   //
   // Arena is linked against a deployed ArenaUtils library
-  // (0x1fd61d6cf1a414ac329b0af692a61b33dab940ee). Parts, as rewired for one-shot
-  // Reactivity ticks on 2026-08-18:
-  //   ArenaVaultPart 0xdd09ae5c9d1cc923e4ec22b7385b3d8313d5c12a
-  //   ArenaDuelPart  0x63605f9dc2fc95b2065df5847e74c09fb3e97e7e
-  //   ArenaTurnPart  0x380e678126dcb60823d7085add70835fe53d63a3
-  //   ArenaViewPart  0x27cabce1f4308282070dbc76e253ebe592a478af
+  // (0xb6fd414d29608a0b843b00dab5d9c156c1e4ef63). Parts, as rewired on
+  // 2026-08-19 for the numeric spot prompt and the trading gates it exposed —
+  // a sell now approves the asset to the pool, and neither side is offered
+  // unless the Arena can actually deliver it:
+  //   ArenaVaultPart 0x530f4581542ff83c83dc822459ef3a5b0110ff9a
+  //   ArenaDuelPart  0x3ed9a91ff94870c90c5a2c5ce2cf566b97609161
+  //   ArenaTurnPart  0x7dbc2de15791b261c2669fb80dbdb500f6fc8cb4
+  //   ArenaViewPart  0x11b377700f5ef2dd9d40c5db570231677fcb8ce9
   // The router's address never moves, so nothing here changes when parts do.
   Arena: '0x301d9364BDb2fd76E33c13eBE8FCc956BAcfbeD6' as const,
   // Redeployed 2026-08-18 for one-shot Reactivity ticks. Unlike Arena it is an
@@ -33,7 +35,21 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0x73d0a884f563c454ca0d05bd09b0643c0204b755' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  Matchmaker: '0x6b7e255a3420c7846a15e963589ffd5504773b0a' as const,
+  // Redeployed 2026-08-19 (second time that day) so a start the arena rejects
+  // refunds both players instead of reverting the second player's queue
+  // transaction, and so perps stops paying the 25% drift buffer its fixed entry
+  // price cannot drift by. Its market gate is a hardcoded constant, so a new
+  // market means a new Matchmaker; it holds Arena immutable but needs no
+  // authorisation, since starting a duel is permissionless.
+  // Predecessors, both drained and idle:
+  //   0x6ba7969f16655fca3b39b557d9a98b376f6a149c  (first perps-aware build)
+  //   0x6b7e255a3420c7846a15e963589ffd5504773b0a  (pre-perps)
+  Matchmaker: '0x68835367edbc36b054e82c5fe20f45ff6c095801' as const,
+  // The shared margin ledger every perps fighter posts against. Needed in the
+  // frontend for one reason only: `perpPositionOf` scores a fighter as a single
+  // number across all three of its markets, so the per-market breakdown — what is
+  // actually held, long or short, and at what entry — can only be read here.
+  MarginBank: '0xdd4A14A2763FDa39b9759D2D4150DB0e0f085C4E' as `0x${string}`,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0x11Ac9B65b05dfb1406618Bda649b410B8e8F7108' as `0x${string}`,
 };
@@ -128,6 +144,12 @@ export const POOL_SLOTS = [
  * live prediction questions instead, which brings the same fight under two.
  * Both are offered; neither replaced the other.
  *
+ * Perps trades real assets on margin, so a nine-round fight costs about 13 USDso
+ * rather than 150 — a position is posted against, not bought outright. It is
+ * also the only market where a fighter can bet an asset DOWN, and the only one
+ * whose three assets are not fixed: which of the six a fight gets is decided at
+ * the moment it starts, from what its budget can post margin for right then.
+ *
  * The numbering is on-chain and stored in every past fight — never reorder it.
  * `Events` was called `Mixed` while it still kept the SOMI coin book in one
  * slot; the coin was dropped because it had become the expensive one.
@@ -136,6 +158,7 @@ export enum MarketKind {
   Spot = 0,
   Practice = 1,
   Events = 2,
+  Perps = 3,
 }
 
 /**
@@ -153,13 +176,17 @@ export enum MarketKind {
  */
 export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
   { turns: 3,  market: MarketKind.Events },
+  { turns: 3,  market: MarketKind.Perps },
   { turns: 3,  market: MarketKind.Spot },
   { turns: 6,  market: MarketKind.Events },
+  { turns: 6,  market: MarketKind.Perps },
   ...(SIM_MARKET_ENABLED ? [{ turns: 6, market: MarketKind.Practice }] : []),
   { turns: 9,  market: MarketKind.Events },
+  { turns: 9,  market: MarketKind.Perps },
   { turns: 9,  market: MarketKind.Spot },
   ...(SIM_MARKET_ENABLED ? [{ turns: 9, market: MarketKind.Practice }] : []),
   { turns: 15, market: MarketKind.Events },
+  { turns: 15, market: MarketKind.Perps },
   { turns: 15, market: MarketKind.Spot },
 ];
 
@@ -167,12 +194,75 @@ export const MARKET_LABEL: Record<MarketKind, string> = {
   [MarketKind.Spot]: 'SPOT',
   [MarketKind.Practice]: 'PRACTICE',
   [MarketKind.Events]: 'EVENTS',
+  [MarketKind.Perps]: 'PERPS',
 };
 
-/** FighterAction enum (LLM returns 0..6) → label, mirrors ArenaTypes.FighterAction. */
+/**
+ * FighterAction enum (0..6) → label, for a fight on the plain coin books.
+ *
+ * ONLY correct on a spot or practice fight. The same six ids mean different
+ * things depending on what a fight's three slots hold, so anything showing a
+ * real fight's moves must use `actionLabels` below instead. Kept for the one
+ * place that has no duel in hand: a fight whose markets have not loaded yet.
+ */
 export const FIGHTER_ACTIONS = [
   'HOLD', 'BUY WBTC', 'SELL WBTC', 'BUY WETH', 'SELL WETH', 'BUY SOMI', 'SELL SOMI',
 ] as const;
+
+/** A slot's on-chain label ("BTCUP", "BTC"), or null for a plain coin book. */
+export function slotLabel(raw?: `0x${string}`): string | null {
+  if (!raw || /^0x0+$/.test(raw)) return null;
+  let out = '';
+  for (let i = 2; i < raw.length; i += 2) {
+    const code = parseInt(raw.slice(i, i + 2), 16);
+    if (code === 0) break;
+    out += String.fromCharCode(code);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** What one of a fight's three slots holds, in the [WETH, WBTC, SOMI] order Arena stores. */
+export interface SlotKind {
+  /** The slot's on-chain label, or null for a plain coin book. */
+  label: string | null;
+  /** True when the slot is a perpetual futures market. */
+  isPerp: boolean;
+}
+
+/**
+ * The seven action labels for ONE fight, derived from what its slots actually hold.
+ *
+ * Six ids, two per slot, and what each pair means depends entirely on the market:
+ * buy and sell on a coin book, back and drop on a prediction question, long and
+ * short on a perpetual. A flat table cannot be right for all three, and the cost
+ * of getting it wrong is not cosmetic — a fighter that went short Bitcoin would be
+ * shown as having bought Ethereum.
+ *
+ * Mirrors `ArenaUtils.actionName`, including its slot order, which is NOT
+ * sequential: ids 1 and 2 are slot 1, ids 3 and 4 are slot 0, ids 5 and 6 are
+ * slot 2. Odd ids are the upward direction.
+ */
+export function actionLabels(slots: readonly SlotKind[] | undefined): string[] {
+  const out = ['HOLD'];
+  for (let id = 1; id <= 6; id++) {
+    const slotIndex = id <= 2 ? 1 : id <= 4 ? 0 : 2;
+    const up = id % 2 === 1;
+    const slot = slots?.[slotIndex];
+    if (!slot) {
+      out.push(FIGHTER_ACTIONS[id]);
+      continue;
+    }
+    if (slot.isPerp && slot.label) {
+      out.push(`${up ? 'LONG' : 'SHORT'} ${slot.label}`);
+    } else if (slot.label) {
+      out.push(`${up ? 'BACK' : 'DROP'} ${slot.label}`);
+    } else {
+      const asset = slotIndex === 0 ? 'WETH' : slotIndex === 1 ? 'WBTC' : 'SOMI';
+      out.push(`${up ? 'BUY' : 'SELL'} ${asset}`);
+    }
+  }
+  return out;
+}
 
 export enum DuelStatus {
   None = 0,
@@ -242,6 +332,20 @@ export const ABIS = {
     'function EVENT_POOL_WBTC() view returns (address)',
     'function EVENT_POOL_SOMI() view returns (address)',
     'function poolQuestion(address pool) view returns (bytes8)',
+    // Perps. A perps slot carries a LABEL like a question does, but its number is
+    // a price and not a probability — so a slot's label alone cannot say how to
+    // render it, and this is the read that separates the two.
+    'function isPerpPool(address pool) view returns (bool)',
+    'function perpStatus() view returns (bool ready, address registry)',
+    // Which three of the six perp markets a tier would be offered right now. Not a
+    // fixed set: the margin a market costs scales with its open interest, so a
+    // market drops out of the cheap tiers by itself and walks back in later.
+    'function perpMarketsFor(uint16 turns) view returns (address[3])',
+    'function perpBudgetFor(uint16 turns) view returns (uint256)',
+    // `live` false means the oracle could not be read just now, and `snapshot` is
+    // what a finalize at this moment would score instead. Both come back so a
+    // client can tell a genuinely flat fighter from an unreadable market.
+    'function perpPositionOf(uint256 duelId, uint8 fighterId) view returns (bool live, int256 equity, uint256 snapshot, address account, uint8 marginStatus)',
     // The three markets a fight is actually bound to, [WETH, WBTC, SOMI].
     // Recorded per duel at startDuel. There is no way to infer this: `simulated`
     // is two-valued (practice or not), so a spot fight and an events fight both
@@ -347,5 +451,22 @@ export const ABIS = {
     'event PendingCancelled(uint256 indexed position, address playerA, address playerB, uint16 turns)',
     'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
     'event WinningsClaimed(uint256 indexed duelId, address indexed player, uint256 amount)',
+  ]),
+
+  // Only the one read. A perps fighter's SCORE comes from the Arena, which is the
+  // contract that decides it; this is the breakdown behind that score — which of
+  // the fight's three markets the fighter is actually in, on which side, and at
+  // what price it got in. `size` is signed: positive is long, negative is short,
+  // and zero means the fighter is not in that market at all.
+  // A desk is the Arena's handle on a perpetual market; the market itself is a
+  // separate contract, and the margin bank keys every position by the MARKET. So a
+  // position cannot be looked up by the address the duel records — the desk has to
+  // name its market first.
+  PerpDesk: parseAbi([
+    'function market() view returns (address)',
+  ]),
+
+  MarginBank: parseAbi([
+    'function getPosition(address account, address perpPool) view returns (int128 size, uint128 avgEntryPrice, int256 entryFundingIndex, uint64 lastUpdatedTimestampNs)',
   ]),
 };

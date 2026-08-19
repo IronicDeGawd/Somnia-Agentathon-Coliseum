@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "../ArenaStorage.sol";
 import "../lib/ArenaTypes.sol";
 import "../lib/ArenaUtils.sol";
+import "../interfaces/IPerps.sol";
 
 /// @title ArenaViewPart
 /// @notice Arena's read-only surface, deployed on its own and reached through the
@@ -106,12 +107,12 @@ contract ArenaViewPart is ArenaStorage {
         address[3] memory mp = _duelPools(duelId);
         prompt = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
-            mp[0], mp[1], mp[2],
-            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel
+            mp[0], mp[1], mp[2], USDSO,
+            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
         );
         allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
-            duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], fighterBalances, poolMeta
-        ), ArenaUtils.vocabFor(mp, poolLabel));
+            duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], USDSO, fighterBalances, poolMeta, poolIsPerp
+        ), ArenaUtils.vocabFor(mp, poolLabel, poolIsPerp));
     }
 
     /// @notice Minimum USDso deposit for a turn tier on the event-contract set.
@@ -129,8 +130,14 @@ contract ArenaViewPart is ArenaStorage {
     ///         One call the lobby can use for every row of its menu, instead of a
     ///         different function per market.
     function minDepositForKind(uint16 turns, uint8 marketKind) external view returns (uint256) {
-        if (marketKind > uint8(ArenaTypes.MarketKind.Events)) revert ArenaTypes.InvalidMarketKind();
+        if (marketKind > uint8(ArenaTypes.MarketKind.Perps)) revert ArenaTypes.InvalidMarketKind();
         ArenaTypes.MarketKind kind = ArenaTypes.MarketKind(marketKind);
+        // Perps is priced from a fixed ladder and reads no book, so it must not go
+        // through _poolsFor — which deliberately reverts for Perps, because the three
+        // markets a fight gets are chosen per fight and there is no set to look up.
+        if (kind == ArenaTypes.MarketKind.Perps) {
+            return ArenaUtils.minDepositFor(turns, kind, address(0), address(0), address(0), poolMeta);
+        }
         address[3] memory mp = _poolsFor(kind);
         return ArenaUtils.minDepositFor(turns, kind, mp[0], mp[1], mp[2], poolMeta);
     }
@@ -143,4 +150,80 @@ contract ArenaViewPart is ArenaStorage {
     function poolQuestion(address pool) external view returns (bytes8) {
         return poolLabel[pool];
     }
+
+    // ─── Perps ───────────────────────────────────────────────────────────────
+    //
+    // These are views for the same reason `reactivityStatus` and `poolQuestion` are:
+    // the router is never redeployed, so nothing appended to storage after it shipped
+    // has a compiled getter on it. A `public` variable would produce one on every
+    // freshly built part and none on the live router, which is worse than having none
+    // at all — the deploy script would decline to route a selector the live router
+    // cannot answer.
+
+    /// @notice How perps is wired: the account registry, and whether it is usable.
+    function perpStatus() external view returns (bool ready, address registry) {
+        return (perpDesksSet && perpRegistry != address(0), perpRegistry);
+    }
+
+    /// @notice Whether an address is one of the registered perp desks. Worth being
+    ///         able to ask directly: it is what decides whether a slot is scored on
+    ///         equity or on cash-plus-holdings, and whether a fighter may sell
+    ///         something it does not own.
+    function isPerpPool(address pool) external view returns (bool) {
+        return poolIsPerp[pool];
+    }
+
+    /// @notice The three markets a perps fight at this tier would be offered if it
+    ///         started now.
+    ///
+    ///         Exists because on this market the answer genuinely changes. The other
+    ///         three markets have fixed pool sets a lobby can hard-code; here the set
+    ///         is computed from what the tier's budget affords against live margin
+    ///         factors, so Bitcoin appears in the top tier only while its
+    ///         open-interest-scaled factor leaves room for it. A lobby that cannot ask
+    ///         this can only guess, and would show a menu that is quietly wrong.
+    ///
+    /// @dev    Reverts `NotEnoughPerpMarkets` when fewer than three qualify, which is
+    ///         the same answer `startDuelOn` would give — better that a lobby sees it
+    ///         before a player pays than after.
+    function perpMarketsFor(uint16 turns) external view returns (address[3] memory) {
+        return _selectPerpPools(ArenaUtils.perpBudget(turns), nextDuelId);
+    }
+
+    /// @notice What one fighter is given on a perps fight at this tier, in USDso.
+    ///         Fixed and advertised — it reads no book and cannot move between the
+    ///         moment a lobby quotes it and the moment a player pays.
+    function perpBudgetFor(uint16 turns) external pure returns (uint256) {
+        return ArenaUtils.perpBudget(turns);
+    }
+
+    /// @notice A perps fighter's live score, its last recorded score, and its trading
+    ///         address.
+    ///
+    ///         `live` false means the oracle could not be read just now, in which case
+    ///         `snapshot` is what a finalize at this moment would use. Both are
+    ///         returned rather than one resolved number so a client can tell a fighter
+    ///         that is genuinely flat from a market that is momentarily unreadable.
+    function perpPositionOf(uint256 duelId, uint8 fighterId)
+        external view
+        returns (bool live, int256 equity, uint256 snapshot, address account, uint8 marginStatus)
+    {
+        snapshot = perpEquitySnapshots[duelId][fighterId];
+        if (perpRegistry == address(0)) return (false, 0, snapshot, address(0), 0);
+        IPerpRegistry reg = IPerpRegistry(perpRegistry);
+        account = reg.accountOf(duelId, fighterId);
+        try reg.equityOf(duelId, fighterId) returns (bool ok, int256 e) {
+            live = ok;
+            equity = e;
+        } catch {}
+        try IPerpRegistryStatus(perpRegistry).marginStatusOf(duelId, fighterId) returns (uint8 s) {
+            marginStatus = s;
+        } catch {}
+    }
+}
+
+/// @dev Split out so `IPerps.IPerpRegistry` stays the narrow slice Arena's write
+///      paths call, and this read stays where it is used.
+interface IPerpRegistryStatus {
+    function marginStatusOf(uint256 duelId, uint8 fighterId) external view returns (uint8);
 }

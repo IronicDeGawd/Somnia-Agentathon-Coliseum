@@ -12,6 +12,7 @@ import { BracketButton, Chip } from '@/components/shared/OtherHUD';
 import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelTranscript } from '@/hooks/useDuelTranscript';
+import { useDuelSlots } from '@/hooks/useDuelSlots';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
@@ -60,7 +61,8 @@ export default function ResultPage() {
   const duelStartBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : undefined;
   const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
   const duelLastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
-  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock);
+  const duelSlots = useDuelSlots(duelId);
+  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
 
   const fighterNameOf = (fid: number): string => {
     const v = FIGHTER_VISUAL_MAP[fid];

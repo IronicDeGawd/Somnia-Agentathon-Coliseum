@@ -7,6 +7,7 @@ import "../lib/ArenaUtils.sol";
 import "../interfaces/IFighterRegistry.sol";
 import "../interfaces/ISpotPool.sol";
 import "../interfaces/ISomniaAgents.sol";
+import "../interfaces/IPerps.sol";
 
 /// @title ArenaTurnPart
 /// @notice A duel's middle: advancing turns, snapshotting prices, asking each
@@ -33,10 +34,22 @@ contract ArenaTurnPart is ArenaStorage {
     function onEvent(address /*emitter*/, bytes32[] calldata eventTopics, bytes calldata /*data*/) external {
         if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) return;
         if (eventTopics.length < 2) return;
-        // Advance every running duel. _runTurn is a no-op for any duel whose
-        // interval has not elapsed, so this stays cheap when only one is live.
+        // ONE DUEL PER FIRING. A turn is two inference requests, and their cost is
+        // the platform's rather than ours: measured 7,477,821 gas one hour and
+        // 29,382,823 the next, on the same contract and the same fight length. So the
+        // budget for a firing cannot be divided by however many duels happen to be
+        // due — advancing all of them exceeded the cap and the firing reverted, which
+        // books no successor and ends the chain silently. Five concurrent fights
+        // stalled for fifteen thousand blocks that way, with nothing reporting it.
+        //
+        // Advancing one and re-arming is not slower in practice: any duel still
+        // overdue makes `_nextTurnBlock` return the very next block, so the remaining
+        // ones are picked up in consecutive blocks rather than all in one transaction.
+        // A duel whose interval has not elapsed costs about 49,000 gas to skip.
         uint256[] memory ids = activeDuelIds;
-        for (uint256 i = 0; i < ids.length; i++) _runTurn(ids[i]);
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (_runTurn(ids[i])) break;
+        }
         // This firing is spent. Book the next one, or the chain ends here.
         _scheduleNextTick();
     }
@@ -55,13 +68,16 @@ contract ArenaTurnPart is ArenaStorage {
     }
 
 
-    function _runTurn(uint256 duelId) internal {
-        if (duelId == 0) return;
+    /// @return advanced true when this call actually took a turn, so a caller can
+    ///         stop after one rather than paying for every duel in one transaction.
+    function _runTurn(uint256 duelId) internal returns (bool advanced) {
+        if (duelId == 0) return false;
         ArenaTypes.Duel storage duel = duels[duelId];
-        if (duel.status != ArenaTypes.DuelStatus.Active) return;
-        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return;
-        if (duel.completedCallbacks >= duel.turns * 2) return;
+        if (duel.status != ArenaTypes.DuelStatus.Active) return false;
+        if (block.number < duel.lastTurnBlock + TURN_INTERVAL_BLOCKS) return false;
+        if (duel.completedCallbacks >= duel.turns * 2) return false;
         duel.lastTurnBlock = block.number;
+        advanced = true;
 
         // Snapshot mark prices on every active pool BEFORE any LLM requests.
         // emergencyFinalize will use these snapshots instead of live prices.
@@ -84,9 +100,37 @@ contract ArenaTurnPart is ArenaStorage {
                 // the move since last turn, then record this turn's price.
                 duelPrevMarkSnapshots[duelId][pools[i]] = duelMarkSnapshots[duelId][pools[i]];
                 duelMarkSnapshots[duelId][pools[i]] = mp;
+                // The opening price is written once and then left alone. A perp mark
+                // barely moves across one turn, so it is the distance from HERE that
+                // tells a fighter whether a market is trending or just wobbling.
+                if (duelOpenMarkSnapshots[duelId][pools[i]] == 0) {
+                    duelOpenMarkSnapshots[duelId][pools[i]] = mp;
+                }
                 emit ArenaTypes.MarkPriceSnapshot(duelId, pools[i], mp, turnNum);
             }
         }
+
+        // On a perps fight the score is not cash plus holdings, it is account equity —
+        // a live oracle read. So the score itself needs the same protection the mark
+        // prices above get: one reading per turn, taken while the market is known
+        // healthy, for finalize to fall back on if the oracle is stale at the moment
+        // the fight ends. Without it a stale feed at exactly the wrong block would
+        // score both fighters zero and turn a decided fight into a draw.
+        if (poolIsPerp[pools[0]]) {
+            _snapshotPerpEquity(duelId, duel.fighterA);
+            _snapshotPerpEquity(duelId, duel.fighterB);
+        }
+    }
+
+    /// @dev A failed read leaves the previous snapshot in place rather than
+    ///      overwriting it with a zero, because "we could not see it" and "it is
+    ///      gone" are very different claims about a fighter's money.
+    function _snapshotPerpEquity(uint256 duelId, uint8 fighterId) internal {
+        address reg = perpRegistry;
+        if (reg == address(0)) return;
+        try IPerpRegistry(reg).equityOf(duelId, fighterId) returns (bool ok, int256 equity) {
+            if (ok) perpEquitySnapshots[duelId][fighterId] = equity > 0 ? uint256(equity) : 0;
+        } catch {}
     }
 
     // ─── LLM request / response ───────────────────────────────────────────────
@@ -100,9 +144,9 @@ contract ArenaTurnPart is ArenaStorage {
         address[3] memory mPools = _duelPools(duelId);
         string memory marketSummary = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
-            mPools[0], mPools[1], mPools[2],
+            mPools[0], mPools[1], mPools[2], USDSO,
             fighterBalances, poolMeta,
-            duelMarkSnapshots, duelPrevMarkSnapshots, poolLabel
+            duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
         );
         // Ask by NAME, constrained to the actions this fighter can execute.
         //
@@ -117,9 +161,9 @@ contract ArenaTurnPart is ArenaStorage {
         // lands outside the set and every event trade becomes a silent Hold.
         string[] memory allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
             duelId, fighterId, duels[duelId],
-            mPools[0], mPools[1], mPools[2],
-            fighterBalances, poolMeta
-        ), ArenaUtils.vocabFor(mPools, poolLabel));
+            mPools[0], mPools[1], mPools[2], USDSO,
+            fighterBalances, poolMeta, poolIsPerp
+        ), ArenaUtils.vocabFor(mPools, poolLabel, poolIsPerp));
         bytes memory payload = abi.encodeWithSelector(
             ILLMInferenceAgent.inferString.selector,
             marketSummary,
@@ -184,13 +228,13 @@ contract ArenaTurnPart is ArenaStorage {
         address[3] memory cPools = _duelPools(pt.duelId);
         uint8[] memory legal = ArenaUtils.legalActions(
             pt.duelId, pt.fighterId, duels[pt.duelId],
-            cPools[0], cPools[1], cPools[2],
-            fighterBalances, poolMeta
+            cPools[0], cPools[1], cPools[2], USDSO,
+            fighterBalances, poolMeta, poolIsPerp
         );
 
         (bool decoded, string memory answer) = ArenaUtils.decodeStringResult(responses[0].result);
         (bool inSet, uint8 chosen) = decoded
-            ? ArenaUtils.matchAction(legal, answer, ArenaUtils.vocabFor(cPools, poolLabel))
+            ? ArenaUtils.matchAction(legal, answer, ArenaUtils.vocabFor(cPools, poolLabel, poolIsPerp))
             : (false, uint8(ArenaTypes.FighterAction.Hold));
 
         // An answer outside the executable set must not burn the turn. The player
@@ -290,8 +334,24 @@ contract ArenaTurnPart is ArenaStorage {
         ArenaTypes.PoolBalance storage bal    = fighterBalances[pool][duelId][fighterId];
         uint256 baseUnit = 10 ** uint256(meta.baseDecimals);
         uint256 desired;
+        bool    isPerp = poolIsPerp[pool];
 
-        if (isBid) {
+        if (isPerp) {
+            // ONE smallest position, either direction, every time.
+            //
+            // Both of the balance gates below are meaningless here and would be
+            // actively wrong. A perps fighter's spending power is not a quote balance
+            // in a vault — it is margin health held by the protocol, which is already
+            // what decided whether this action was offered at all (see
+            // `perpTradability`). And a sell does not need a holding to sell: that is
+            // the entire point of this market, and reading `bal.baseTokenAmount` here
+            // would refuse every short.
+            //
+            // Fixed size rather than "as much as it can afford" so the fight stays
+            // legible: every move is one step in a direction, and a fighter cannot
+            // put its whole budget on one turn and have nothing left to play with.
+            desired = meta.minQuantity;
+        } else if (isBid) {
             if (bal.quoteTokenAmount == 0) {
                 _reject(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
@@ -327,8 +387,32 @@ contract ArenaTurnPart is ArenaStorage {
                 : (price / meta.tickSize) * meta.tickSize;
         }
 
-        (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600);
-        if (ok) {
+        // The fighter's identity rides on `userData`, which Arena hard-coded to zero
+        // until now. A perp desk needs it because all six desks converge on ONE
+        // account per fighter, so the desk cannot work out whose order this is from
+        // its own address. Left at zero for spot and events, where nothing reads it
+        // and a change would be a change for its own sake.
+        uint64 userData = isPerp ? uint64((duelId << 8) | uint256(fighterId)) : 0;
+
+        // A SELL has to hand real tokens over, and the venue takes them by
+        // `transferFrom` out of THIS contract's balance — which is where it delivered
+        // them when the buy filled, not into any vault. Without an allowance that
+        // transfer reverts, so every sell on every spot market failed and a fighter
+        // could buy an asset and never realise anything on it.
+        //
+        // Granted per order and for exactly this quantity, so no standing allowance is
+        // left behind for a pool that is later re-pointed.
+        if (!isPerp && !isBid) _approveBaseForSale(pool, quantity);
+
+        (ok, orderId) = _placeOrderForFighter(duelId, fighterId, pool, isBid, price, quantity, 1, 3600, userData);
+
+        // A perps position is held by the protocol, against the fighter's own
+        // address, and scored as account equity at the end. Mirroring it into the
+        // virtual ledger would be keeping a second set of books that can only
+        // disagree with the first — and the quote side of that ledger is what
+        // `recoverFunds` pays the creator from, so writing to it here would quietly
+        // change what the players get back.
+        if (ok && !isPerp) {
             uint256 quoteCost = (price * quantity) / baseUnit;
             if (isBid) {
                 if (quoteCost > bal.quoteTokenAmount) quoteCost = bal.quoteTokenAmount;
@@ -342,6 +426,25 @@ contract ArenaTurnPart is ArenaStorage {
     }
 
 
+    /// @dev Let `pool` take `quantity` of its own base asset from this contract, for
+    ///      one sell. Best-effort: a pool that will not name its base asset, or a
+    ///      token that refuses the approval, leaves the order to fail on its own
+    ///      rather than reverting the turn and costing the player their fight.
+    ///
+    ///      A base asset with no code is the native coin, which cannot be approved at
+    ///      all — selling it needs value sent with the order, which this path does not
+    ///      do. `tradability` already declines to offer that sell.
+    function _approveBaseForSale(address pool, uint256 quantity) internal {
+        address baseToken;
+        try ISpotPool(pool).getPoolParams() returns (
+            address b, address, uint256, uint256, uint256, uint256, uint256
+        ) { baseToken = b; } catch { return; }
+        if (baseToken == address(0) || baseToken.code.length == 0) return;
+        // Zero first, for tokens that refuse a non-zero-to-non-zero change.
+        try IERC20Minimal(baseToken).approve(pool, 0) returns (bool) {} catch { return; }
+        try IERC20Minimal(baseToken).approve(pool, quantity) returns (bool) {} catch { return; }
+    }
+
     function _placeOrderForFighter(
         uint256 duelId,
         uint8   fighterId,
@@ -350,7 +453,8 @@ contract ArenaTurnPart is ArenaStorage {
         uint256 price,
         uint256 quantity,
         uint8   orderType,
-        uint64  expireOffsetSec
+        uint64  expireOffsetSec,
+        uint64  userData
     ) internal returns (bool ok, uint128 orderId) {
         _requireValidPool(pool);
         if (expireOffsetSec == 0 || expireOffsetSec > MAX_EXPIRE_OFFSET_SEC) revert ArenaTypes.InvalidExpiry();
@@ -358,7 +462,7 @@ contract ArenaTurnPart is ArenaStorage {
 
         uint64 expireTimestampNs = (uint64(block.timestamp) + expireOffsetSec) * 1_000_000_000;
 
-        try ISpotPool(pool).placeOrder(isBid, 0, price, quantity, expireTimestampNs, orderType, 0, address(0), 0)
+        try ISpotPool(pool).placeOrder(isBid, userData, price, quantity, expireTimestampNs, orderType, 0, address(0), 0)
             returns (bool success, uint128 returnedId)
         {
             if (!success) {

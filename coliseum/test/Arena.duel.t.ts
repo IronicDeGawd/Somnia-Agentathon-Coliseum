@@ -10,6 +10,18 @@ const DUEL_RESOLVED_SIG = keccak256(toBytes("DuelResolved(uint256,uint8,uint256,
 const DUEL_DRAWN_SIG    = keccak256(toBytes("DuelDrawn(uint256,uint256,uint256)"));
 
 // DuelStatus: Active=1, Finalizing=2, Resolved=3 (None removed, Pending removed)
+/**
+ * Every action name the mock spot pools can produce. The agent is asked for one of
+ * these exact strings and its answer is matched against them byte for byte, so this
+ * list is the whole of what a fighter can ever be made to do.
+ */
+const ACTION_NAMES = [
+  "Hold",
+  "BuyWETH", "SellWETH",
+  "BuyWBTC", "SellWBTC",
+  "BuySOMI", "SellSOMI",
+];
+
 const DuelStatus = {
   Active:     1,
   Finalizing: 2,
@@ -201,10 +213,208 @@ describe("Arena — Duel lifecycle", function () {
         0,
         `fighter ${fighter} holds no base on turn one, so no Sell may be offered — got ${allowed.join(", ")}`,
       );
-      // The prompt must not smuggle a number back in either: a digit anywhere is
-      // something the model can echo and the agent can extract.
-      expect(prompt).to.not.match(/\d/, `prompt must carry no numerals, got: ${prompt}`);
+      // Numbers in the prompt USED to be the danger here — the old agent extracted
+      // a numeral and clamped it into an action id, so an echoed price became a
+      // trade. That is no longer how a move is chosen: the agent is asked for one
+      // of the allowed strings and the answer is matched against them exactly, so
+      // nothing lifted out of the prose can become an action. What has to hold now
+      // is that the allow-list itself contains only real action names, which is the
+      // property the old numeral rule was standing in for.
+      for (const a of allowed) {
+        expect(ACTION_NAMES).to.include(
+          a,
+          `every offered action must be an exact action name, got "${a}" in ${allowed.join(", ")}`,
+        );
+      }
+      // And the prompt must still carry the numbers a trader decides on, or the
+      // fighter is back to being told everything is "flat" every single turn.
+      expect(prompt).to.match(/\d/, `spot prompt must quote real levels, got: ${prompt}`);
     }
+  });
+
+  // The counterpart of the perps prompt fix, and the reason it was needed.
+  //
+  // Described in words alone, a real coin book reads "flat" every single turn: it
+  // moves a few basis points in a sixty-second turn and the word bands call anything
+  // under fifty basis points no movement at all. Measured across three tiers on
+  // testnet, six spot fighters placed four orders in total — all of them the same one
+  // asset — while events fighters placed twenty-eight and perps fighters twenty-six.
+  // A fighter was never shown a reason to do anything.
+  //
+  // So the spot slot now carries what a trader actually decides on. The affordability
+  // half matters more here than on perps, because a spot fighter buys outright: what
+  // a lot costs and what cash is left is a hard limit on what it may do, and the old
+  // prompt stated neither.
+  it("quotes the level, the holding, the cash and what a lot costs on a spot slot", async function () {
+    const { arena } = await deploy(true);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    const [prompt] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+
+    // The mark is 100 USDso and the minimum size is one hundredth, so a lot costs 1.
+    expect(prompt, `got: ${prompt}`).to.match(/SOMI at 100\.00/);
+    expect(prompt, "a fighter holding nothing must be told so").to.match(/You hold no SOMI/);
+    expect(prompt, "cash is the fighter's spending limit").to.match(/Cash [\d.]+ USDso/);
+    expect(prompt, "and what one trade costs against it").to.match(
+      /smallest trade here is 0\.0100 SOMI, costing 1\.0000 USDso/,
+    );
+  });
+
+  // A book with no two-sided liquidity has no mid price, and the old wording would
+  // have quoted that as a price of zero — an asset that appears to cost nothing
+  // invites a buy that cannot fill, which burns the fighter's turn.
+  it("says there is no price rather than quoting zero on an empty book", async function () {
+    const { arena } = await deploy();
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    const [prompt] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+
+    expect(prompt, `got: ${prompt}`).to.match(/SOMI has no price on the book right now/);
+    expect(prompt, "and no zero price anywhere near it").to.not.match(/SOMI at 0/);
+  });
+
+  // A fighter's quote balance is a LEDGER entry — its share of the pot. The money an
+  // order actually draws on is the Arena's own deposit in that pool, seeded
+  // separately, and it can run dry. The allow-list used to ignore it, so a fighter
+  // with a healthy ledger was offered a buy against an empty venue, the execution
+  // path refused it, and the turn was gone.
+  //
+  // Measured on duel 36: both fighters attempted a buy every single turn and every
+  // one was refused, because the spot vaults held 0.09, 2.00 and 0.87 USDso against a
+  // minimum Bitcoin lot costing 64.59. The fighters were doing nothing wrong.
+  it("never offers a buy the arena's own vault cannot fund", async function () {
+    const { arena, poolSomi, usdso } = await deploy(true);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    // The vault is empty, so no buy may be offered however rich the ledger is.
+    const [, empty] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      empty.filter((a) => a.startsWith("Buy")),
+      `an empty vault cannot fund a buy — got ${empty.join(", ")}`,
+    ).to.have.length(0);
+
+    // One lot costs 1 USDso at the mock's 100 mark and hundredth minimum, so a vault
+    // holding less than that still cannot fund one.
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("0.5")]);
+    const [, thin] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      thin.filter((a) => a.startsWith("Buy")),
+      `half a lot is still not a lot — got ${thin.join(", ")}`,
+    ).to.have.length(0);
+
+    // Fund it properly and the buy comes back, which is what proves the gate is the
+    // vault rather than something else having quietly turned trading off.
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+    const [, funded] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      funded.some((a) => a === "BuySOMI"),
+      `a funded vault must offer the buy — got ${funded.join(", ")}`,
+    ).to.equal(true);
+  });
+
+  // The sell side of the same rule, and the sharper case of it: here the two numbers
+  // can genuinely disagree. Measured on duel 36, fighter 1's ledger recorded one whole
+  // SOMI while the Arena held none of it at that pool, so the fighter was offered a
+  // sell every turn and the venue refused every one. Whatever causes that gap, the
+  // fighter should not pay for it with its turn.
+  it("never offers a sell the arena holds no base token for", async function () {
+    const { arena, poolSomi, usdso, mockPlatform } = await deploy(true);
+    // A base token distinct from the quote, so the two balances can be told apart —
+    // the shared fixture uses USDso for both.
+    const base = await hre.viem.deployContract("MockERC20", ["Base", "BASE"]);
+    const ONE = 10n ** 18n;
+    await poolSomi.write.setPoolParams([base.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    // Buy SOMI for real, which is what credits the ledger. The mock venue records the
+    // order without moving tokens — exactly like the live one, whose fills leave the
+    // Arena holding no base at the pool.
+    await arena.write.testRequestFighterMove([duelId, FIGHTER_A]);
+    // The request id is the platform's own counter and a duel start may already have
+    // consumed one, so it is found rather than assumed.
+    let requestId = 0n;
+    for (let id = 1n; id <= 8n; id++) {
+      const t = await arena.read.pendingTurns([id]) as [bigint, number, bigint, boolean];
+      if (t[3] && t[0] === duelId && t[1] === FIGHTER_A) { requestId = id; break; }
+    }
+    expect(requestId, "no pending turn was created for this fighter").to.not.equal(0n);
+    // By NAME, because that is how a move is chosen now — a numeric reply matches
+    // nothing and is recorded as a coercion, which would leave the fighter flat and
+    // the test proving nothing.
+    await mockPlatform.write.dispatchSuccessString([
+      arena.address, requestId, HANDLE_SELECTOR, "BuySOMI",
+    ]);
+
+    const bal = await arena.read.fighterBalances([poolSomi.address, duelId, FIGHTER_A]) as [bigint, bigint];
+    expect(bal[0], "the buy must have credited the ledger, or this proves nothing")
+      .to.be.greaterThanOrEqual(ONE / 100n);
+
+    const [, allowed] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      allowed.filter((a) => a.startsWith("Sell")),
+      `the arena holds no base, so no sell may be offered — got ${allowed.join(", ")}`,
+    ).to.have.length(0);
+
+    // Hand the Arena the actual tokens — into its OWN balance, which is where a fill
+    // is delivered and where a sell has to come from — and the sell becomes offerable.
+    // That is what proves the gate is the base holding rather than something else.
+    await base.write.mint([arena.address, parseEther("5")]);
+    const [, funded] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      funded.some((a) => a === "SellSOMI"),
+      `real base holdings must offer the sell — got ${funded.join(", ")}`,
+    ).to.equal(true);
+  });
+
+  // The functional half of the same discovery. A venue takes the quote for a buy out
+  // of what was deposited to it, but it DELIVERS the fill to the Arena's own balance —
+  // and a sell is then taken back out of that balance by transferFrom. With no
+  // allowance that transfer reverts, which is why every spot sell on the live venue
+  // failed with "pool reverted" and a fighter could buy an asset and never realise
+  // anything on it.
+  it("approves the base token to the pool before selling it", async function () {
+    const { arena, poolSomi, usdso, mockPlatform } = await deploy(true);
+    const base = await hre.viem.deployContract("MockERC20", ["Base", "BASE"]);
+    const ONE = 10n ** 18n;
+    await poolSomi.write.setPoolParams([base.address, usdso.address, 1n, ONE / 100n, 1n]);
+    await poolSomi.write.creditVault([arena.address, usdso.address, parseEther("100")]);
+    await base.write.mint([arena.address, parseEther("5")]);
+
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    expect(
+      await base.read.allowance([arena.address, poolSomi.address]),
+      "nothing should be approved before a sell is attempted",
+    ).to.equal(0n);
+
+    const drive = async (move: string) => {
+      await arena.write.testRequestFighterMove([duelId, FIGHTER_A]);
+      let requestId = 0n;
+      for (let id = 1n; id <= 12n; id++) {
+        const t = await arena.read.pendingTurns([id]) as [bigint, number, bigint, boolean];
+        if (t[3] && t[0] === duelId && t[1] === FIGHTER_A) { requestId = id; break; }
+      }
+      expect(requestId, `no pending turn for ${move}`).to.not.equal(0n);
+      await mockPlatform.write.dispatchSuccessString([arena.address, requestId, HANDLE_SELECTOR, move]);
+    };
+
+    // Buy first, so the fighter has something the sell can be sized against.
+    await drive("BuySOMI");
+    await drive("SellSOMI");
+
+    // The sell was sized at the fighter's whole holding, so the allowance the Arena
+    // granted is that holding — not zero, which is what the venue was being handed.
+    expect(
+      await base.read.allowance([arena.address, poolSomi.address]),
+      "the pool must be allowed to take the asset being sold",
+    ).to.be.greaterThan(0n);
   });
 
   it("records the resolved duel in DuelHistory when the sink is set", async function () {
