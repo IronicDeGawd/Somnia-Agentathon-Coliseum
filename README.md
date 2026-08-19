@@ -390,6 +390,87 @@ contract keeps spending any balance you send it.
 The SOMI book's "base token" is an address with **no code**. It is a sentinel for native STT, not a
 token — a detail that costs an afternoon to rediscover.
 
+## Every fight we ran on testnet
+
+The record of the live test runs, so the claims above can be checked rather than taken on trust. Every
+fight below is real: a real deposit, real orders on real markets, a real result, and a page you can
+open. All of them ran fighter **The Degen** against **The Whale**.
+
+Duels 22–35 are the full matrix — every tier the lobby offers, on every market — and each was started
+from the site by a browser carrying its own wallet, then settled and claimed.
+
+| Duel | Market | Rounds | Orders | Result | Markets traded |
+|---|---|---|---|---|---|
+| [17](https://coliseum.somniaforge.com/duel/17/result) | Perps | 6 | 0 | draw | ADA XRP BNB |
+| [18](https://coliseum.somniaforge.com/duel/18/result) | Perps | 3 | 0 | draw | XRP BNB ETH |
+| [19](https://coliseum.somniaforge.com/duel/19/result) | Perps | 6 | 6 | **The Whale** | BNB ETH SOL |
+| [20](https://coliseum.somniaforge.com/duel/20/result) | Perps | 3 | 4 | **The Degen** | ETH SOL ADA |
+| [21](https://coliseum.somniaforge.com/duel/21/result) | Practice | 3 | 2 | draw | mock books |
+| [22](https://coliseum.somniaforge.com/duel/22/result) | Events | 3 | 3 | **The Whale** | ETHUP BTCUP ETHLATER |
+| [23](https://coliseum.somniaforge.com/duel/23/result) | Perps | 6 | 3 | **The Whale** | XRP BNB ETH |
+| [24](https://coliseum.somniaforge.com/duel/24/result) | Perps | 3 | 0 | draw | BNB ETH SOL |
+| [25](https://coliseum.somniaforge.com/duel/25/result) | Spot | 3 | 2 | draw | SOMI |
+| [26](https://coliseum.somniaforge.com/duel/26/result) | Events | 6 | 6 | **The Whale** | ETHUP BTCUP ETHLATER |
+| [27](https://coliseum.somniaforge.com/duel/27/result) | Events | 9 | 9 | **The Whale** | ETHUP BTCUP ETHLATER |
+| [28](https://coliseum.somniaforge.com/duel/28/result) | Spot | 9 | 0 | draw | SOMI WETH WBTC |
+| [29](https://coliseum.somniaforge.com/duel/29/result) | Practice | 6 | 3 | **The Whale** | mock books |
+| [30](https://coliseum.somniaforge.com/duel/30/result) | Practice | 9 | 0 | draw | mock books |
+| [31](https://coliseum.somniaforge.com/duel/31/result) | Perps | 9 | 6 | **The Whale** | ETH SOL ADA |
+| [32](https://coliseum.somniaforge.com/duel/32/result) | Events | 15 | 10 | **The Degen** | ETHUP BTCUP ETHLATER |
+| [33](https://coliseum.somniaforge.com/duel/33/result) | Spot | 15 | 2 | **The Degen** | SOMI WETH WBTC |
+| [34](https://coliseum.somniaforge.com/duel/34/result) | Practice | 15 | 0 | draw | mock books |
+| [35](https://coliseum.somniaforge.com/duel/35/result) | Perps | 15 | 7 | **The Whale** | BNB BTC ETH |
+
+Two entries are not player-started and are marked here rather than quietly counted: duel 21 is a
+three-round practice fight run by the operator to check the shipped markets still worked after a
+contract rewire, and duel 31 was started by the operator because the site could not yet start a
+nine-round perps fight — see the gas floor below.
+
+### What the record shows
+
+**Duels 17 and 18 are the "before".** Eighteen moves, every one a Hold, both drawn. The fighters were
+offered the full menu and refused it, because a perps market is described in words and the word bands
+call any move under fifty basis points flat — while the largest move in any of those turns was seven.
+Duels 19 and 20 are the same contracts after the prompt began carrying numbers, and they traded.
+
+**Perps is where the money is decided and spot is where it costs.** A fifteen-round spot fight takes
+**319.79 USDso** of deposit between the two players; the same fight on perps takes **47.50**. That gap
+is the whole reason the market exists — a position is posted against, not bought outright.
+
+**Bitcoin only appears at the top tiers**, and duel 35 is the first fight it ever traded in
+(`ORDER BTC buy 0.001 @ 64,589.2 → LongBTC`). Which three of the six perp markets a fight gets is
+computed when it starts, from what its budget can post margin for at that moment — so no two rows
+above show the same three, and Bitcoin moved from the fifteen-round tier into the nine-round tier by
+itself during the run as its margin requirement fell from 12.05 to 10.90.
+
+**Spot barely trades.** Four orders across three fights, all of them one SOMI, against twenty-eight on
+events and twenty-six on perps. It is not a wiring fault — at turn ten of duel 33 the fighter was
+offered `BuyWBTC, BuyWETH, BuySOMI` and held anyway. It is the same problem duels 17 and 18 had: a real
+coin book moves a few basis points in a sixty-second turn, so every slot reads "flat", and "you hold no
+WETH" is not on its own a reason to buy. Practice escapes it because its price injector actually moves
+prices; events escapes it because a probability is bounded and its relative moves are huge — eleven of
+twelve measured per-turn steps crossed the same band, several by thousands of basis points.
+
+### What running all of it broke
+
+Four faults that only appear under load, all found by this matrix and all fixed:
+
+- **The queue gas floor was too low, twice.** Queueing costs a few hundred thousand gas when the line
+  is empty and millions when it is not, because the second player's transaction starts the fight. The
+  floor was 5,000,000 and a six-round events start needs 5,223,101 — the player lost their gas and the
+  site showed a failed queue with nothing explaining it. Twelve million then covered every tier except
+  perps at nine and fifteen rounds, where a start costs **29,200,558** and no browser attempt could
+  ever have succeeded.
+- **A reactive firing advanced every active duel under a 15,000,000 gas cap.** A turn measured
+  7,477,821 gas one hour and 29,382,823 the next — the variable part is the inference platform's, not
+  ours. A firing that runs out of gas books no successor, so the chain ends silently: five concurrent
+  fights stalled for fifteen thousand blocks with nothing reporting it. A firing now takes one turn and
+  re-arms.
+- **The keeper could not recover it.** It will not drive turns while the arena is below its fuel floor,
+  and it tops the arena up from the deployer, which will not go below its own. Both were low at once.
+- **Leaving a queue was capped at 200,000 gas** against a 1,144,175 estimate, so a player who could not
+  cancel could not recover their deposit until somebody happened to match them.
+
 ## Where to read next
 
 - `ARCHITECTURE.md` — plain-language tour of how the whole thing actually works, jargon explained
