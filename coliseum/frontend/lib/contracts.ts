@@ -16,12 +16,12 @@ export const CONTRACT_ADDRESSES = {
   // setPrompt).
   //
   // Arena is linked against a deployed ArenaUtils library
-  // (0x1fd61d6cf1a414ac329b0af692a61b33dab940ee). Parts, as rewired for one-shot
-  // Reactivity ticks on 2026-08-18:
-  //   ArenaVaultPart 0xdd09ae5c9d1cc923e4ec22b7385b3d8313d5c12a
-  //   ArenaDuelPart  0x63605f9dc2fc95b2065df5847e74c09fb3e97e7e
-  //   ArenaTurnPart  0x380e678126dcb60823d7085add70835fe53d63a3
-  //   ArenaViewPart  0x27cabce1f4308282070dbc76e253ebe592a478af
+  // (0xfd85c51c326662d79cba95e530bedc6d6306ede0). Parts, as rewired on
+  // 2026-08-19 to give a spot slot the numbers a trader decides on:
+  //   ArenaVaultPart 0x136a1b3d4b2238a9a30b2bee773b63372cca8ed7
+  //   ArenaDuelPart  0x03fc19b739a0dfff9401277086d86d819f10cef3
+  //   ArenaTurnPart  0x86853427bb61187536784fa467a7d772b1b3fa79
+  //   ArenaViewPart  0x8d172e656062ffc471ee414ad3de7a6b8509c401
   // The router's address never moves, so nothing here changes when parts do.
   Arena: '0x301d9364BDb2fd76E33c13eBE8FCc956BAcfbeD6' as const,
   // Redeployed 2026-08-18 for one-shot Reactivity ticks. Unlike Arena it is an
@@ -33,11 +33,16 @@ export const CONTRACT_ADDRESSES = {
   Bookmaker: '0x73d0a884f563c454ca0d05bd09b0643c0204b755' as const,
   FighterRegistry: '0xefe3dd01c59b435bb688135f19db364ef09e90df' as const,
   USDso: '0x9c32F3827A1a99f0cf9B213de8b53eC3d57bb171' as const,
-  // Redeployed 2026-08-19 to accept the perps market. Its market gate is a
-  // hardcoded constant, so a new market means a new Matchmaker; it holds Arena
-  // immutable but needs no authorisation, since starting a duel is permissionless.
-  // Predecessor, drained and idle: 0x6b7e255a3420c7846a15e963589ffd5504773b0a
-  Matchmaker: '0x6ba7969f16655fca3b39b557d9a98b376f6a149c' as const,
+  // Redeployed 2026-08-19 (second time that day) so a start the arena rejects
+  // refunds both players instead of reverting the second player's queue
+  // transaction, and so perps stops paying the 25% drift buffer its fixed entry
+  // price cannot drift by. Its market gate is a hardcoded constant, so a new
+  // market means a new Matchmaker; it holds Arena immutable but needs no
+  // authorisation, since starting a duel is permissionless.
+  // Predecessors, both drained and idle:
+  //   0x6ba7969f16655fca3b39b557d9a98b376f6a149c  (first perps-aware build)
+  //   0x6b7e255a3420c7846a15e963589ffd5504773b0a  (pre-perps)
+  Matchmaker: '0x68835367edbc36b054e82c5fe20f45ff6c095801' as const,
   // The shared margin ledger every perps fighter posts against. Needed in the
   // frontend for one reason only: `perpPositionOf` scores a fighter as a single
   // number across all three of its markets, so the per-market breakdown — what is
