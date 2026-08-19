@@ -9,6 +9,7 @@ import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useQueueState, queueKey } from '@/hooks/useQueueState';
 import { useEventQuestions } from '@/hooks/useEventQuestions';
 import { usePerpMarkets } from '@/hooks/usePerpMarkets';
+import type { PerpTierOffer } from '@/hooks/usePerpMarkets';
 import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, SIM_MARKET_ENABLED } from '@/lib/contracts';
 import { getWsClient } from '@/lib/wsClient';
@@ -59,6 +60,46 @@ const MARKET_CHOICES: ReadonlyArray<{
       }]
     : []),
 ];
+
+/**
+ * The two things about a perps tier a player cannot work out from the buttons.
+ *
+ * FIRST, what the number buys. On every other market the tier number is a length
+ * and nothing else. Here it is also a bankroll: the fighter is handed that much
+ * collateral to post margin against, and the whole fight is decided by what it
+ * does with it.
+ *
+ * SECOND, why the assets keep changing. A player who sees Bitcoin on the fifteen-
+ * round tier one hour and not the next will read it as a bug. It is not: how much
+ * margin a market demands rises with how much open interest it carries, so a busy
+ * market prices itself out of the cheaper tiers on its own and walks back in when
+ * it quietens. Which three a fight gets is settled at the moment it starts, from
+ * what the budget can actually cover right then — so two fights at the same length
+ * can legitimately trade different assets.
+ */
+function PerpsTierNote({ offer }: { offer?: PerpTierOffer }) {
+  const budget = offer?.budget ?? BigInt(0);
+  return (
+    <div className="t-xs" style={{ color: 'var(--text-dim)', lineHeight: 1.5 }}>
+      {budget > BigInt(0) && (
+        <>
+          Each fighter gets <strong style={{ color: 'var(--text)' }}>{formatUnits(budget, 18)} USDso</strong>{' '}
+          of collateral to post margin against.{' '}
+        </>
+      )}
+      The three assets are settled when the fight starts, from what that collateral
+      can cover at the time — a market that gets busy demands more margin and drops
+      out of the cheaper tiers by itself, so two fights at this length can trade
+      different assets.
+      {offer?.unavailable && (
+        <span style={{ color: 'var(--loss)' }}>
+          {' '}Fewer than three markets qualify right now, so a fight at this length
+          would be refused.
+        </span>
+      )}
+    </div>
+  );
+}
 
 /// Events trades every question at every length, so this does not vary by tier.
 /// The names come from the chain — the desks are re-pointed at fresh questions
@@ -554,6 +595,7 @@ function QueueInner({
             );
           })}
         </div>
+        {market === MarketKind.Perps && <PerpsTierNote offer={perpOffers.find((o) => o.turns === turns)} />}
       </div>
       )}
 

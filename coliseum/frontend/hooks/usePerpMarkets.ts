@@ -20,6 +20,12 @@ export interface PerpTierOffer {
    * after — the refusal reaches them as a failed queue with no explanation.
    */
   unavailable: boolean;
+  /**
+   * The collateral one fighter is handed at this length, in 18-decimal USDso.
+   * Fixed and advertised — unlike every other market's entry it reads no book, so
+   * the figure quoted here is exactly the figure taken.
+   */
+  budget: bigint;
 }
 
 /**
@@ -50,6 +56,16 @@ export function usePerpMarkets(): { offers: PerpTierOffer[]; isLoading: boolean 
     ).filter((a) => a && !/^0x0+$/.test(a)).map((a) => a.toLowerCase()),
   )) as Address[];
 
+  const { data: budgets } = useReadContracts({
+    contracts: TIERS.map((turns) => ({
+      address: ARENA,
+      abi: ABIS.Arena,
+      functionName: 'perpBudgetFor' as const,
+      args: [turns] as [number],
+    })),
+    config,
+  });
+
   const { data: labels, isLoading: labelsLoading } = useReadContracts({
     contracts: addresses.map((pool) => ({
       address: ARENA, abi: ABIS.Arena, functionName: 'poolQuestion' as const, args: [pool],
@@ -70,11 +86,13 @@ export function usePerpMarkets(): { offers: PerpTierOffer[]; isLoading: boolean 
     // A reverting read is the honest answer, not an error to hide: the selection
     // refuses when fewer than three markets qualify, which is exactly what
     // starting a fight at this length would do.
-    if (r?.status !== 'success') return { turns, markets: [], unavailable: !picksLoading };
+    const b = budgets?.[i];
+    const budget = b?.status === 'success' ? (b.result as bigint) : BigInt(0);
+    if (r?.status !== 'success') return { turns, markets: [], unavailable: !picksLoading, budget };
     const markets = (r.result as readonly Address[])
       .map((a) => nameOf.get(a.toLowerCase()))
       .filter(Boolean) as string[];
-    return { turns, markets, unavailable: false };
+    return { turns, markets, unavailable: false, budget };
   });
 
   return { offers, isLoading: picksLoading || labelsLoading };
