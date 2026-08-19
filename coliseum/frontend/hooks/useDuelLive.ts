@@ -19,6 +19,45 @@ export interface PoolHolding {
   quoteAmount: string;    // formatted USDso amount
 }
 
+/**
+ * One market a perps fighter is actually in.
+ *
+ * `size` is SIGNED and that sign is the whole point: positive is a long, negative
+ * is a short, and zero means the fighter never entered this market. A holdings
+ * row cannot express that — an amount is a quantity owned, and a short owns
+ * nothing — which is why perps gets its own shape rather than being squeezed into
+ * the spot one.
+ */
+export interface PerpPosition {
+  market: string;               // slot label, e.g. "ETH"
+  poolAddress: `0x${string}`;
+  size: bigint;                 // signed, in base units
+  baseDecimals: number;
+  entryPrice: bigint;           // 18-dec USDso, the price it got in at
+  markPrice: bigint;            // 18-dec USDso, the price right now
+}
+
+/**
+ * What a perps fighter is worth, and why.
+ *
+ * A perps fighter has ONE account backing all three of its markets, so there is no
+ * per-market balance to add up — the score is account equity, which is collateral
+ * plus unrealised profit plus funding, and the Arena is the contract that decides
+ * it. `live` false means the oracle could not be read just now; `snapshot` is then
+ * what a finalize at this moment would score instead.
+ */
+export interface FighterPerp {
+  live: boolean;
+  equity: bigint;               // signed, 18 dec — only meaningful when `live`
+  snapshot: bigint;             // 18 dec, the last recorded score
+  account: `0x${string}`;
+  /** 0 healthy · 1 margin call · 2 partial liquidation · 3 close-out. */
+  marginStatus: number;
+  /** The collateral this fighter started with, which is what PnL is measured from. */
+  budget: bigint;
+  positions: PerpPosition[];
+}
+
 export interface FighterLive {
   valueUsdso: bigint;           // total portfolio value in USDso (18 dec)
   pnl: bigint;                  // value - initialUsdsoPerFighter (signed)
@@ -26,6 +65,11 @@ export interface FighterLive {
   holdings: PoolHolding[];      // per-pool base+quote amounts
   lastAction: string;           // e.g. "BUY WBTC", "HOLD", or "" if none yet
   thinking: boolean;            // FighterMoveRequested with no subsequent FighterMove
+  /**
+   * Present only on a perps fight, and when it is present it — not `holdings` —
+   * is where the fighter's value comes from. See `FighterPerp`.
+   */
+  perp?: FighterPerp;
 }
 
 export interface PoolMarket {
@@ -457,6 +501,57 @@ export function useDuelLive(
     query: { enabled: enabled && activePools.length > 0, refetchInterval: 10_000, refetchIntervalInBackground: true },
   });
 
+  // ── Perps: the score, and the positions behind it ─────────────────────────
+  // A perps fight is scored from account equity, NOT from the per-pool ledger read
+  // above. That ledger is credited with the full deposit on every pool at start and
+  // a perps trade never touches it again — so reading it makes both fighters look
+  // worth three times their deposit, unchanged, for the whole fight. Payouts were
+  // never affected (they come from equity), but the scoreboard was.
+  const isPerpDuel = activePools.some((p) => p.isPerp);
+
+  const { data: perpRaw, isLoading: perpLoading } = useReadContracts({
+    contracts: [fighterAIndex, fighterBIndex].map((f) => ({
+      address: CONTRACT_ADDRESSES.Arena as `0x${string}`,
+      abi: ABIS.Arena,
+      functionName: 'perpPositionOf' as const,
+      args: [duelId, f] as [bigint, number],
+    })),
+    query: {
+      enabled: enabled && isPerpDuel,
+      refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
+    },
+  });
+
+  const perpResultOf = (i: number) => {
+    const r = perpRaw?.[i];
+    if (r?.status !== 'success' || !r.result) return null;
+    return r.result as readonly [boolean, bigint, bigint, `0x${string}`, number];
+  };
+
+  // The per-market breakdown needs the fighter's trading ADDRESS, which only the
+  // read above can supply — so this is a second round rather than one batch.
+  const perpAccounts = [perpResultOf(0)?.[3], perpResultOf(1)?.[3]];
+  const haveAccounts = perpAccounts.every((a) => a && !/^0x0+$/.test(a));
+
+  const { data: positionsRaw } = useReadContracts({
+    contracts: haveAccounts
+      ? perpAccounts.flatMap((account) =>
+          activePools.map((pool) => ({
+            address: CONTRACT_ADDRESSES.MarginBank,
+            abi: ABIS.MarginBank,
+            functionName: 'getPosition' as const,
+            args: [account as `0x${string}`, pool.address] as [`0x${string}`, `0x${string}`],
+          })),
+        )
+      : [],
+    query: {
+      enabled: enabled && isPerpDuel && haveAccounts && activePools.length > 0,
+      refetchInterval: 10_000,
+      refetchIntervalInBackground: true,
+    },
+  });
+
   // ── Derive per-fighter portfolio value ─────────────────────────────────────
   // balancesRaw is indexed as: [pool0×A, pool0×B, pool1×A, pool1×B, ...]
   if (!enabled || !duel) return EMPTY_RESULT;
@@ -507,6 +602,51 @@ export function useDuelLive(
     }
   });
 
+  // ── Perps override ─────────────────────────────────────────────────────────
+  // On a perps fight everything derived above is wrong by construction, so it is
+  // replaced rather than adjusted. Equity when the oracle answers; the last
+  // recorded score when it does not — never a blend of the two, because a client
+  // that cannot tell them apart cannot tell a flat fighter from a dark market.
+  const buildPerp = (i: number): FighterPerp | undefined => {
+    const r = perpResultOf(i);
+    if (!r) return undefined;
+    const [live, equity, snapshot, account, marginStatus] = r;
+    const positions: PerpPosition[] = activePools.flatMap((pool, pi) => {
+      const raw = positionsRaw?.[i * activePools.length + pi];
+      if (raw?.status !== 'success' || !raw.result) return [];
+      const [size, avgEntryPrice] = raw.result as readonly [bigint, bigint, bigint, bigint];
+      // A fighter that never entered a market has no position to show, and a row
+      // reading zero would be indistinguishable from one that closed out flat.
+      if (size === BigInt(0)) return [];
+      return [{
+        market: pool.key,
+        poolAddress: pool.address,
+        size,
+        baseDecimals: pool.decimals,
+        entryPrice: avgEntryPrice,
+        markPrice: markPrices.get(pool.address.toLowerCase())?.price ?? BigInt(0),
+      }];
+    });
+    return { live, equity, snapshot, account, marginStatus, budget: initialUsdso, positions };
+  };
+
+  const perpA = isPerpDuel ? buildPerp(0) : undefined;
+  const perpB = isPerpDuel ? buildPerp(1) : undefined;
+
+  /** A perps fighter's score: equity while the oracle answers, else the snapshot. */
+  const perpValue = (p?: FighterPerp) =>
+    p ? (p.live ? p.equity : p.snapshot) : undefined;
+
+  const perpValueA = perpValue(perpA);
+  const perpValueB = perpValue(perpB);
+  if (perpValueA !== undefined) valueA = perpValueA;
+  if (perpValueB !== undefined) valueB = perpValueB;
+  if (isPerpDuel) {
+    // One account backs all three markets, so there is no per-pool balance to list.
+    holdingsA.length = 0;
+    holdingsB.length = 0;
+  }
+
   // ── Markets ────────────────────────────────────────────────────────────────
   const markets: PoolMarket[] = activePools.map((pool) => {
     const entry = markPrices.get(pool.address.toLowerCase());
@@ -523,8 +663,15 @@ export function useDuelLive(
   });
 
   // ── Compose result ─────────────────────────────────────────────────────────
-  const pnlA = valueA > BigInt(0) ? (valueA > initialUsdso ? valueA - initialUsdso : -(initialUsdso - valueA)) : BigInt(0);
-  const pnlB = valueB > BigInt(0) ? (valueB > initialUsdso ? valueB - initialUsdso : -(initialUsdso - valueB)) : BigInt(0);
+  // The zero guard means "no balances have been read yet", not "this fighter is
+  // worth nothing" — without it a fight shows a full loss for a moment while the
+  // first read is in flight. It does NOT apply to perps: a fighter whose equity is
+  // genuinely zero has lost its whole budget, and that is the one moment the
+  // scoreboard most needs to say so.
+  const pnlOf = (value: bigint, isPerp: boolean) =>
+    isPerp || value > BigInt(0) ? value - initialUsdso : BigInt(0);
+  const pnlA = pnlOf(valueA, perpValueA !== undefined);
+  const pnlB = pnlOf(valueB, perpValueB !== undefined);
 
   // A resolved duel is over — no fighter is "thinking". (Matters for replays of
   // finished duels, where a trailing FighterMoveRequested has no clearing move.)
@@ -537,6 +684,7 @@ export function useDuelLive(
     holdings: holdingsA,
     lastAction: labelOf(lastActions.get(fighterAIndex)),
     thinking: duelOver ? false : (thinking.get(fighterAIndex) ?? false),
+    perp: perpA,
   };
 
   const fB: FighterLive = {
@@ -546,12 +694,13 @@ export function useDuelLive(
     holdings: holdingsB,
     lastAction: labelOf(lastActions.get(fighterBIndex)),
     thinking: duelOver ? false : (thinking.get(fighterBIndex) ?? false),
+    perp: perpB,
   };
 
   return {
     fighterA: fA,
     fighterB: fB,
     markets,
-    isLoading: balancesLoading,
+    isLoading: balancesLoading || (isPerpDuel && perpLoading),
   };
 }

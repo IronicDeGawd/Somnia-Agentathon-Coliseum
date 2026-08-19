@@ -38,6 +38,11 @@ export const CONTRACT_ADDRESSES = {
   // immutable but needs no authorisation, since starting a duel is permissionless.
   // Predecessor, drained and idle: 0x6b7e255a3420c7846a15e963589ffd5504773b0a
   Matchmaker: '0x6ba7969f16655fca3b39b557d9a98b376f6a149c' as const,
+  // The shared margin ledger every perps fighter posts against. Needed in the
+  // frontend for one reason only: `perpPositionOf` scores a fighter as a single
+  // number across all three of its markets, so the per-market breakdown — what is
+  // actually held, long or short, and at what entry — can only be read here.
+  MarginBank: '0xdd4A14A2763FDa39b9759D2D4150DB0e0f085C4E' as `0x${string}`,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0x11Ac9B65b05dfb1406618Bda649b410B8e8F7108' as `0x${string}`,
 };
@@ -439,5 +444,14 @@ export const ABIS = {
     'event PendingCancelled(uint256 indexed position, address playerA, address playerB, uint16 turns)',
     'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
     'event WinningsClaimed(uint256 indexed duelId, address indexed player, uint256 amount)',
+  ]),
+
+  // Only the one read. A perps fighter's SCORE comes from the Arena, which is the
+  // contract that decides it; this is the breakdown behind that score — which of
+  // the fight's three markets the fighter is actually in, on which side, and at
+  // what price it got in. `size` is signed: positive is long, negative is short,
+  // and zero means the fighter is not in that market at all.
+  MarginBank: parseAbi([
+    'function getPosition(address account, address perpPool) view returns (int128 size, uint128 avgEntryPrice, int256 entryFundingIndex, uint64 lastUpdatedTimestampNs)',
   ]),
 };
