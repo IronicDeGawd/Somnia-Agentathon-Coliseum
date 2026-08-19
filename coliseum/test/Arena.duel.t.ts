@@ -10,6 +10,18 @@ const DUEL_RESOLVED_SIG = keccak256(toBytes("DuelResolved(uint256,uint8,uint256,
 const DUEL_DRAWN_SIG    = keccak256(toBytes("DuelDrawn(uint256,uint256,uint256)"));
 
 // DuelStatus: Active=1, Finalizing=2, Resolved=3 (None removed, Pending removed)
+/**
+ * Every action name the mock spot pools can produce. The agent is asked for one of
+ * these exact strings and its answer is matched against them byte for byte, so this
+ * list is the whole of what a fighter can ever be made to do.
+ */
+const ACTION_NAMES = [
+  "Hold",
+  "BuyWETH", "SellWETH",
+  "BuyWBTC", "SellWBTC",
+  "BuySOMI", "SellSOMI",
+];
+
 const DuelStatus = {
   Active:     1,
   Finalizing: 2,
@@ -201,10 +213,66 @@ describe("Arena — Duel lifecycle", function () {
         0,
         `fighter ${fighter} holds no base on turn one, so no Sell may be offered — got ${allowed.join(", ")}`,
       );
-      // The prompt must not smuggle a number back in either: a digit anywhere is
-      // something the model can echo and the agent can extract.
-      expect(prompt).to.not.match(/\d/, `prompt must carry no numerals, got: ${prompt}`);
+      // Numbers in the prompt USED to be the danger here — the old agent extracted
+      // a numeral and clamped it into an action id, so an echoed price became a
+      // trade. That is no longer how a move is chosen: the agent is asked for one
+      // of the allowed strings and the answer is matched against them exactly, so
+      // nothing lifted out of the prose can become an action. What has to hold now
+      // is that the allow-list itself contains only real action names, which is the
+      // property the old numeral rule was standing in for.
+      for (const a of allowed) {
+        expect(ACTION_NAMES).to.include(
+          a,
+          `every offered action must be an exact action name, got "${a}" in ${allowed.join(", ")}`,
+        );
+      }
+      // And the prompt must still carry the numbers a trader decides on, or the
+      // fighter is back to being told everything is "flat" every single turn.
+      expect(prompt).to.match(/\d/, `spot prompt must quote real levels, got: ${prompt}`);
     }
+  });
+
+  // The counterpart of the perps prompt fix, and the reason it was needed.
+  //
+  // Described in words alone, a real coin book reads "flat" every single turn: it
+  // moves a few basis points in a sixty-second turn and the word bands call anything
+  // under fifty basis points no movement at all. Measured across three tiers on
+  // testnet, six spot fighters placed four orders in total — all of them the same one
+  // asset — while events fighters placed twenty-eight and perps fighters twenty-six.
+  // A fighter was never shown a reason to do anything.
+  //
+  // So the spot slot now carries what a trader actually decides on. The affordability
+  // half matters more here than on perps, because a spot fighter buys outright: what
+  // a lot costs and what cash is left is a hard limit on what it may do, and the old
+  // prompt stated neither.
+  it("quotes the level, the holding, the cash and what a lot costs on a spot slot", async function () {
+    const { arena } = await deploy(true);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    const [prompt] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+
+    // The mark is 100 USDso and the minimum size is one hundredth, so a lot costs 1.
+    expect(prompt, `got: ${prompt}`).to.match(/SOMI at 100\.00/);
+    expect(prompt, "a fighter holding nothing must be told so").to.match(/You hold no SOMI/);
+    expect(prompt, "cash is the fighter's spending limit").to.match(/Cash [\d.]+ USDso/);
+    expect(prompt, "and what one trade costs against it").to.match(
+      /smallest trade here is 0\.0100 SOMI, costing 1\.0000 USDso/,
+    );
+  });
+
+  // A book with no two-sided liquidity has no mid price, and the old wording would
+  // have quoted that as a price of zero — an asset that appears to cost nothing
+  // invites a buy that cannot fill, which burns the fighter's turn.
+  it("says there is no price rather than quoting zero on an empty book", async function () {
+    const { arena } = await deploy();
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    const [prompt] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+
+    expect(prompt, `got: ${prompt}`).to.match(/SOMI has no price on the book right now/);
+    expect(prompt, "and no zero price anywhere near it").to.not.match(/SOMI at 0/);
   });
 
   it("records the resolved duel in DuelHistory when the sink is set", async function () {

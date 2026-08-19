@@ -632,9 +632,77 @@ library ArenaUtils {
         }
 
         string memory asset = slot == 0 ? "WETH" : (slot == 1 ? "WBTC" : "SOMI");
-        return string.concat(
-            asset, " ", moveWord(cur, prev), ". You hold ", holds ? "some " : "no ", asset, "."
-        );
+        return spotLine(asset, cur, prev, openMarkSnapshots[duelId][pool], bal, meta);
+    }
+
+    /// @notice One spot slot, in the numbers a trader actually decides on.
+    ///
+    ///         Replaces a line that described a real coin book in words alone. A
+    ///         book moves a few basis points in a sixty-second turn, so every slot
+    ///         read "flat" every turn and a fighter was never shown a reason to do
+    ///         anything — measured across three tiers, six fighters placed four
+    ///         orders in total, all of them the same one asset.
+    ///
+    ///         Three price points rather than a move figure, for the same reason the
+    ///         perps line carries them: the raw levels let the model see both the
+    ///         step since last turn and the trend since the fight opened, which is
+    ///         the difference between noise and a thesis.
+    ///
+    ///         The cash line matters more here than on perps. A spot fighter buys
+    ///         outright, so what it can afford is a hard limit on what it may do,
+    ///         and nothing in the old prompt said what a lot cost or what was left
+    ///         to spend.
+    function spotLine(
+        string memory asset,
+        uint256 cur,
+        uint256 prev,
+        uint256 open,
+        ArenaTypes.PoolBalance memory bal,
+        ArenaTypes.PoolMeta    memory meta
+    ) internal pure returns (string memory) {
+        // A book with no two-sided liquidity has no mid, and quoting that as a price
+        // of zero would be a lie the fighter can act on — an asset that appears to
+        // cost nothing invites a buy that cannot fill. Say there is no price instead.
+        string memory line;
+        if (cur == 0) {
+            line = string.concat(asset, " has no price on the book right now. ");
+        } else {
+            // Only prices that DIFFER are mentioned. Repeating one figure three times
+            // reads as three separate readings, which suggests movement where there is
+            // none — the opposite of what this line is for.
+            line = string.concat(asset, " at ", priceStr(cur));
+            if (prev > 0 && prev != cur) line = string.concat(line, ", was ", priceStr(prev), " last turn");
+            if (open > 0 && open != cur && open != prev) {
+                line = string.concat(line, ", ", priceStr(open), " when the fight opened");
+            }
+            line = string.concat(line, ". ");
+        }
+
+        if (meta.minQuantity > 0 && bal.baseTokenAmount >= meta.minQuantity) {
+            // Valued at the current mark, because "you hold 0.4 WETH" says nothing
+            // about whether that is most of the fighter's money or none of it.
+            uint256 held = (bal.baseTokenAmount * cur) / (10 ** uint256(meta.baseDecimals));
+            line = string.concat(
+                line, "You hold ", fixedStr(bal.baseTokenAmount, meta.baseDecimals, 4),
+                " ", asset, ", worth ", fixedStr(held, 18, 4), " USDso."
+            );
+        } else {
+            line = string.concat(line, "You hold no ", asset, ".");
+        }
+
+        line = string.concat(line, " Cash ", fixedStr(bal.quoteTokenAmount, 18, 4), " USDso.");
+
+        if (meta.minQuantity > 0 && cur > 0) {
+            uint256 lot = (meta.minQuantity * cur) / (10 ** uint256(meta.baseDecimals));
+            if (lot > 0) {
+                line = string.concat(
+                    line, " The smallest trade here is ",
+                    fixedStr(meta.minQuantity, meta.baseDecimals, 4), " ", asset,
+                    ", costing ", fixedStr(lot, 18, 4), " USDso."
+                );
+            }
+        }
+        return line;
     }
 
     /// @notice One perps slot, in the numbers a trader actually decides on: where the
