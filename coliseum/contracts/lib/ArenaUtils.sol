@@ -429,11 +429,29 @@ library ArenaUtils {
     ///      Measured live: the Arena's wallet held 0.002 of the WETH base after two
     ///      filled buys while the pool reported nothing for it.
     ///
-    ///      A base asset with no code is the NATIVE coin, and selling that means
-    ///      sending value with the order, which this contract does not do. Offering it
-    ///      spends a turn on an order the venue must refuse, so it is refused here
-    ///      instead. The base token is asked of the pool rather than stored, so a
-    ///      re-pointed pool cannot leave this reading a stale token's balance.
+    ///      A base asset with no code is the NATIVE coin, and selling that means sending
+    ///      value with the order, which this contract does not do. Offering it spends a
+    ///      turn on an order the venue must refuse, so it is refused here instead.
+    ///
+    ///      THAT IS A DECISION, NOT AN OMISSION, and it is deliberately not "fixed":
+    ///        - Nothing needs the sell. A non-perps fighter is scored as its cash plus
+    ///          its holdings valued at the mark, so a fighter that bought the coin and
+    ///          cannot sell it is valued exactly as if it had. See the scoring loop in
+    ///          ArenaDuelPart.
+    ///        - It does not strand the fighter either. Each active pool is credited its
+    ///          own quote balance at duel start, so spending this slot's cash leaves the
+    ///          other two slots untouched.
+    ///        - The alternative costs more than it returns. Sending native value would
+    ///          spend this contract's own coin balance, which is ALSO the fuel that pays
+    ///          for every fighter's turn — a coupling that has already deadlocked the
+    ///          keeper once. Letting a fighter trade the fuel is worse than letting it
+    ///          hold one asset in one direction.
+    ///
+    ///      So the cost is narrow and understood: a fighter cannot reverse one of its
+    ///      three slots. Revisit only if a fight is ever actually decided by it.
+    ///
+    ///      The base token is asked of the pool rather than stored, so a re-pointed pool
+    ///      cannot leave this reading a stale token's balance.
     function _canDeliverBase(address pool, uint256 need) internal view returns (bool) {
         try ISpotPool(pool).getPoolParams() returns (
             address baseToken, address, uint256, uint256, uint256, uint256, uint256
