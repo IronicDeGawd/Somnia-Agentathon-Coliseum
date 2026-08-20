@@ -52,8 +52,31 @@ possible.
 | Buying native STT on the SOMI book | `coliseum/scripts/buy-stt.ts` |
 
 The real pool has **no `getMarkPrice()`** — compute the midpoint yourself. And the SOMI book's "base
-token" address holds **no code**: it is a sentinel meaning native STT, and orders against it need a
-raised gas limit or they revert on a payout check. `buy-stt.ts` has both details in working form.
+token" address holds **no code**: it is a sentinel meaning native STT.
+
+Three things about this venue cost a day between them, and all three are load-bearing:
+
+- **The typed interface in this repo is a reconstruction, not the source of truth.** An identical
+  order — same nine arguments, same values — was refused through a typed `placeOrder` call and filled
+  through a raw `abi.encodeWithSignature`, with every other parameter eliminated one at a time. The
+  order paths now use the raw encode. It is also the only way to carry value, which is what makes a
+  native-base sale possible at all.
+- **Approve a margin above the notional, never the exact notional.** An order approved for exactly
+  `price × quantity` was refused; the same order approved generously filled. The venue reserves at the
+  limit price and rounds in its own favour. Approvals are returned to zero straight after, so a margin
+  costs nothing and being exact costs the whole order.
+- **It reports its own gas requirement rather than failing quietly.** A short-of-gas order reverts
+  carrying `2,862,641` in its returndata. Only 63/64ths is forwarded per nesting level, so a caller
+  must supply well above that: the same order was refused at a four-million limit and filled at
+  twelve. Anything wrapping this in a `try/catch` must check `gasleft()` first, or it converts a gas
+  problem into a phantom "venue refusal" — and because the outer call still succeeds, gas estimation
+  then reproduces the failure on every retry.
+
+**Selling native is supported now.** It was refused for months, and the reason was never that it
+could not be done: the only STT the Arena held was the same STT that pays for the fighters' reasoning,
+so a busy trading day could quietly stop them thinking. `FuelPot` gave that balance an income, so the
+coupling is bounded, and `ArenaUtils.FUEL_RESERVE` keeps the two uses apart — above the line the coin
+is inventory, at or below it, it is fuel and no sale is offered.
 
 ### On-chain LLM inference (Somnia Agents)
 
@@ -126,7 +149,7 @@ the chain silently. Three consequences worth copying:
   the old Bookmaker did — and you have an orphan firing forever that nothing can cancel. The only cure
   was starving it of gas. Never abandon a deployment with a native balance still in it.
 
-### Player-matching and escrow### Player-matching and escrow
+### Player-matching and escrow
 
 | What | Where |
 |---|---|
@@ -149,6 +172,56 @@ or buy or sell one of three markets. The Arena contract places that order for re
 
 Players do not start duels directly. They **join a queue**, get matched with whoever is waiting on
 the same line, and the fight begins on its own.
+
+Spot is offered at 9 and 15 rounds only. A three-round spot fight activates a single market, so both
+fighters face the identical one choice every turn and it converges to a tie — which is precisely what
+duel #1 did. Events and perps keep their three-round tiers, because they get three questions and three
+markets there. The single-market tier survives as a **test fixture**, and forcing it is how the
+native-STT sale was finally exercised end to end.
+
+## Where the money goes
+
+Worth reading before the code, because the *shape* of this was wrong for three months and nothing
+noticed.
+
+**One pot, not two.** A buy used to be charged to a deposit lodged with the venue, while the asset
+bought was delivered to the Arena's own balance — payer and receiver being different addresses, with
+nothing moving value back. So the deposit only ever fell, and when it could no longer cover the
+smallest order the venue accepts, every buy was refused with the money in plain sight. Measured across
+one fifteen-round fight: the deposits fell **515.80 → 466.29 USDso**. The deposits are retired
+now — `fundPools` is no longer part of operating the game — and buying power is one balance that both
+pays and receives.
+
+That fault was invisible for months for a reason worth remembering: spot fighters barely traded, so
+almost nothing walked down the path. Four orders across three whole fights. Once they started trading,
+one fight placed forty-eight.
+
+**Assets convert back at the end of every fight.** Each buy still turns cash into an asset, so
+`_resolveDuel` sells the house's holdings back — after the result is stored, because a fighter is
+scored on cash *plus* holdings at the mark and selling first would change who won.
+
+**The entry fee pays for the fighters' thinking, and now actually can.** Players pay in USDso;
+inference is billed in native STT; nothing converted between them, so the fee — priced at six to
+eleven times what thinking costs — sat unusable while an operator's wallet topped the Arena up by
+hand. `FuelPot` closes that: the fee is routed to it at duel creation, and `refuel()` buys STT on the
+SOMI book and tops the Arena up. `refuel()` is **permissionless**, because a pot only its owner can
+fill runs dry at three in the morning — so a spend cap, a price ceiling, and an act-only-below-floor
+band are what stop it being used to make the house buy badly.
+
+The failure mode it removes was silent, which is the point. When STT ran low the Arena did not stop:
+it marked the turn taken, recorded a failure, and moved on. The fight finished with nobody trading and
+the scoreboard showed a draw rather than a fault — the same disguise the spot bug wore.
+
+| | measured |
+|---|---|
+| inference cost | ~0.243 STT per round |
+| entry fee against it | **6–11× cover**, every tier |
+| one fight's proof | fee 1.40 USDso in, 1.29 of STT bought, operator wallet untouched |
+
+**The fee is not withdrawable.** It is the cost of operation, so no path pays it out as profit.
+`migrateSurplus` exists for upgrades only and is capped at the balance above escrowed stakes — because
+deleting the only exit strands house money, and 4.23 USDso already sits in a superseded Arena for
+exactly that reason.
 
 ## Three games, not one
 
@@ -361,6 +434,21 @@ Each of these was bought with a real failure, not added defensively.
 - **No digits in a prompt** — a number in the prompt was echoed back and executed as a move.
 - **Desks are claimed, not shared** — a desk refuses to be re-pointed while claimed, so a question
   cannot move under a live fight.
+- **The offer gate and the executor ask one function** — they used to ask the same question in two
+  places and drifted apart, so a fighter was offered a buy every turn and refused it every turn.
+- **Buying power excludes escrowed stakes** — starting a duel pulls both players' deposits into the
+  Arena's own balance, so anything spending that balance subtracts `escrowedPot` first. A test that
+  fails when the subtraction is removed is what caught this before it shipped.
+- **A fuel reserve the fighters cannot trade away** — above it, native STT is inventory; at or below
+  it, it is what pays for thinking.
+- **Settlement can never block a resolution** — every sale at fight end is wrapped, every refusal is
+  an event, and it stops early on low gas. A fight that cannot finish is a payout nobody can claim,
+  and an unclaimed payout blocks the next rewire.
+- **Storage is only ever appended, after every mapping** — this is the layout of a router that is
+  never redeployed, so a slot inserted anywhere else silently reinterprets every value after it.
+- **Never swallow a failure you have not inspected** — three separate faults here reported success
+  while an inner call had run out of gas, and each one taught the gas estimator to reproduce it.
+  Report *why* separately: reverted, refused, and filled-but-nothing-arrived need different fixes.
 
 ## Key addresses (Somnia testnet, chain 50312)
 
@@ -377,6 +465,7 @@ Each of these was bought with a real failure, not added defensively.
 | dreamDEX SOMI/USDso | `0x259fD6559214dd5aD3752322426eA9F9fABEFff4` |
 | dreamDEX WBTC/USDso | `0x3605f28aA7C50e7441211e77Cb0762d49539326C` |
 | dreamDEX WETH/USDso | `0xD180195da5459C7a0DEA188ed61216ec43682b50` |
+| FuelPot (turns fees into STT) | `0x1e840a1267148b38d02135b36f1daa50ae329f4c` |
 | Somnia Agents platform | `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` |
 
 The Arena's part addresses and the six desks live in `coliseum/deployments/somnia.json`, which is
@@ -389,6 +478,10 @@ contract keeps spending any balance you send it.
 
 The SOMI book's "base token" is an address with **no code**. It is a sentinel for native STT, not a
 token — a detail that costs an afternoon to rediscover.
+
+`FuelPot` is replaceable and holds no player money, so its owner exit is uncapped and it has a
+one-call `migrate` to a successor. That is safe *there* and would be theft in the Arena, whose balance
+holds players' stakes — the distinction is what a contract holds, not who is asking.
 
 ## The test matrix — every tier, played on testnet
 
@@ -513,6 +606,46 @@ Four more faults that only appear under load, all found by this matrix and all f
   and it tops the arena up from the deployer, which will not go below its own. Both were low at once.
 - **Leaving a queue was capped at 200,000 gas** against a 1,144,175 estimate, so a player who could not
   cancel could not recover their deposit until somebody happened to match them.
+
+### What the day after broke, and what it settled
+
+The matrix opened the spot market. Trading it properly then exposed the rest of the money path, and
+four faults came out of it — every one of them reporting success while doing nothing.
+
+**A widened rule applied in one place and not the other.** Buying power was taught to count the
+Arena's own balance, but the check that runs immediately before the order still looked only at the
+deposit. A fighter was offered a buy every turn and refused it every turn — fourteen refusals in
+[duel 56](https://coliseum.somniaforge.com/duel/56/result), all reading `vault below min cost`. Both
+places now call one function, so they cannot drift again.
+
+**Three faults that were the same fault.** A rescue order, a fuel purchase, and a probe script all
+reported success while an inner call had run out of gas:
+
+- the perps rescue ran out inside a price lookup that normally costs ~25,000 units and that day cost
+  960,000; a bare `catch` absorbed it and called it a venue refusal. The fingerprint was in plain
+  sight — three attempts consuming **96.4%, 99.3% and 98.9%** of everything they were given.
+- the fuel purchase hit the same wall, except the venue *told us*: `2,862,641`, in returndata nothing
+  was reading.
+- a probe script printed each receipt's status without checking it, so the process exited zero after
+  an on-chain revert.
+
+And in all three, because the outer call succeeded, gas estimation learned the wrong lesson and
+starved every retry. **A swallowed failure is not a quiet failure — it is an invisible one that
+teaches the machinery to reproduce it.**
+
+**Settlement that no real venue would have accepted.** A new contract's sell-everything call offered
+the raw balance as the order size, with no rounding to the venue's trading step, and passed a full
+test suite — because the mock has no matching engine and accepts any size at all. Green tests,
+non-functional feature.
+
+**And the buy-only market is buy-only no longer.** Selling native STT was refused since May, and the
+objection was real: the only STT the Arena held was the STT that paid for thinking. Once fees funded
+that balance the objection dissolved, and a fighter sold on
+[duel 63](https://coliseum.somniaforge.com/duel/63/result) — the first time in the project's life.
+Reaching it took forcing the single-market tier, because three attempts to cover it from a mock all
+passed whether the code was right or wrong, and one still passed with the fuel reserve deleted. They
+were deleted rather than kept. **A test that passes with the fix removed is worse than no test**: it
+claims coverage it does not have, and that happened four times in one day.
 
 ## Where to read next
 
