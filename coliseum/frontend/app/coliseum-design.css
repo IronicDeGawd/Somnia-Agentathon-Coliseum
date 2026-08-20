@@ -31,10 +31,34 @@
   --fighter-b-glow: rgba(0, 217, 255, 0.28);
   --fighter-b-soft: rgba(0, 217, 255, 0.12);
 
+  /* THE OTHER FOUR OF THE ROSTER.
+     Two of the six fighters had a named colour here; the remaining four existed
+     only as raw hex literals scattered through five component files, which is
+     why the palette variants below could never fully retint the app — they
+     redefine what is named here, and a literal cannot hear them. Named now, at
+     the values those literals already carried, so nothing changes on screen and
+     there is one place to change it from. Every one clears 4.5:1 as text on all
+     four surfaces (measured worst case: 4.84 for --fighter-a on --bg-card). */
+  --fighter-quant: #a78bfa;
+  --fighter-diamond: #fcd34d;
+  --fighter-scalper: #f97316;
+  --fighter-contrarian: #34d399;
+
+  /* Market accents. Same reasoning: the market picker mixed one token with three
+     literals, so the tokenised one broke the code that built a translucent fill
+     from it (see DuelCreator) while the literals worked. */
+  --market-perps: #f472b6;
+  --market-spot: #5eead4;
+  --market-practice: #a78bfa;
+
   --win: #58e898;
   --loss: #ff5d5d;
   --warn: #ffb347;
   --gold: #fcd34d;
+  /* Referenced by the tier picker since it was written, but never defined — so
+     it silently fell back to a bronze rgba, giving a gold-bordered control a
+     bronze fill. Defined here at the gold it was always meant to be. */
+  --gold-soft: rgba(252, 211, 77, 0.12);
   --bronze: #c8a86b;
   --bronze-deep: #8a6e3b;
   --crimson: #c2364a;
@@ -188,6 +212,35 @@ body {
 .bk-ghost::before, .bk-ghost::after { color: var(--text-faint); }
 .bk-gold { background: rgba(252,211,77,0.1); border-color: var(--gold); color: var(--gold); }
 .bk-gold::before, .bk-gold::after { color: var(--gold); opacity: 0.55; }
+
+/* FIGHTER-TINTED SURFACE
+   A row or panel washed in its corner's colour — the live "NOW" card and every
+   line of the fight timeline.
+
+   WHY IT IS A CLASS AND NOT AN INLINE GRADIENT, which is what it was. The wash
+   creates a surface the palette was never measured against, and it is a LIGHTER
+   one than any of the four named backgrounds. The faint text tier is tuned to
+   clear 4.5:1 on those four; on this fifth surface it measured 4.23:1 over the
+   red wash and 3.85:1 over the blue — and the faint tier is exactly what these
+   rows use for the clock, the round number and the "· seen" qualifiers.
+
+   So the surface re-points the faint tier to the dim one for everything inside
+   it (5.18:1 on the worse of the two, measured). Done with a variable rather
+   than by editing call sites because `.t-faint` and `.label-tiny` both read this
+   token, which means the fix reaches the 10px round-number label too — and any
+   later row that lands here inherits it instead of quietly failing again. */
+.tint-a, .tint-b { --text-faint: var(--text-dim); }
+.tint-a {
+  border-left: 2px solid var(--fighter-a);
+  background: linear-gradient(90deg, var(--fighter-a-soft), transparent 70%);
+}
+.tint-b {
+  border-left: 2px solid var(--fighter-b);
+  background: linear-gradient(90deg, var(--fighter-b-soft), transparent 70%);
+}
+/* The same wash running down rather than across, for the taller live card. */
+.tint-a.tint-down { background: linear-gradient(180deg, var(--fighter-a-soft), transparent 70%); }
+.tint-b.tint-down { background: linear-gradient(180deg, var(--fighter-b-soft), transparent 70%); }
 
 /* GLOW */
 .glow-a { box-shadow: 0 0 28px var(--fighter-a-glow), inset 0 0 0 1px var(--fighter-a-soft); }

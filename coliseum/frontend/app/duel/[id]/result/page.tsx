@@ -136,8 +136,16 @@ function TapeScorecard({
     >
       <thead>
         <tr>
-          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 76 }} />
-          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 44 }} />
+          {/* Named, not blank. These two columns had no header text at all, so a
+              screen reader reading a cell announced the value with no idea which
+              column it came from. The names are hidden visually because the
+              figures below them are self-evident to anyone who can see them. */}
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 76 }}>
+            <span className="sr-only">Time</span>
+          </th>
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 44 }}>
+            <span className="sr-only">Round</span>
+          </th>
           {colIds.map((fid) => (
             <th
               key={fid}

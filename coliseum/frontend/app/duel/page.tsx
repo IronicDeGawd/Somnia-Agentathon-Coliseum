@@ -30,9 +30,9 @@ import { useAccount } from 'wagmi';
  *  Matches the market picker in DuelCreator. */
 const MARKET_ACCENT: Record<MarketKind, string> = {
   [MarketKind.Events]: 'var(--gold)',
-  [MarketKind.Perps]: '#f472b6',
-  [MarketKind.Spot]: '#5eead4',
-  [MarketKind.Practice]: '#a78bfa',
+  [MarketKind.Perps]: 'var(--market-perps)',
+  [MarketKind.Spot]: 'var(--market-spot)',
+  [MarketKind.Practice]: 'var(--market-practice)',
 };
 
 export default function LobbyPage() {

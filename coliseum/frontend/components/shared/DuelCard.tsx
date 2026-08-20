@@ -4,6 +4,9 @@ import Link from 'next/link';
 import { formatUnits } from 'viem';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useFighters } from '@/hooks/useFighters';
+// The roster's colours have ONE home. This file kept its own copy of all six,
+// which is how a colour changes in one place and not another.
+import { FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 
 interface DuelCardProps {
   duelId: bigint;
@@ -11,14 +14,6 @@ interface DuelCardProps {
   fighterBIndex: number;
 }
 
-const VISUAL_IDENTITY: Record<number, { hex: string }> = {
-  0: { hex: '#ff3366' },
-  1: { hex: '#00d9ff' },
-  2: { hex: '#a78bfa' },
-  3: { hex: '#fcd34d' },
-  4: { hex: '#f97316' },
-  5: { hex: '#34d399' },
-};
 
 function getStatusLabel(status: number): string {
   switch (status) {
@@ -36,8 +31,8 @@ export default function DuelCard({ duelId, fighterAIndex, fighterBIndex }: DuelC
   const fighterA = fighters.find(f => f.index === fighterAIndex);
   const fighterB = fighters.find(f => f.index === fighterBIndex);
 
-  const hexA = VISUAL_IDENTITY[fighterAIndex]?.hex ?? '#ff3366';
-  const hexB = VISUAL_IDENTITY[fighterBIndex]?.hex ?? '#00d9ff';
+  const hexA = FIGHTER_VISUAL_MAP[fighterAIndex]?.hex ?? 'var(--fighter-a)';
+  const hexB = FIGHTER_VISUAL_MAP[fighterBIndex]?.hex ?? 'var(--fighter-b)';
 
   const totalTurns = duel?.turns ?? 0;
   const status = duel?.status ?? 0;

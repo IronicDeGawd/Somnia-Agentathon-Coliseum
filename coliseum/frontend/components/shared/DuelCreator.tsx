@@ -42,20 +42,20 @@ const MARKET_CHOICES: ReadonlyArray<{
   {
     kind: MarketKind.Perps,
     label: '◇ PERPS',
-    accent: '#f472b6',
+    accent: 'var(--market-perps)',
     hint: 'Real assets on margin, so a fighter can bet one DOWN as well as up. A position is posted against rather than bought, which makes a long fight cost about a tenth of what spot does.',
   },
   {
     kind: MarketKind.Spot,
     label: '⚡ SPOT',
-    accent: '#5eead4',
+    accent: 'var(--market-spot)',
     hint: 'Real WETH, WBTC and SOMI order books. Far larger deposit, because one minimum BTC order costs dollars. SOMI is the chain\u2019s own coin, so a fighter can buy it but not sell it back \u2014 anything still held is valued at the closing price.',
   },
   ...(SIM_MARKET_ENABLED
     ? [{
         kind: MarketKind.Practice,
         label: '🧪 PRACTICE',
-        accent: '#a78bfa',
+        accent: 'var(--market-practice)',
         hint: 'Mock books. No real market risk.',
       }]
     : []),
@@ -437,7 +437,12 @@ function QueueInner({
                   minWidth: 0,
                   padding: '10px 6px',
                   border: `1px solid ${selected ? accent : 'var(--border)'}`,
-                  background: selected ? `${accent}1f` : 'transparent',
+                  // color-mix, NOT `${accent}1f`. Gluing an alpha pair onto the end
+                  // of a colour only works when the colour is a literal hex; the EVENTS
+                  // accent is a token, so it produced `var(--gold)1f`, which the browser
+                  // discards — that one market's selected state had no fill at all while
+                  // its neighbours did. This form accepts either kind of colour.
+                  background: selected ? `color-mix(in srgb, ${accent} 12%, transparent)` : 'transparent',
                   borderRadius: '2px',
                   cursor: locked ? 'not-allowed' : 'pointer',
                   opacity: locked && !selected ? 0.4 : 1,
@@ -480,9 +485,9 @@ function QueueInner({
                   alignItems: 'flex-start',
                   gap: '3px',
                   minWidth: 0,
-                  background: selected ? `${f.hex}14` : 'transparent',
+                  background: selected ? `color-mix(in srgb, ${f.hex} 8%, transparent)` : 'transparent',
                   border: `1px solid ${selected ? f.hex : 'var(--border)'}`,
-                  boxShadow: selected ? `0 0 8px ${f.hex}55` : 'none',
+                  boxShadow: selected ? `0 0 8px color-mix(in srgb, ${f.hex} 33%, transparent)` : 'none',
                   borderRadius: '2px',
                   padding: '10px',
                   cursor: 'pointer',
@@ -556,7 +561,7 @@ function QueueInner({
                   alignItems: 'center',
                   gap: '4px',
                   minWidth: 0,
-                  background: selected ? 'var(--gold-soft, rgba(200,168,107,0.12))' : 'transparent',
+                  background: selected ? 'var(--gold-soft)' : 'transparent',
                   border: `1px solid ${selected ? 'var(--gold)' : 'var(--border)'}`,
                   borderRadius: '2px',
                   padding: '10px 4px',
