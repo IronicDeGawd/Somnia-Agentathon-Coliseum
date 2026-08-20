@@ -19,6 +19,8 @@ import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelLive } from '@/hooks/useDuelLive';
 import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
 import { useMarginWatch, type MarginObservation } from '@/hooks/useMarginWatch';
+import { useLiquidations } from '@/hooks/useLiquidations';
+import { liquidationWord, type LiquidationRecord } from '@/lib/liquidations';
 import { clockOf } from '@/lib/blockTime';
 import type { FighterPerp } from '@/hooks/useDuelLive';
 import { useFighters } from '@/hooks/useFighters';
@@ -156,17 +158,20 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
 function FightTimeline({
   story,
   marginSeen,
+  liquidations,
   nameOf,
   hexOf,
 }: {
   story: TranscriptEntry[];
   marginSeen: MarginObservation[];
+  liquidations: LiquidationRecord[];
   nameOf: (fighterId: number) => string;
   hexOf: (fighterId: number) => string;
 }) {
   type Row =
     | { kind: 'move'; at?: number; sort: number; e: TranscriptEntry }
-    | { kind: 'margin'; at: number; sort: number; o: MarginObservation };
+    | { kind: 'margin'; at: number; sort: number; o: MarginObservation }
+    | { kind: 'liq'; at?: number; sort: number; r: LiquidationRecord };
 
   const rows: Row[] = [
     // A move with no timestamp yet still sorts by its block, so the order is right
@@ -175,6 +180,11 @@ function FightTimeline({
       kind: 'move' as const, at: e.timestamp, sort: e.timestamp ?? Number(e.block), e,
     })),
     ...marginSeen.map((o) => ({ kind: 'margin' as const, at: o.seenAt, sort: o.seenAt, o })),
+    // Sorted by its timestamp when known and by its block otherwise, the same as a
+    // move — so it lands in the right place from the first paint.
+    ...liquidations.map((r) => ({
+      kind: 'liq' as const, at: r.timestamp, sort: r.timestamp ?? Number(r.block), r,
+    })),
   ];
 
   // Newest first: a live fight's next line is the one a spectator is waiting for,
@@ -193,7 +203,11 @@ function FightTimeline({
     <div className="col" style={{ maxHeight: 360, overflowY: 'auto' }}>
       {rows.map((r, i) => (
         <div
-          key={r.kind === 'move' ? `m${r.e.block}-${r.e.fighterId}-${i}` : `g${r.o.seenAt}-${r.o.fighterId}-${i}`}
+          key={
+            r.kind === 'move' ? `m${r.e.block}-${r.e.fighterId}-${i}`
+              : r.kind === 'liq' ? `l${r.r.block}-${r.r.fighterId}-${i}`
+              : `g${r.o.seenAt}-${r.o.fighterId}-${i}`
+          }
           className="row ai-c t-mono t-sm"
           style={{ gap: 12, padding: '7px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}
         >
@@ -207,11 +221,12 @@ function FightTimeline({
             className="t-xs"
             style={{
               width: 96, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap', color: hexOf(r.kind === 'move' ? r.e.fighterId : r.o.fighterId),
+              whiteSpace: 'nowrap',
+              color: hexOf(r.kind === 'move' ? r.e.fighterId : r.kind === 'liq' ? r.r.fighterId : r.o.fighterId),
               letterSpacing: '0.04em',
             }}
           >
-            {nameOf(r.kind === 'move' ? r.e.fighterId : r.o.fighterId)}
+            {nameOf(r.kind === 'move' ? r.e.fighterId : r.kind === 'liq' ? r.r.fighterId : r.o.fighterId)}
           </span>
           {r.kind === 'move' ? (
             r.e.failed ? (
@@ -221,12 +236,33 @@ function FightTimeline({
             ) : (
               <MoveText move={r.e.action ?? 'HOLD'} />
             )
+          ) : r.kind === 'liq' ? (
+            <LiquidationRow record={r.r} />
           ) : (
             <MarginLine status={r.o.status} />
           )}
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * A liquidation, which is a CHAIN FACT rather than a sighting — marked so, because
+ * the line above it might only be something a browser happened to see.
+ *
+ * Shows the status the venue found BEFORE it acted: "it found this account in
+ * close-out and did something about it". The after-status is usually healthy, which
+ * is true and useless as a headline.
+ */
+function LiquidationRow({ record }: { record: LiquidationRecord }) {
+  const before = marginStatusCopy(record.statusBefore);
+  return (
+    <span style={{ color: 'var(--loss)', minWidth: 0 }}>
+      <span aria-hidden="true">⚡ </span>{liquidationWord(record)}
+      {before && <span className="t-dim"> · was {before.word.toLowerCase()}</span>}
+      <span className="t-faint t-xs"> · on-chain</span>
+    </span>
   );
 }
 
@@ -518,6 +554,10 @@ export default function ArenaPage() {
     return m;
   }, [liveA.perp, liveB.perp, duel]);
   const marginSeen = useMarginWatch(duelId, marginStatuses);
+
+  // What the venue actually DID — the permanent half of the margin story, readable
+  // for a fight finished long ago as well as a live one. See lib/liquidations.
+  const liquidations = useLiquidations(duelId, duel?.startBlock, duel?.turns, duel?.lastTurnBlock);
 
   // ── Duelist guard: the two fighters' players can't bet on their own duel ───
   const { address: connectedAddress } = useAccount();
@@ -923,6 +963,7 @@ export default function ArenaPage() {
           <FightTimeline
             story={story}
             marginSeen={marginSeen}
+            liquidations={liquidations}
             nameOf={(fid) => (duel && fid === duel.fighterA ? degenF.name : whaleF.name)}
             hexOf={(fid) => (duel && fid === duel.fighterA ? degenF.hex : whaleF.hex)}
           />
