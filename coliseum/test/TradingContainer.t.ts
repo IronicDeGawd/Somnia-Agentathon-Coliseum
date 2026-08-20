@@ -255,7 +255,7 @@ describe("TradingContainer", function () {
       await pool.write.setNextFill([parseEther("3"), parseEther("6000")]);
 
       const hash = await container.write.settle(
-        [pool.address, base.address, parseEther("2000"), GTC, 1],
+        [pool.address, base.address, parseEther("2000"), GTC, 1, 0n],
         { account: owner.account },
       );
       const publicClient = await hre.viem.getPublicClient();
@@ -276,7 +276,7 @@ describe("TradingContainer", function () {
       await pool.write.setNextFill([0n, parseEther("4000")]);
 
       const hash = await container.write.settle(
-        [pool.address, zeroAddress, parseEther("2000"), GTC, 1],
+        [pool.address, zeroAddress, parseEther("2000"), GTC, 1, 0n],
         { account: owner.account },
       );
       await publicClient.waitForTransactionReceipt({ hash });
@@ -285,15 +285,131 @@ describe("TradingContainer", function () {
       expect(await quote.read.balanceOf([container.address])).to.equal(parseEther("4000"));
     });
 
+    it("rounds the sale down to the venue's trading step", async () => {
+      // A venue only accepts whole steps, and a raw balance almost never is one.
+      // Without this the order is declined, the asset never reaches zero, and the
+      // pile-up settlement exists to end simply carries on — with every test still
+      // green, because a mock with no matching engine accepts any size at all.
+      const { owner, container, quote, base, pool } = await deploy();
+      const publicClient = await hre.viem.getPublicClient();
+
+      // Step of 1 whole unit; the container holds two and a half.
+      await pool.write.setPoolParams([base.address, quote.address, 1n, 0n, parseEther("1")]);
+      await base.write.mint([container.address, parseEther("2.5")]);
+      await quote.write.mint([pool.address, parseEther("4000")]);
+      await pool.write.setNextFill([parseEther("2"), parseEther("4000")]);
+
+      const hash = await container.write.settle(
+        [pool.address, base.address, parseEther("2000"), GTC, 1, 0n],
+        { account: owner.account },
+      );
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      // Assert on the quantity the venue was OFFERED, not on the resulting balance.
+      // The mock's staged fill moves a fixed amount whatever it is asked for, so a
+      // balance assertion here passes with or without the rounding — which is
+      // exactly how a settle that no real venue would accept kept a green suite.
+      const [, , offered] = await pool.read.orders([0n]) as [boolean, bigint, bigint, number, boolean];
+      expect(offered, "the order must be a whole number of steps").to.equal(parseEther("2"));
+    });
+
+    it("honours a ceiling, because an oversized all-or-nothing order cancels entirely", async () => {
+      // Measured 2026-08-20 recycling the house's own assets: 0.067 offered against
+      // a book holding 0.046 was refused outright, not filled in part. So settling a
+      // large holding is several calls sized to the depth, never one big one.
+      const { owner, container, quote, base, pool } = await deploy();
+      const publicClient = await hre.viem.getPublicClient();
+
+      await base.write.mint([container.address, parseEther("10")]);
+      await quote.write.mint([pool.address, parseEther("6000")]);
+      await pool.write.setNextFill([parseEther("3"), parseEther("6000")]);
+
+      const hash = await container.write.settle(
+        [pool.address, base.address, parseEther("2000"), GTC, 1, parseEther("3")],
+        { account: owner.account },
+      );
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const [, , capped] = await pool.read.orders([0n]) as [boolean, bigint, bigint, number, boolean];
+      expect(capped, "the ceiling must limit what is offered").to.equal(parseEther("3"));
+    });
+
+    it("refuses to settle a holding below the venue's smallest order", async () => {
+      const { owner, container, base, pool } = await deploy();
+      await pool.write.setPoolParams([base.address, base.address, 1n, parseEther("1"), 1n]);
+      await base.write.mint([container.address, parseEther("0.25")]);
+      await expect(
+        container.write.settle(
+          [pool.address, base.address, parseEther("2000"), GTC, 1, 0n],
+          { account: owner.account },
+        ),
+      ).to.be.rejected;
+    });
+
     it("does nothing and does not revert when the held asset is already zero", async () => {
       const { owner, container, base, pool } = await deploy();
       const hash = await container.write.settle(
-        [pool.address, base.address, parseEther("2000"), GTC, 1],
+        [pool.address, base.address, parseEther("2000"), GTC, 1, 0n],
         { account: owner.account },
       );
       const publicClient = await hre.viem.getPublicClient();
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       expect(receipt.status).to.equal("success");
+    });
+  });
+
+  describe("the coin is only ever sent all-or-nothing", function () {
+    // The coin moves as part of the call, before the venue decides anything. A
+    // PARTIAL fill therefore keeps everything that was pushed and still reports
+    // success, so the refusal guard never fires and the unfilled remainder is
+    // stranded with no route back. Nothing in the venue's reply says how much
+    // actually filled, so this cannot be detected after the fact — only excluded.
+    it("refuses a native order that allows a partial fill", async () => {
+      const { owner, container, quote, pool } = await deploy();
+      await pool.write.setPoolParams([zeroAddress, quote.address, 1n, 0n, 1n]);
+      await owner.sendTransaction({ to: container.address, value: parseEther("2") });
+      await expect(
+        container.write.settle(
+          [pool.address, zeroAddress, parseEther("2000"), GTC, 2 /* partial allowed */, 0n],
+          { account: owner.account },
+        ),
+        "a partial-fill order type must be refused when value rides along",
+      ).to.be.rejected;
+    });
+
+    it("still allows a token order to permit a partial fill", async () => {
+      // A token order is pull-based: the venue takes what it needs, so a partial
+      // fill costs nothing and the restriction above would be pointless friction.
+      const { owner, container, quote, base, pool } = await deploy();
+      const publicClient = await hre.viem.getPublicClient();
+      await base.write.mint([container.address, parseEther("3")]);
+      await quote.write.mint([pool.address, parseEther("6000")]);
+      await pool.write.setNextFill([parseEther("3"), parseEther("6000")]);
+      const hash = await container.write.settle(
+        [pool.address, base.address, parseEther("2000"), GTC, 2, 0n],
+        { account: owner.account },
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      expect(receipt.status).to.equal("success");
+    });
+  });
+
+  describe("a venue that answers the wrong shape is named, not swallowed", function () {
+    it("rejects a reply that is not the two values this shape returns", async () => {
+      // An address with a fallback SUCCEEDS with data this cannot decode, and a bare
+      // decode failure reverts with no reason at all — the same swallowed-cause
+      // fault the rest of this change exists to end.
+      const { owner, container, quote } = await deploy();
+      const odd = await hre.viem.deployContract("MockOddVenue", []);
+      await quote.write.mint([container.address, parseEther("10")]);
+      await expect(
+        container.write.trade(
+          [odd.address, quote.address, parseEther("1"),
+           true, 0n, parseEther("1"), parseEther("1"), GTC, 1, 0n],
+          { account: owner.account },
+        ),
+        "a venue that answers with the wrong shape must be named, not decoded blindly",
+      ).to.be.rejectedWith(/UnexpectedVenueReply/);
     });
   });
 
@@ -348,7 +464,7 @@ describe("TradingContainer", function () {
       const { stranger, container, pool, base } = await deploy();
       await expect(
         container.write.settle(
-          [pool.address, base.address, 1n, GTC, 1],
+          [pool.address, base.address, 1n, GTC, 1, 0n],
           { account: stranger.account },
         ),
       ).to.be.rejected;

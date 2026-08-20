@@ -25,6 +25,16 @@ contract TradingContainer {
     error ApproveFailed();
     error TransferFailed();
     error NativeOrderRefused();
+    /// @notice A native order was not all-or-nothing. The coin is pushed with the
+    ///         call, so a PARTIAL fill leaves the unfilled remainder at the venue
+    ///         with no route back. Fill-or-kill removes the case entirely.
+    error NativeOrderMustBeAllOrNothing(uint8 orderType);
+    /// @notice The venue answered, but not with the two values this shape returns.
+    ///         Raised instead of letting the decode fail unattributably — the same
+    ///         swallowed-cause fault this contract's siblings were built to end.
+    error UnexpectedVenueReply(bytes data);
+    /// @notice The holding is smaller than the smallest quantity the venue trades.
+    error BelowVenueMinimum(uint256 have, uint256 want);
 
     /// @notice Fired on every order placed through `trade` (directly or via
     ///         `settle`), win or refuse, so a refusal or a fill can be
@@ -41,6 +51,10 @@ contract TradingContainer {
     ///         and the venue said no.
     event NothingToSettle(address indexed venue, address indexed asset);
     event Recovered(address indexed asset, uint256 amount);
+
+    /// @dev Fill-or-kill. All of it at this price or none of it — no partial fill,
+    ///      which is what makes a native order safe to send value with.
+    uint8 private constant ORDER_TYPE_FOK = 1;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -119,19 +133,45 @@ contract TradingContainer {
     /// @param asset `address(0)` to settle the chain's own coin — the sale the
     ///        probe proved unlocks a complete settlement for the first time,
     ///        since selling native means sending it WITH the order.
+    /// @param maxQuantity a ceiling on how much to offer in one go, or 0 for no
+    ///        ceiling. This exists because these orders are all-or-nothing at the
+    ///        venue: offering more than the resting depth cancels the WHOLE sale
+    ///        rather than filling what it can. Measured 2026-08-20 while recycling
+    ///        the house's own assets — 0.067 offered against a book holding 0.046
+    ///        was refused outright, and the fix was to offer the depth instead.
+    ///        Settling a large holding is therefore several calls, not one.
     function settle(
         address venue,
         address asset,
         uint256 price,
         uint64  expireTimestampNs,
-        uint8   orderType
+        uint8   orderType,
+        uint256 maxQuantity
     ) external onlyOwner returns (bool ok, uint128 orderId) {
         bool isNative = asset == address(0);
         uint256 qty = isNative ? address(this).balance : IERC20Minimal(asset).balanceOf(address(this));
+        if (maxQuantity != 0 && qty > maxQuantity) qty = maxQuantity;
+
+        // Round DOWN to a whole multiple of the venue's trading step. A venue only
+        // accepts whole steps, and a raw balance almost never is one — so without
+        // this the order is declined, the asset never reaches zero, and the pile-up
+        // this function exists to end carries on. Worse for the coin: a decline
+        // there reverts, so native settlement could never succeed at all.
+        //
+        // Asked of the venue rather than stored, so a re-pointed venue cannot leave
+        // this rounding to a stale step. A venue that will not answer is settled
+        // against unrounded, which is exactly today's behaviour.
+        // Nothing held is not a failure — it is the state settlement is trying to
+        // reach. Checked BEFORE the minimum below, so an already-empty container
+        // reports quietly instead of reverting on a floor it can never meet.
         if (qty == 0) {
             emit NothingToSettle(venue, asset);
             return (false, 0);
         }
+
+        (uint256 step, uint256 floorQty) = _stepFor(venue);
+        if (step > 1) qty = (qty / step) * step;
+        if (qty == 0 || qty < floorQty) revert BelowVenueMinimum(qty, floorQty);
         (ok, orderId) = _trade(
             venue, isNative ? address(0) : asset, isNative ? 0 : qty,
             false, uint64(0), price, qty, expireTimestampNs, orderType, isNative ? qty : 0
@@ -151,6 +191,15 @@ contract TradingContainer {
         uint8   orderType,
         uint256 value
     ) internal returns (bool ok, uint128 orderId) {
+        // The coin is pushed as part of this call, BEFORE the venue decides
+        // anything. A partial fill therefore keeps everything that was pushed and
+        // still reports success, so the refusal guard below would never fire and
+        // the unfilled remainder would be stranded at the venue. Fill-or-kill has
+        // no partial case at all, so requiring it removes the hazard rather than
+        // trying to detect it after the fact — there is nothing in the reply that
+        // would let this contract measure how much actually filled.
+        if (value > 0 && orderType != ORDER_TYPE_FOK) revert NativeOrderMustBeAllOrNothing(orderType);
+
         bool approved = token != address(0) && approveAmount > 0;
         if (approved) {
             if (!IERC20Minimal(token).approve(venue, approveAmount)) revert ApproveFailed();
@@ -169,6 +218,11 @@ contract TradingContainer {
         }
 
         if (!success) revert OrderFailed(ret);
+        // A call to an address with a fallback, or to a venue answering a different
+        // shape, SUCCEEDS with data this cannot decode — and a bare decode failure
+        // reverts with no reason at all. Naming it keeps the cause attributable,
+        // which is the whole point of the sibling fixes in this change.
+        if (ret.length != 64) revert UnexpectedVenueReply(ret);
         (ok, orderId) = abi.decode(ret, (bool, uint128));
 
         // Coin moves as part of the CALL itself, before the venue's own
@@ -182,6 +236,29 @@ contract TradingContainer {
         if (!ok && value > 0) revert NativeOrderRefused();
 
         emit OrderPlaced(venue, token, quantity, value, ok, orderId);
+    }
+
+    /// @dev The venue's trading step and its smallest acceptable order.
+    ///
+    ///      Two shapes exist and both are tried, because one container serves
+    ///      several kinds of venue: a spot pool and an events desk answer a
+    ///      seven-value parameter call, a perp book answers a three-value one. A
+    ///      venue that answers neither returns (1, 0) — round nothing, refuse
+    ///      nothing — leaving today's behaviour untouched rather than blocking a
+    ///      settlement on a read this contract does not strictly need.
+    function _stepFor(address venue) internal view returns (uint256 step, uint256 floorQty) {
+        (bool ok1, bytes memory a) = venue.staticcall(abi.encodeWithSignature("getPoolParams()"));
+        if (ok1 && a.length >= 224) {
+            (, , , , , uint256 minQuantity, uint256 lotSize) =
+                abi.decode(a, (address, address, uint256, uint256, uint256, uint256, uint256));
+            return (lotSize == 0 ? 1 : lotSize, minQuantity);
+        }
+        (bool ok2, bytes memory b) = venue.staticcall(abi.encodeWithSignature("getOrderBookParameters()"));
+        if (ok2 && b.length >= 96) {
+            (, uint256 minQuantity, uint256 lotSize) = abi.decode(b, (uint256, uint256, uint256));
+            return (lotSize == 0 ? 1 : lotSize, minQuantity);
+        }
+        return (1, 0);
     }
 
     /// @notice Move a token's whole balance back to the OWNER. Never any other
