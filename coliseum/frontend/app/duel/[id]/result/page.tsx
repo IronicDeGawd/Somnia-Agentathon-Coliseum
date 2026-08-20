@@ -11,7 +11,7 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
 import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
-import { useDuelTranscript } from '@/hooks/useDuelTranscript';
+import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
 import { useDuelSlots } from '@/hooks/useDuelSlots';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
@@ -86,7 +86,105 @@ export default function ResultPage() {
     const v = FIGHTER_VISUAL_MAP[fid];
     return v ? (FIGHTERS[v.id]?.name ?? `FIGHTER #${fid}`) : `FIGHTER #${fid}`;
   };
-  const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
+  /**
+ * The fight as a scorecard: one column per round, one row per fighter.
+ *
+ * It was a flat list of thirty lines, alternating fighters, each repeating the
+ * round number — so comparing what the two of them did in the same round meant
+ * reading two lines that were not next to each other and were not in a
+ * predictable order. Laid out as a grid the comparison is the whole point: read
+ * DOWN a column to see a round, ACROSS a row to see one fighter's whole fight.
+ *
+ * The round order comes from the transcript; the ROW order is pinned to the
+ * duel's own fighter slots rather than to whoever happens to appear first,
+ * because the moves within a round arrive in whatever order the chain logged
+ * them and a row that swaps sides mid-table is worse than no table.
+ *
+ * Wide fights scroll sideways inside their own card rather than stretching the
+ * page — fifteen rounds of "BACK BTCHOUR" does not fit a phone.
+ */
+function TapeScorecard({
+  transcript,
+  fighterA,
+  fighterB,
+}: {
+  transcript: TranscriptEntry[];
+  fighterA?: number;
+  fighterB?: number;
+}) {
+  const rounds = Array.from(new Set(transcript.map((e) => e.round))).sort((x, y) => x - y);
+
+  // Prefer the duel's own slots; fall back to first-appearance only when the duel
+  // has not loaded, so the table still renders rather than vanishing.
+  const seen = Array.from(new Set(transcript.map((e) => e.fighterId)));
+  const rowIds = (fighterA !== undefined && fighterB !== undefined) ? [fighterA, fighterB] : seen;
+
+  const cell = (fid: number, round: number) =>
+    transcript.find((e) => e.fighterId === fid && e.round === round);
+
+  const border = '1px solid var(--border)';
+
+  return (
+    <table
+      className="t-mono t-sm"
+      style={{ borderCollapse: 'collapse', minWidth: '100%', whiteSpace: 'nowrap' }}
+    >
+      <thead>
+        <tr>
+          <th
+            style={{
+              textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border,
+              position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1,
+            }}
+          />
+          {rounds.map((r) => (
+            <th
+              key={r}
+              className="t-dim"
+              style={{ textAlign: 'left', padding: '6px 16px', borderBottom: border, fontWeight: 400 }}
+            >
+              R{r}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rowIds.map((fid) => (
+          <tr key={fid}>
+            <th
+              scope="row"
+              style={{
+                textAlign: 'left', padding: '8px 16px 8px 0', borderBottom: border,
+                color: fighterHexOf(fid), letterSpacing: '0.04em', fontWeight: 400,
+                position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1,
+              }}
+            >
+              {fighterNameOf(fid)}
+            </th>
+            {rounds.map((r) => {
+              const e = cell(fid, r);
+              return (
+                <td
+                  key={r}
+                  className="t-num"
+                  style={{
+                    padding: '8px 16px', borderBottom: border,
+                    color: !e ? 'var(--text-faint)'
+                      : e.failed ? 'var(--text-faint)' : 'var(--text)',
+                  }}
+                >
+                  {!e ? '·' : e.failed ? `— ${e.reason || 'no move'}` : e.action}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
 
   // ── Matchmaker check (PvP duel detection) ─────────────────────────────────
   const { data: matchData } = useReadContract({
@@ -593,29 +691,12 @@ export default function ResultPage() {
             <span className="sect-head-title">FIGHT TAPE</span>
             <span className="sect-head-meta">{transcript.length} moves · every one on-chain</span>
           </div>
-          <div className="card pad-24 col">
-            {transcript.map((e, i) => (
-              <div
-                key={i}
-                className="row ai-c t-mono t-sm"
-                style={{
-                  gap: 16,
-                  padding: '8px 0',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-                }}
-              >
-                <span className="t-dim" style={{ width: 48, flexShrink: 0 }}>R{e.round}</span>
-                <span style={{ color: fighterHexOf(e.fighterId), flex: 1, letterSpacing: '0.04em' }}>
-                  {fighterNameOf(e.fighterId)}
-                </span>
-                <span
-                  className="t-num"
-                  style={{ color: e.failed ? 'var(--text-faint)' : 'var(--text)', textAlign: 'right' }}
-                >
-                  {e.failed ? `— ${e.reason || 'no move'}` : e.action}
-                </span>
-              </div>
-            ))}
+          <div className="card pad-24" style={{ overflowX: 'auto' }}>
+            <TapeScorecard
+              transcript={transcript}
+              fighterA={duel?.fighterA}
+              fighterB={duel?.fighterB}
+            />
           </div>
         </section>
       )}
