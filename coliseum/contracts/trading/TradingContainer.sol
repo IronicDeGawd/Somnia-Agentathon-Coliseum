@@ -42,6 +42,10 @@ contract TradingContainer {
     ///         exposes no ABI-decoded return value, only these.
     event OrderPlaced(address indexed venue, address indexed token, uint256 quantity, uint256 value, bool filled, uint128 orderId);
     event MarginFunded(address indexed bank, address indexed collateral, uint256 amount);
+    /// @notice `asked` is what the desk was requested to release, `moved` is what
+    ///         actually reached the owner — they differ when the desk refuses, or
+    ///         when a rounding remainder was already sitting here.
+    event MarginReclaimed(address indexed bank, address indexed collateral, uint256 asked, uint256 moved);
     /// @notice Fired by `settle` in addition to `OrderPlaced`, marking that
     ///         this particular order was a full-balance settlement rather
     ///         than an ordinary trade.
@@ -118,6 +122,76 @@ contract TradingContainer {
         IMarginBank(bank).deposit(amount);
         if (!IERC20Minimal(collateral).approve(bank, 0)) revert ApproveFailed();
         emit MarginFunded(bank, collateral, amount);
+    }
+
+    /// @notice Ask `bank` to release margin this container lodged, and bring
+    ///         everything loose back to the owner.
+    ///
+    ///         THE COUNTERPART TO `fundMargin`, AND THE REASON THIS CONTRACT IS NOT
+    ///         A ONE-WAY DOOR. Lodging margin moves cash off this contract and into
+    ///         the desk; `recoverToken` only ever sees what SITS HERE. Without this
+    ///         call, cash posted as margin could never come back, and since a
+    ///         container is a fixed address that is never upgraded, one deployed
+    ///         without a way out would never get one. That is the whole reason it
+    ///         goes in before any container is leased to anything.
+    ///
+    ///         Modelled on `PerpAccount.reclaim`, deliberately, down to two details
+    ///         that each cost real money to learn:
+    ///
+    ///         SIZE THE REQUEST BY FREE MARGIN, NEVER BY THE DESK'S OWN
+    ///         "withdrawable" FIGURE. That figure ignores the margin an open
+    ///         position still needs — measured reporting a full 25 USDso deposit
+    ///         with a short open against it — so asking for what it reports is
+    ///         refused outright and recovers NOTHING. Equity minus the initial
+    ///         margin requirement is the real number, and it is read here rather
+    ///         than trusted from the caller.
+    ///
+    ///         SWEEP THE WHOLE BALANCE, NOT THE AMOUNT ASKED FOR. A settlement
+    ///         rounding remainder left behind would sit here forever, because after
+    ///         a lease ends nothing looks at this address again.
+    ///
+    ///         A desk that REFUSES is tolerated rather than reverted on: the
+    ///         release is the part that can fail, and losing the sweep along with
+    ///         it would strand cash that had already arrived.
+    /// @param amount a ceiling on what to ask the desk for, or 0 to ask for
+    ///        everything free margin allows. Whatever the desk actually releases,
+    ///        the whole balance follows it out.
+    /// @return moved how much reached the owner.
+    function reclaimMargin(address collateral, address bank, uint256 amount)
+        external onlyOwner returns (uint256 moved)
+    {
+        uint256 want = _freeMarginAt(bank);
+        if (amount > 0 && amount < want) want = amount;
+        if (want > 0) {
+            try IMarginBank(bank).withdraw(want) {} catch { /* keep the sweep below */ }
+        }
+
+        IERC20Minimal t = IERC20Minimal(collateral);
+        moved = t.balanceOf(address(this));
+        if (moved > 0) {
+            if (!t.transfer(owner, moved)) revert TransferFailed();
+            emit MarginReclaimed(bank, collateral, want, moved);
+            emit Recovered(collateral, moved);
+        }
+    }
+
+    /// @notice What this container could actually get back out of `bank` right now.
+    ///
+    ///         Equity minus the initial margin an open position needs. A desk that
+    ///         cannot answer reports zero, so the caller above still runs its sweep
+    ///         rather than reverting on a read.
+    function freeMarginAt(address bank) external view returns (uint256) {
+        return _freeMarginAt(bank);
+    }
+
+    function _freeMarginAt(address bank) internal view returns (uint256) {
+        try IMarginBank(bank).getAccountHealth(address(this)) returns (
+            int256 equity, uint256 imReq, uint256, uint256
+        ) {
+            if (equity <= 0) return 0;
+            uint256 eq = uint256(equity);
+            return eq > imReq ? eq - imReq : 0;
+        } catch { return 0; }
     }
 
     /// @notice Sell the WHOLE current holding of `asset` back into `venue`, at

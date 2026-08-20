@@ -246,6 +246,154 @@ describe("TradingContainer", function () {
     });
   });
 
+  describe("capability 5b — margin lodged with a desk can come back out", function () {
+    // The container is a FIXED address that is never upgraded, so one leased out
+    // without a way back would strand every deposit it ever posted, permanently.
+    // These tests are what stop that shipping.
+
+    it("brings the whole lodged balance back to the owner", async () => {
+      const { owner, container, collateral, bank } = await deployPerp();
+      const publicClient = await hre.viem.getPublicClient();
+
+      await collateral.write.mint([container.address, parseEther("100")]);
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.fundMargin(
+          [collateral.address, bank.address, parseEther("100")],
+          { account: owner.account },
+        ),
+      });
+      expect(await collateral.read.balanceOf([container.address]), "cash left the container")
+        .to.equal(0n);
+
+      const ownerBefore = await collateral.read.balanceOf([owner.account.address]) as bigint;
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.reclaimMargin(
+          [collateral.address, bank.address, 0n],
+          { account: owner.account },
+        ),
+      });
+
+      expect(await bank.read.balances([container.address]), "the desk released it")
+        .to.equal(0n);
+      expect(await collateral.read.balanceOf([container.address]), "and it did not stop here")
+        .to.equal(0n);
+      expect(
+        (await collateral.read.balanceOf([owner.account.address]) as bigint) - ownerBefore,
+        "the whole deposit reached the owner",
+      ).to.equal(parseEther("100"));
+    });
+
+    it("sweeps a remainder the desk never held, not just what it released", async () => {
+      // A settlement rounding remainder can be sitting on the container while the
+      // rest is at the desk. Sweeping only the amount asked for would leave it
+      // here forever, since nothing looks at this address again after a lease.
+      const { owner, container, collateral, bank } = await deployPerp();
+      const publicClient = await hre.viem.getPublicClient();
+
+      await collateral.write.mint([container.address, parseEther("100")]);
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.fundMargin(
+          [collateral.address, bank.address, parseEther("90")],
+          { account: owner.account },
+        ),
+      });
+      // 10 stayed behind, as a remainder would.
+      expect(await collateral.read.balanceOf([container.address])).to.equal(parseEther("10"));
+
+      const ownerBefore = await collateral.read.balanceOf([owner.account.address]) as bigint;
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.reclaimMargin(
+          [collateral.address, bank.address, 0n],
+          { account: owner.account },
+        ),
+      });
+
+      expect(
+        (await collateral.read.balanceOf([owner.account.address]) as bigint) - ownerBefore,
+        "the released margin AND the remainder both left",
+      ).to.equal(parseEther("100"));
+      expect(await collateral.read.balanceOf([container.address])).to.equal(0n);
+    });
+
+    it("still rescues what is loose when the desk refuses to release", async () => {
+      // The release is the part that can fail. Reverting on it would take the sweep
+      // down too and strand cash that had already arrived.
+      const { owner, container, collateral, bank } = await deployPerp();
+      const publicClient = await hre.viem.getPublicClient();
+
+      await collateral.write.mint([container.address, parseEther("40")]);
+      // Nothing was ever lodged, so the desk has nothing to give and free margin
+      // reads zero — the same shape as a desk that refuses.
+      const ownerBefore = await collateral.read.balanceOf([owner.account.address]) as bigint;
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.reclaimMargin(
+          [collateral.address, bank.address, 0n],
+          { account: owner.account },
+        ),
+      });
+
+      expect(
+        (await collateral.read.balanceOf([owner.account.address]) as bigint) - ownerBefore,
+        "the loose cash came back regardless",
+      ).to.equal(parseEther("40"));
+    });
+
+    it("asks for free margin, not the deposit, while a position is open", async () => {
+      // The desk's own withdrawable figure ignores the margin an open position
+      // needs — measured reporting a full deposit with a short open against it.
+      // Asking for that is refused outright and recovers NOTHING, so the ceiling
+      // has to be equity minus the initial requirement.
+      const { owner, container, collateral, bank, perpPool } = await deployPerp();
+      const publicClient = await hre.viem.getPublicClient();
+
+      await collateral.write.mint([container.address, parseEther("100")]);
+      await perpPool.write.pushBookLevel([false, parseEther("2000"), parseEther("1")]);
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.fundMargin(
+          [collateral.address, bank.address, parseEther("100")],
+          { account: owner.account },
+        ),
+      });
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.trade(
+          [perpPool.address, zeroAddress, 0n, true, 0n, parseEther("2000"), parseEther("0.1"), GTC, 1, 0n],
+          { account: owner.account },
+        ),
+      });
+
+      const free = await container.read.freeMarginAt([bank.address]) as bigint;
+      expect(free, "an open position reserves margin, so this is below the deposit")
+        .to.be.lessThan(parseEther("100"));
+      expect(free, "but there is still something free to take back").to.be.greaterThan(0n);
+
+      await publicClient.waitForTransactionReceipt({
+        hash: await container.write.reclaimMargin(
+          [collateral.address, bank.address, 0n],
+          { account: owner.account },
+        ),
+      });
+      expect(
+        await collateral.read.balanceOf([owner.account.address]),
+        "what came back is the free part, and the position is still funded",
+      ).to.be.greaterThan(0n);
+      expect(await bank.read.balances([container.address]), "the position keeps its margin")
+        .to.be.greaterThan(0n);
+    });
+
+    it("only the owner may reclaim", async () => {
+      // Asserted the way every other stranger test here is: the call must be
+      // rejected. Matching on the error TEXT is unreliable — a stranger's call is
+      // refused before the revert reason is decodable.
+      const { stranger, container, collateral, bank } = await deployPerp();
+      await expect(
+        container.write.reclaimMargin(
+          [collateral.address, bank.address, 0n],
+          { account: stranger.account },
+        ),
+      ).to.be.rejected;
+    });
+  });
+
   describe("capability 6 — settlement turns a held asset back into cash", function () {
     it("sells the whole held asset, leaving it at zero and cash increased", async () => {
       const { owner, container, quote, base, pool } = await deploy();
@@ -522,7 +670,11 @@ describe("TradingContainer", function () {
       const functions = (tradingContainerArtifact.abi as any[]).filter((entry) => entry.type === "function");
       const names = functions.map((fn) => fn.name as string).sort();
       expect(names).to.deep.equal(
-        ["fundMargin", "owner", "recoverNative", "recoverToken", "settle", "trade"].sort(),
+        // reclaimMargin and freeMarginAt are the way OUT of a margin desk. They
+        // belong here deliberately: without them a container is a one-way door,
+        // and it is a fixed address that never gets a second chance.
+        ["freeMarginAt", "fundMargin", "owner", "reclaimMargin",
+         "recoverNative", "recoverToken", "settle", "trade"].sort(),
       );
     });
   });
