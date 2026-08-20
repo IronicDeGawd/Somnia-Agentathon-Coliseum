@@ -17,13 +17,14 @@ import { ThinkingTicker } from '@/components/shared/ThinkingTicker';
 // The words a move is described in, shared with the finished-fight scorecard so
 // the two pages cannot word the same event differently.
 import { MoveText, MoveEntry, NOTHING_RECORDED } from '@/components/shared/MoveRow';
+import { LiquidationRow, MarginLine } from '@/components/shared/MarginRow';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelLive } from '@/hooks/useDuelLive';
 import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
 import { useMarginWatch, type MarginObservation } from '@/hooks/useMarginWatch';
 import { useLiquidations } from '@/hooks/useLiquidations';
-import { liquidationWord, type LiquidationRecord } from '@/lib/liquidations';
+import type { LiquidationRecord } from '@/lib/liquidations';
 import { clockOf } from '@/lib/blockTime';
 import { newestFirst } from '@/lib/timelineOrder';
 import type { FighterPerp } from '@/hooks/useDuelLive';
@@ -363,43 +364,6 @@ function FighterTimeline({
         </div>
       ))}
     </div>
-  );
-}
-
-/**
- * A liquidation, which is a CHAIN FACT rather than a sighting — marked so, because
- * the line above it might only be something a browser happened to see.
- *
- * Shows the status the venue found BEFORE it acted: "it found this account in
- * close-out and did something about it". The after-status is usually healthy, which
- * is true and useless as a headline.
- */
-function LiquidationRow({ record }: { record: LiquidationRecord }) {
-  const before = marginStatusCopy(record.statusBefore);
-  return (
-    <span style={{ color: 'var(--loss)', minWidth: 0 }}>
-      <span aria-hidden="true">⚡ </span>{liquidationWord(record)}
-      {before && <span className="t-dim"> · was {before.word.toLowerCase()}</span>}
-      <span className="t-faint t-xs"> · on-chain</span>
-    </span>
-  );
-}
-
-/** One margin sighting, in the same words the fighter's card uses. */
-function MarginLine({ status }: { status: number }) {
-  if (status === 0) {
-    return (
-      <span style={{ color: 'var(--win)' }}>
-        <span aria-hidden="true">✓ </span>RECOVERED<span className="t-faint t-xs"> · seen</span>
-      </span>
-    );
-  }
-  const copy = marginStatusCopy(status);
-  return (
-    <span style={{ color: 'var(--loss)' }}>
-      <span aria-hidden="true">⚠ </span>{copy?.word ?? 'UNKNOWN STATUS'}
-      <span className="t-faint t-xs"> · seen</span>
-    </span>
   );
 }
 

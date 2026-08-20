@@ -18,6 +18,8 @@ import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTO
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { clockOf } from '@/lib/blockTime';
 import { MoveEntry } from '@/components/shared/MoveRow';
+import { LiquidationRow } from '@/components/shared/MarginRow';
+import { useLiquidations } from '@/hooks/useLiquidations';
 import { fmtUsdsoRaw } from '@/lib/format';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -78,6 +80,9 @@ export default function ResultPage() {
           ? 'PRACTICE RING'
           : 'SPOT COINS';
   const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
+  // The permanent half of the margin story. Readable for a fight finished months
+  // ago, because the venue records what it did; see components/shared/MarginRow.
+  const liquidations = useLiquidations(duelId, duelStartBlock, duelTurns, duelLastTurnBlock);
 
   const fighterNameOf = (fid: number): string => {
     const v = FIGHTER_VISUAL_MAP[fid];
@@ -714,6 +719,43 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
               fighterB={duel?.fighterB}
             />
           </div>
+
+          {/* WHAT THE VENUE DID, for a fight that is already over.
+              
+              This page showed nothing of the kind until now, which had it exactly
+              backwards. A margin SIGHTING cannot be recovered after the bell — the
+              link from a fighter to its rented account is deleted, and the registry
+              answers "healthy" forever — so the live page is the only place one can
+              honestly appear. A LIQUIDATION is the opposite: the venue performs it
+              and records it, so it can be read back for any fight however old. It
+              was appearing only on the live page, where a fight has barely started
+              and is least likely to have been liquidated at all.
+
+              Rendered as its own block rather than as rows in the scorecard above,
+              because a liquidation happens at a block and not in a round, and
+              inventing a round for it would be a guess dressed as a fact.
+
+              Nothing renders when there is nothing to show. An empty result is the
+              expected result — no fighter of ours has ever been liquidated, and
+              measured across 150,000 blocks nor has anyone else on this venue — so
+              a standing "no liquidations" line would be noise on every fight ever
+              played. */}
+          {liquidations.length > 0 && (
+            <div className="card pad-24 col gap-8">
+              <span className="label-tiny">WHAT THE VENUE DID</span>
+              {liquidations.map((r) => (
+                <div key={`${r.block}-${r.stage}`} className="row ai-c t-mono t-sm" style={{ gap: 12 }}>
+                  <span className="t-num t-xs t-faint" style={{ width: 62, flexShrink: 0 }}>
+                    {clockOf(r.timestamp)}
+                  </span>
+                  <span className="t-dim" style={{ minWidth: 90, flexShrink: 0 }}>
+                    {fighterNameOf(r.fighterId)}
+                  </span>
+                  <LiquidationRow record={r} />
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
