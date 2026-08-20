@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { formatUnits } from 'viem';
@@ -17,6 +17,9 @@ import { ThinkingTicker } from '@/components/shared/ThinkingTicker';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelLive } from '@/hooks/useDuelLive';
+import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
+import { useMarginWatch, type MarginObservation } from '@/hooks/useMarginWatch';
+import { clockOf } from '@/lib/blockTime';
 import type { FighterPerp } from '@/hooks/useDuelLive';
 import { useFighters } from '@/hooks/useFighters';
 import { FIGHTERS } from '@/lib/fighters';
@@ -130,6 +133,121 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
  * coloured by which way the fighter went, and the market keeps the ordinary
  * weight.
  */
+/**
+ * The fight as it happened: every move, both fighters, oldest at the bottom.
+ *
+ * WHAT THIS REPLACES, and why it was worth replacing. The feed used to show two
+ * lines — each fighter's LATEST move. A spectator arriving in round nine read
+ * "HOLD / HOLD" and was told nothing about the eight rounds they had missed. The
+ * data was never missing: the page already reads every move as it happens and
+ * already backfills every earlier one, then overwrote a single value per fighter
+ * and threw the rest away.
+ *
+ * Times come from the block each move was mined in, asked of the chain rather than
+ * calculated from a nominal block interval — a fight can stall between rounds, and
+ * an invented clock would show a smooth cadence that never happened.
+ *
+ * MARGIN SIGHTINGS ARE THREADED IN, and they are a different KIND of fact from the
+ * moves around them. A move is a permanent on-chain event. A margin state is a live
+ * reading that nothing records, on an account whose link to its fighter is deleted
+ * at the final bell — so the only way it can ever be seen is for a page that was
+ * open at the time to remember it. They are marked "seen" for exactly that reason.
+ */
+function FightTimeline({
+  story,
+  marginSeen,
+  nameOf,
+  hexOf,
+}: {
+  story: TranscriptEntry[];
+  marginSeen: MarginObservation[];
+  nameOf: (fighterId: number) => string;
+  hexOf: (fighterId: number) => string;
+}) {
+  type Row =
+    | { kind: 'move'; at?: number; sort: number; e: TranscriptEntry }
+    | { kind: 'margin'; at: number; sort: number; o: MarginObservation };
+
+  const rows: Row[] = [
+    // A move with no timestamp yet still sorts by its block, so the order is right
+    // from the first paint and only the clock arrives late.
+    ...story.map((e) => ({
+      kind: 'move' as const, at: e.timestamp, sort: e.timestamp ?? Number(e.block), e,
+    })),
+    ...marginSeen.map((o) => ({ kind: 'margin' as const, at: o.seenAt, sort: o.seenAt, o })),
+  ];
+
+  // Newest first: a live fight's next line is the one a spectator is waiting for,
+  // and it should not require scrolling to a bottom that keeps moving.
+  rows.sort((a, b) => b.sort - a.sort);
+
+  if (rows.length === 0) {
+    return (
+      <div className="t-mono t-sm t-dim" style={{ padding: '10px 0' }}>
+        {'> '}<span style={{ opacity: 0.5 }}>No moves recorded yet</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="col" style={{ maxHeight: 360, overflowY: 'auto' }}>
+      {rows.map((r, i) => (
+        <div
+          key={r.kind === 'move' ? `m${r.e.block}-${r.e.fighterId}-${i}` : `g${r.o.seenAt}-${r.o.fighterId}-${i}`}
+          className="row ai-c t-mono t-sm"
+          style={{ gap: 12, padding: '7px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}
+        >
+          <span className="t-num t-xs t-faint" style={{ width: 66, flexShrink: 0 }}>
+            {clockOf(r.at)}
+          </span>
+          <span className="t-xs t-dim" style={{ width: 34, flexShrink: 0 }}>
+            {r.kind === 'move' ? `R${r.e.round}` : ''}
+          </span>
+          <span
+            className="t-xs"
+            style={{
+              width: 96, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap', color: hexOf(r.kind === 'move' ? r.e.fighterId : r.o.fighterId),
+              letterSpacing: '0.04em',
+            }}
+          >
+            {nameOf(r.kind === 'move' ? r.e.fighterId : r.o.fighterId)}
+          </span>
+          {r.kind === 'move' ? (
+            r.e.failed ? (
+              <span className="t-dim" style={{ minWidth: 0 }}>
+                {'> '}refused — {r.e.reason || 'no reason given'}
+              </span>
+            ) : (
+              <MoveText move={r.e.action ?? 'HOLD'} />
+            )
+          ) : (
+            <MarginLine status={r.o.status} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** One margin sighting, in the same words the fighter's card uses. */
+function MarginLine({ status }: { status: number }) {
+  if (status === 0) {
+    return (
+      <span style={{ color: 'var(--win)' }}>
+        <span aria-hidden="true">✓ </span>RECOVERED<span className="t-faint t-xs"> · seen</span>
+      </span>
+    );
+  }
+  const copy = marginStatusCopy(status);
+  return (
+    <span style={{ color: 'var(--loss)' }}>
+      <span aria-hidden="true">⚠ </span>{copy?.word ?? 'UNKNOWN STATUS'}
+      <span className="t-faint t-xs"> · seen</span>
+    </span>
+  );
+}
+
 function MoveText({ move }: { move: string }) {
   const [word, ...rest] = move.split(' ');
   const up = word === 'LONG' || word === 'BUY' || word === 'BACK';
@@ -376,7 +494,30 @@ export default function ArenaPage() {
   } = useDuelState(duelId);
 
   // ── Live on-chain portfolio data ──────────────────────────────────────────
-  const { fighterA: liveA, fighterB: liveB, markets } = useDuelLive(duelId, duel);
+  const { fighterA: liveA, fighterB: liveB, markets, slots } = useDuelLive(duelId, duel);
+
+  // ── The fight's whole story, not just its latest line ─────────────────────
+  //
+  // The same hook the result page uses, on the live page too. It reads every move
+  // and every refusal over the fight's own block span and orders them, so a
+  // spectator arriving in round nine sees what happened in rounds one to eight
+  // instead of two lines reading "HOLD".
+  //
+  // Re-runs when `lastTurnBlock` changes, which is once per turn — exactly when
+  // there are new moves to find. The live websocket feed still drives the fighter
+  // cards, so nothing here delays "DECIDING…" appearing.
+  const { entries: story } = useDuelTranscript(
+    duelId, duel?.startBlock, duel?.turns, duel?.lastTurnBlock, slots,
+  );
+
+  // ── Margin states, kept because nothing else keeps them ───────────────────
+  const marginStatuses = useMemo(() => {
+    const m = new Map<number, number>();
+    if (duel && liveA.perp) m.set(duel.fighterA, liveA.perp.marginStatus);
+    if (duel && liveB.perp) m.set(duel.fighterB, liveB.perp.marginStatus);
+    return m;
+  }, [liveA.perp, liveB.perp, duel]);
+  const marginSeen = useMarginWatch(duelId, marginStatuses);
 
   // ── Duelist guard: the two fighters' players can't bet on their own duel ───
   const { address: connectedAddress } = useAccount();
@@ -736,57 +877,62 @@ export default function ArenaPage() {
         >
           <div className="sect-head">
             <span className="sect-head-num">§ FEED</span>
-            <span className="sect-head-title">FIGHTER ACTIONS</span>
-            <span className="sect-head-meta">live agent decisions · every move on-chain</span>
+            <span className="sect-head-title">FIGHT TIMELINE</span>
+            <span className="sect-head-meta">every move, timestamped · newest first</span>
           </div>
+
+          {/* Who is deciding RIGHT NOW. Kept above the history because a live
+              fight's most interesting moment is the one that has not resolved
+              yet, and it has no timestamp to sort by. */}
           <div className="row gap-16 stack-sm" style={{ alignItems: 'stretch' }}>
-            <div
-              className="col gap-6 flex-1"
-              style={{ minWidth: 0, padding: '14px 16px', borderLeft: '2px solid var(--fighter-a)', background: 'linear-gradient(180deg, var(--fighter-a-soft), transparent 70%)' }}
-            >
-              <div className="row gap-8 ai-c jc-sb">
-                <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
-                  <Dot variant="a" pulse={liveA.thinking} />
-                  <span className="label-tiny" style={{ color: 'var(--fighter-a)', whiteSpace: 'nowrap' }}>
-                    {degenF.name} {liveA.thinking ? 'DECIDING…' : liveA.lastAction ? 'ACTED' : 'WAITING'}
+            {[
+              { f: degenF, live: liveA, side: 'a' as const, corner: 'RED CORNER', tick: 0 },
+              { f: whaleF, live: liveB, side: 'b' as const, corner: 'BLUE CORNER', tick: 2 },
+            ].map(({ f, live, side, corner, tick }) => (
+              <div
+                key={side}
+                className="col gap-6 flex-1"
+                style={{
+                  minWidth: 0, padding: '14px 16px',
+                  borderLeft: `2px solid var(--fighter-${side})`,
+                  background: `linear-gradient(180deg, var(--fighter-${side}-soft), transparent 70%)`,
+                }}
+              >
+                <div className="row gap-8 ai-c jc-sb">
+                  <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
+                    <Dot variant={side} pulse={live.thinking} />
+                    <span className="label-tiny" style={{ color: `var(--fighter-${side})`, whiteSpace: 'nowrap' }}>
+                      {f.name} {live.thinking ? 'DECIDING…' : live.lastAction ? 'ACTED' : 'WAITING'}
+                    </span>
                   </span>
-                </span>
-                <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>RED CORNER</span>
+                  <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>{corner}</span>
+                </div>
+                <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
+                  {live.thinking ? (
+                    <ThinkingTicker fighterId={f.id} startIndex={tick} />
+                  ) : live.lastAction ? (
+                    <MoveText move={live.lastAction} />
+                  ) : (
+                    <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
+                  )}
+                </div>
               </div>
-              <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
-                {liveA.thinking ? (
-                  <ThinkingTicker fighterId={degenF.id} startIndex={0} />
-                ) : liveA.lastAction ? (
-                  <MoveText move={liveA.lastAction} />
-                ) : (
-                  <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
-                )}
-              </div>
-            </div>
-            <div
-              className="col gap-6 flex-1"
-              style={{ minWidth: 0, padding: '14px 16px', borderLeft: '2px solid var(--fighter-b)', background: 'linear-gradient(180deg, var(--fighter-b-soft), transparent 70%)' }}
-            >
-              <div className="row gap-8 ai-c jc-sb">
-                <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
-                  <Dot variant="b" pulse={liveB.thinking} />
-                  <span className="label-tiny" style={{ color: 'var(--fighter-b)', whiteSpace: 'nowrap' }}>
-                    {whaleF.name} {liveB.thinking ? 'DECIDING…' : liveB.lastAction ? 'ACTED' : 'WAITING'}
-                  </span>
-                </span>
-                <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>BLUE CORNER</span>
-              </div>
-              <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
-                {liveB.thinking ? (
-                  <ThinkingTicker fighterId={whaleF.id} startIndex={2} />
-                ) : liveB.lastAction ? (
-                  <MoveText move={liveB.lastAction} />
-                ) : (
-                  <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
-                )}
-              </div>
-            </div>
+            ))}
           </div>
+
+          <FightTimeline
+            story={story}
+            marginSeen={marginSeen}
+            nameOf={(fid) => (duel && fid === duel.fighterA ? degenF.name : whaleF.name)}
+            hexOf={(fid) => (duel && fid === duel.fighterA ? degenF.hex : whaleF.hex)}
+          />
+
+          {marginSeen.length > 0 && (
+            <span className="t-mono t-xs t-faint">
+              Margin lines are what a browser watching this fight SAW, not a chain record — nothing
+              stores them, and one that clears within ten seconds is missed.
+            </span>
+          )}
         </div>
 
         {/* § MARKET — Real mark prices from MarkPriceSnapshot events */}

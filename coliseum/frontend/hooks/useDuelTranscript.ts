@@ -6,6 +6,7 @@ import { parseAbiItem } from 'viem';
 import { CONTRACT_ADDRESSES, actionLabels, BOOKMAKER_DEPLOY_BLOCK } from '@/lib/contracts';
 import type { SlotKind } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
+import { blockTimes } from '@/lib/blockTime';
 
 const FIGHTER_MOVE_EVENT = parseAbiItem(
   'event FighterMove(uint256 indexed duelId, uint8 indexed fighterId, uint8 action, uint128 orderId)',
@@ -20,6 +21,13 @@ export interface TranscriptEntry {
   action: string | null;  // e.g. "BUY SOMI" / "HOLD", or null when the move failed
   reason: string | null;  // failure reason when failed
   failed: boolean;
+  /** The block this move was mined in. Kept so it can be given a time. */
+  block: bigint;
+  /**
+   * Wall-clock seconds, once the block has been asked. Undefined means "not
+   * looked up yet, or the node would not say" — never a guess. See lib/blockTime.
+   */
+  timestamp?: number;
 }
 
 type RawLog = { blockNumber: bigint | null; logIndex: number | null; args: Record<string, unknown> };
@@ -83,16 +91,24 @@ export function useDuelTranscript(
 
       merged.sort((a, b) => (a.block === b.block ? a.logIndex - b.logIndex : a.block < b.block ? -1 : 1));
 
-      setEntries(
-        merged.map((e, i) => ({
-          round: Math.floor(i / 2) + 1,
-          fighterId: e.fighterId,
-          action: e.action,
-          reason: e.reason,
-          failed: e.failed,
-        })),
-      );
+      const ordered: TranscriptEntry[] = merged.map((e, i) => ({
+        round: Math.floor(i / 2) + 1,
+        fighterId: e.fighterId,
+        action: e.action,
+        reason: e.reason,
+        failed: e.failed,
+        block: e.block,
+      }));
+
+      // Show the moves first, then fill the times in. The list is the point; the
+      // clock is an adornment, and blocking the whole transcript on thirty extra
+      // round-trips would make a finished fight look like a page that failed.
+      setEntries(ordered);
       setLoading(false);
+
+      const times = await blockTimes(publicClient, ordered.map((e) => e.block));
+      if (cancelled) return;
+      setEntries(ordered.map((e) => ({ ...e, timestamp: times.get(String(e.block)) })));
     })();
     return () => { cancelled = true; };
   // labelKey rather than `labels`: a fresh array every render would re-run this on

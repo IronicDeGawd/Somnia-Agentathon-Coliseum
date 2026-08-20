@@ -96,6 +96,14 @@ export interface DuelLiveResult {
   fighterA: FighterLive;
   fighterB: FighterLive;
   markets: PoolMarket[];
+  /**
+   * What the fight's three slots hold. Exposed because this hook already reads it
+   * to name a move, and anything else that names a move needs the same answer —
+   * a second reader would re-read the same chain state to reach the same
+   * conclusion, and could disagree with this one while it was still loading.
+   * Undefined until the reads land.
+   */
+  slots: SlotKind[] | undefined;
   isLoading: boolean;
 }
 
@@ -128,6 +136,9 @@ const EMPTY_RESULT: DuelLiveResult = {
   fighterA: EMPTY_FIGHTER,
   fighterB: EMPTY_FIGHTER,
   markets: [],
+  // Undefined, not an empty array: "not read yet" and "three slots holding
+  // nothing" must not look the same to a caller naming a move.
+  slots: undefined,
   isLoading: false,
 };
 
@@ -720,6 +731,7 @@ export function useDuelLive(
     fighterA: fA,
     fighterB: fB,
     markets,
+    slots: slotKinds,
     isLoading: balancesLoading || (isPerpDuel && perpLoading),
   };
 }
