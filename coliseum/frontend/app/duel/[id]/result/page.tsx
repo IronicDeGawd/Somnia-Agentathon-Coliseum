@@ -11,7 +11,7 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip } from '@/components/shared/OtherHUD';
 import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
-import { useDuelTranscript } from '@/hooks/useDuelTranscript';
+import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
 import { useDuelSlots } from '@/hooks/useDuelSlots';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
@@ -62,13 +62,123 @@ export default function ResultPage() {
   const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
   const duelLastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
   const duelSlots = useDuelSlots(duelId);
+
+  // WHICH GAME THIS WAS. The page showed a winner, a portfolio and a move tape and
+  // never once said whether the fight was coins, predictions or perpetuals — so a
+  // tape reading "BUY SIMPOOLWETH" was the only clue, and only to someone who
+  // already knew the codebase.
+  //
+  // Read off what the fight actually traded rather than from anything stored: a
+  // perp slot makes it perps, a labelled question makes it predictions, and the
+  // simulated flag separates the practice ring from the real coin books.
+  const marketName = duelSlots === undefined
+    ? null
+    : duelSlots.some((sl) => sl.isPerp)
+      ? 'PERPETUALS'
+      : duelSlots.some((sl) => sl.label && sl.label.length > 0)
+        ? 'PREDICTIONS'
+        : duel?.simulated
+          ? 'PRACTICE RING'
+          : 'SPOT COINS';
   const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
 
   const fighterNameOf = (fid: number): string => {
     const v = FIGHTER_VISUAL_MAP[fid];
     return v ? (FIGHTERS[v.id]?.name ?? `FIGHTER #${fid}`) : `FIGHTER #${fid}`;
   };
-  const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
+  /**
+ * The fight as a scorecard: one row per round, one column per fighter.
+ *
+ * It was a flat list of thirty lines, alternating fighters, each repeating the
+ * round number — so comparing what the two of them did in the SAME round meant
+ * finding two lines that were neither adjacent nor in a predictable order. Here
+ * the round is the line, and the two fighters sit side by side on it: read across
+ * for a round, down a column for one fighter's whole fight.
+ *
+ * The COLUMN order is pinned to the duel's own fighter slots rather than to
+ * whoever the chain logged first, because the two moves in a round are mined in
+ * whatever order they land and a table whose sides swap partway is worse than no
+ * table at all.
+ */
+function TapeScorecard({
+  transcript,
+  fighterA,
+  fighterB,
+}: {
+  transcript: TranscriptEntry[];
+  fighterA?: number;
+  fighterB?: number;
+}) {
+  const rounds = Array.from(new Set(transcript.map((e) => e.round))).sort((x, y) => x - y);
+
+  // Prefer the duel's own slots; fall back to first-appearance only when the duel
+  // has not loaded, so the table still renders rather than vanishing.
+  const seen = Array.from(new Set(transcript.map((e) => e.fighterId)));
+  const colIds = (fighterA !== undefined && fighterB !== undefined) ? [fighterA, fighterB] : seen;
+
+  const cell = (fid: number, round: number) =>
+    transcript.find((e) => e.fighterId === fid && e.round === round);
+
+  const border = '1px solid var(--border)';
+
+  return (
+    <table
+      className="t-mono t-sm"
+      style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}
+    >
+      <thead>
+        <tr>
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 64 }} />
+          {colIds.map((fid) => (
+            <th
+              key={fid}
+              style={{
+                textAlign: 'left', padding: '6px 16px', borderBottom: border,
+                color: fighterHexOf(fid), letterSpacing: '0.04em', fontWeight: 400,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {fighterNameOf(fid)}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rounds.map((r) => (
+          <tr key={r}>
+            <th
+              scope="row"
+              className="t-dim"
+              style={{
+                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
+                fontWeight: 400, whiteSpace: 'nowrap',
+              }}
+            >
+              R{r}
+            </th>
+            {colIds.map((fid) => {
+              const e = cell(fid, r);
+              return (
+                <td
+                  key={fid}
+                  className="t-num"
+                  style={{
+                    padding: '8px 16px', borderTop: border, whiteSpace: 'nowrap',
+                    color: !e || e.failed ? 'var(--text-faint)' : 'var(--text)',
+                  }}
+                >
+                  {!e ? '·' : e.failed ? `— ${e.reason || 'no move'}` : e.action}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
 
   // ── Matchmaker check (PvP duel detection) ─────────────────────────────────
   const { data: matchData } = useReadContract({
@@ -317,6 +427,14 @@ export default function ResultPage() {
             § POST-DUEL · DUEL #{rawId}
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+          {marketName && (
+            <>
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-dim)' }}>
+                {marketName}
+              </span>
+              <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+            </>
+          )}
           {isLoading ? (
             <Chip variant="gold">LOADING…</Chip>
           ) : isResolved ? (
@@ -567,29 +685,12 @@ export default function ResultPage() {
             <span className="sect-head-title">FIGHT TAPE</span>
             <span className="sect-head-meta">{transcript.length} moves · every one on-chain</span>
           </div>
-          <div className="card pad-24 col">
-            {transcript.map((e, i) => (
-              <div
-                key={i}
-                className="row ai-c t-mono t-sm"
-                style={{
-                  gap: 16,
-                  padding: '8px 0',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-                }}
-              >
-                <span className="t-dim" style={{ width: 48, flexShrink: 0 }}>R{e.round}</span>
-                <span style={{ color: fighterHexOf(e.fighterId), flex: 1, letterSpacing: '0.04em' }}>
-                  {fighterNameOf(e.fighterId)}
-                </span>
-                <span
-                  className="t-num"
-                  style={{ color: e.failed ? 'var(--text-faint)' : 'var(--text)', textAlign: 'right' }}
-                >
-                  {e.failed ? `— ${e.reason || 'no move'}` : e.action}
-                </span>
-              </div>
-            ))}
+          <div className="card pad-24" style={{ overflowX: 'auto' }}>
+            <TapeScorecard
+              transcript={transcript}
+              fighterA={duel?.fighterA}
+              fighterB={duel?.fighterB}
+            />
           </div>
         </section>
       )}
