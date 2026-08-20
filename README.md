@@ -500,7 +500,7 @@ makes the lobby click time out.
 | [64](https://coliseum.somniaforge.com/duel/64/result) | Events | 3 | 4 | **The Whale** | BTCUP BTCLATER ETHUP |
 | [66](https://coliseum.somniaforge.com/duel/66/result) | Events | 6 | 5 | **The Whale** | BTCUP BTCLATER ETHUP |
 | [68](https://coliseum.somniaforge.com/duel/68/result) | Events | 9 | 7 | **The Degen** | BTCUP BTCLATER ETHUP |
-| [70](https://coliseum.somniaforge.com/duel/70/result) | Events | 15 | 6 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [76](https://coliseum.somniaforge.com/duel/76/result) † | Events | 15 | 10 | **The Whale** | BTCUP ETHUP BTCHOUR |
 | [65](https://coliseum.somniaforge.com/duel/65/result) | Perps | 3 | 2 | **The Whale** | ETH SOL ADA |
 | [67](https://coliseum.somniaforge.com/duel/67/result) | Perps | 6 | 4 | **The Whale** | ADA XRP BNB |
 | [69](https://coliseum.somniaforge.com/duel/69/result) | Perps | 9 | 8 | **The Degen** | BNB ETH SOL |
@@ -509,6 +509,11 @@ makes the lobby click time out.
 | [75](https://coliseum.somniaforge.com/duel/75/result) | Spot | 15 | 29 | **The Degen** | WETH WBTC SOMI |
 | [72](https://coliseum.somniaforge.com/duel/72/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
 | [74](https://coliseum.somniaforge.com/duel/74/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+
+† Re-run after the events fix below. The fifteen-round events fight in the original batch (duel 70,
+six orders) was played on code that could never offer a fighter a way out of a question, so the row
+would record a limit of the code rather than a result. **The three shorter events rows still
+predate the fix** and are left as they were run — they have not been re-played.
 
 Every fight settled. Nothing was refused, nothing was coerced, nothing failed.
 
@@ -524,7 +529,7 @@ scheduler, then settled and claimed. The arena ended empty with nothing escrowed
 | Spot | — | — | 18 | 29 | **47** |
 | Perps | 2 | 4 | 8 | 12 | **26** |
 | Practice | — | 10 | 16 | — | **26** |
-| Events | 4 | 5 | 7 | 6 | **22** |
+| Events | 4 | 5 | 7 | 10 † | **26** |
 
 **Spot is now the busiest market on the board.** A fifteen-round spot fight trades twenty-nine times
 with nothing refused. Three runs ago the entire spot market managed four orders across three fights,
@@ -539,7 +544,8 @@ about as active as this market gets.
 
 **Events fell, 38 orders to 22 — and chasing that one number found a market with no exit.** The shape
 was wrong, not just the size: the nine-round fight traded seven times and the fifteen-round only six, so
-it stopped scaling with length exactly where every other market kept going. The cause turned out to be
+it stopped scaling with length exactly where every other market kept going. The 26 in the table above
+already includes the re-run; on the code that produced the other three events rows it was 22. The cause turned out to be
 that **a fighter could back a question but never drop it**, for the entire life of that market. Before
 offering an exit the arena asks whether it can hand over the goods, and it asked by weighing the position
 token the venue advertises — which for a prediction is an uninitialised proxy that answers nothing. The
