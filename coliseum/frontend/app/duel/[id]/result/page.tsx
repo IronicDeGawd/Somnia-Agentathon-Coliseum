@@ -87,21 +87,18 @@ export default function ResultPage() {
     return v ? (FIGHTERS[v.id]?.name ?? `FIGHTER #${fid}`) : `FIGHTER #${fid}`;
   };
   /**
- * The fight as a scorecard: one column per round, one row per fighter.
+ * The fight as a scorecard: one row per round, one column per fighter.
  *
  * It was a flat list of thirty lines, alternating fighters, each repeating the
- * round number — so comparing what the two of them did in the same round meant
- * reading two lines that were not next to each other and were not in a
- * predictable order. Laid out as a grid the comparison is the whole point: read
- * DOWN a column to see a round, ACROSS a row to see one fighter's whole fight.
+ * round number — so comparing what the two of them did in the SAME round meant
+ * finding two lines that were neither adjacent nor in a predictable order. Here
+ * the round is the line, and the two fighters sit side by side on it: read across
+ * for a round, down a column for one fighter's whole fight.
  *
- * The round order comes from the transcript; the ROW order is pinned to the
- * duel's own fighter slots rather than to whoever happens to appear first,
- * because the moves within a round arrive in whatever order the chain logged
- * them and a row that swaps sides mid-table is worse than no table.
- *
- * Wide fights scroll sideways inside their own card rather than stretching the
- * page — fifteen rounds of "BACK BTCHOUR" does not fit a phone.
+ * The COLUMN order is pinned to the duel's own fighter slots rather than to
+ * whoever the chain logged first, because the two moves in a round are mined in
+ * whatever order they land and a table whose sides swap partway is worse than no
+ * table at all.
  */
 function TapeScorecard({
   transcript,
@@ -117,7 +114,7 @@ function TapeScorecard({
   // Prefer the duel's own slots; fall back to first-appearance only when the duel
   // has not loaded, so the table still renders rather than vanishing.
   const seen = Array.from(new Set(transcript.map((e) => e.fighterId)));
-  const rowIds = (fighterA !== undefined && fighterB !== undefined) ? [fighterA, fighterB] : seen;
+  const colIds = (fighterA !== undefined && fighterB !== undefined) ? [fighterA, fighterB] : seen;
 
   const cell = (fid: number, round: number) =>
     transcript.find((e) => e.fighterId === fid && e.round === round);
@@ -127,50 +124,47 @@ function TapeScorecard({
   return (
     <table
       className="t-mono t-sm"
-      style={{ borderCollapse: 'collapse', minWidth: '100%', whiteSpace: 'nowrap' }}
+      style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}
     >
       <thead>
         <tr>
-          <th
-            style={{
-              textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border,
-              position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1,
-            }}
-          />
-          {rounds.map((r) => (
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 64 }} />
+          {colIds.map((fid) => (
             <th
-              key={r}
-              className="t-dim"
-              style={{ textAlign: 'left', padding: '6px 16px', borderBottom: border, fontWeight: 400 }}
+              key={fid}
+              style={{
+                textAlign: 'left', padding: '6px 16px', borderBottom: border,
+                color: fighterHexOf(fid), letterSpacing: '0.04em', fontWeight: 400,
+                whiteSpace: 'nowrap',
+              }}
             >
-              R{r}
+              {fighterNameOf(fid)}
             </th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {rowIds.map((fid) => (
-          <tr key={fid}>
+        {rounds.map((r) => (
+          <tr key={r}>
             <th
               scope="row"
+              className="t-dim"
               style={{
-                textAlign: 'left', padding: '8px 16px 8px 0', borderBottom: border,
-                color: fighterHexOf(fid), letterSpacing: '0.04em', fontWeight: 400,
-                position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1,
+                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
+                fontWeight: 400, whiteSpace: 'nowrap',
               }}
             >
-              {fighterNameOf(fid)}
+              R{r}
             </th>
-            {rounds.map((r) => {
+            {colIds.map((fid) => {
               const e = cell(fid, r);
               return (
                 <td
-                  key={r}
+                  key={fid}
                   className="t-num"
                   style={{
-                    padding: '8px 16px', borderBottom: border,
-                    color: !e ? 'var(--text-faint)'
-                      : e.failed ? 'var(--text-faint)' : 'var(--text)',
+                    padding: '8px 16px', borderTop: border, whiteSpace: 'nowrap',
+                    color: !e || e.failed ? 'var(--text-faint)' : 'var(--text)',
                   }}
                 >
                   {!e ? '·' : e.failed ? `— ${e.reason || 'no move'}` : e.action}
