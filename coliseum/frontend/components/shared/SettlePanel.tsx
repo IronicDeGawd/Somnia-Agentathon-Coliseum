@@ -33,11 +33,22 @@ interface SettlePanelProps {
 
 function formatUsdso(raw: bigint, decimals?: number): string {
   const n = Number(formatUnits(raw, 18));
-  // Default to adaptive precision: sub-cent (but non-zero) values get 4 decimals
-  // so small portfolios/pots don't all render as "0.00". An explicit decimals
-  // argument still overrides.
-  const d = decimals ?? (n > 0 && n < 0.01 ? 4 : 2);
-  return n.toFixed(d);
+  if (decimals !== undefined) return n.toFixed(decimals);
+  if (n === 0) return '0.00';
+  // ENOUGH DIGITS TO SEE THE NUMBER, not a fixed two.
+  //
+  // A single sub-cent threshold is not enough. Duel 74 was won by 0.0000008 —
+  // both portfolios printed "$0.03" and the margin printed "+0.0000", so a real
+  // result read as a draw the arena had got wrong. It had not: the chain declares a
+  // draw only on EXACT equality, and these differed. It was the display that could
+  // not show it.
+  //
+  // So the precision follows the magnitude: keep widening until the number stops
+  // rounding to nothing, and never let a non-zero value print as zero.
+  for (const d of [2, 4, 6, 8]) {
+    if (Math.abs(n) >= 0.5 / 10 ** d) return n.toFixed(d);
+  }
+  return n > 0 ? '<0.00000001' : '>-0.00000001';
 }
 
 // ─── Matchmaker Claim Section ─────────────────────────────────────────────────
