@@ -16,6 +16,7 @@ import { useDuelSlots } from '@/hooks/useDuelSlots';
 import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
+import { clockOf } from '@/lib/blockTime';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -111,6 +112,13 @@ function TapeScorecard({
 }) {
   const rounds = Array.from(new Set(transcript.map((e) => e.round))).sort((x, y) => x - y);
 
+  // One time per ROUND, not per move. Both fighters' moves in a turn are mined in
+  // the same block, so they share a timestamp — measured on duel 84, where every
+  // round's pair carried the identical second. A column per fighter would print the
+  // same clock twice and say nothing.
+  const timeOf = (round: number) =>
+    transcript.find((e) => e.round === round && e.timestamp !== undefined)?.timestamp;
+
   // Prefer the duel's own slots; fall back to first-appearance only when the duel
   // has not loaded, so the table still renders rather than vanishing.
   const seen = Array.from(new Set(transcript.map((e) => e.fighterId)));
@@ -124,11 +132,12 @@ function TapeScorecard({
   return (
     <table
       className="t-mono t-sm"
-      style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}
+      style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}
     >
       <thead>
         <tr>
-          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 64 }} />
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 76 }} />
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 44 }} />
           {colIds.map((fid) => (
             <th
               key={fid}
@@ -146,6 +155,15 @@ function TapeScorecard({
       <tbody>
         {rounds.map((r) => (
           <tr key={r}>
+            <td
+              className="t-num t-xs t-faint"
+              style={{
+                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {clockOf(timeOf(r))}
+            </td>
             <th
               scope="row"
               className="t-dim"
