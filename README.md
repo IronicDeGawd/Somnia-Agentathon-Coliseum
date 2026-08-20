@@ -556,6 +556,46 @@ than an operator wallet.
 checks there is room to finish before it starts, and steps aside when a block is nearly full. The
 holdings it left behind are still the house's and still recoverable; nothing was lost.
 
+### The receipts for the run above
+
+Nothing in the table is asserted from a log. These are the on-chain figures, and the commands that read
+them back, so any of it can be rechecked against the chain rather than taken on trust.
+
+**Settlement at the final bell** — the house's leftover holdings sold back to stablecoin:
+
+| Duel | Sold | Proceeds | Block |
+|---|---|---|---|
+| 73 | 0.009 WETH | 20.82105 USDso | 466671635 |
+| 75 | 0.015 WETH | 34.5549 USDso | 466681074 |
+
+Fifteen more assets were skipped, each with its reason recorded on chain: nine were pools with no real
+asset to sell (the practice simulator, and the event desks, which hold a position rather than a token),
+three were the chain's own coin — fuel, not inventory — and three stepped aside because the block did
+not have gas left to finish safely.
+
+**The two balances that matter, before the first fight and after the twelfth:**
+
+| | Before | After | Change |
+|---|---|---|---|
+| Arena stablecoin (the house float) | 617.201 | 617.175 | **−0.026** |
+| Arena native coin (the thinking fuel) | 79.07 | 42.67 | −36.40 |
+| Escrowed player stakes | 0 | 0 | 0 |
+
+The float is the headline: twelve fights, 121 orders, and the house ended where it began. The fuel spend
+works out at 0.197 coin per round against a fee that collects 0.8–2.0 stablecoin per fight, which is why
+the fee pot still holds 74.9 stablecoin and never needed to convert any of it during the run.
+
+**Reproduce it:**
+
+```bash
+WALLET_FILE=<four-wallet json> bash coliseum/scripts/run-matrix.sh   # the whole run, unattended
+DUELS=64,65,66,67,68,69,70,71,72,73,74,75 MD=1 \
+  pnpm exec hardhat run scripts/matrix-summary.ts --network somnia   # the table above
+SPAN=70000 pnpm exec hardhat run scripts/check-settlement.ts --network somnia
+DUEL=<id> pnpm exec hardhat run scripts/check-rejections.ts --network somnia
+pnpm exec hardhat run scripts/check-arena-vaults.ts --network somnia
+```
+
 ### What running all of it broke
 
 **The largest one first: the spot market could never sell, and running this matrix is what revealed
