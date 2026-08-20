@@ -17,15 +17,11 @@ import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { clockOf } from '@/lib/blockTime';
+import { MoveEntry } from '@/components/shared/MoveRow';
+import { fmtUsdsoRaw } from '@/lib/format';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtUsdso(raw: bigint): string {
-  const n = Number(formatUnits(raw, 18));
-  // Sub-cent (but non-zero) values show 4 decimals so they don't read as "0.00".
-  const decimals = n > 0 && n < 0.01 ? 4 : 2;
-  return `$${n.toFixed(decimals)}`;
-}
 
 // DuelResolved event for backfill
 const DUEL_RESOLVED_EVENT = parseAbiItem(
@@ -182,21 +178,21 @@ function TapeScorecard({
             >
               R{r}
             </th>
-            {colIds.map((fid) => {
-              const e = cell(fid, r);
-              return (
-                <td
-                  key={fid}
-                  className="t-num"
-                  style={{
-                    padding: '8px 16px', borderTop: border, whiteSpace: 'nowrap',
-                    color: !e || e.failed ? 'var(--text-faint)' : 'var(--text)',
-                  }}
-                >
-                  {!e ? '·' : e.failed ? `— ${e.reason || 'no move'}` : e.action}
-                </td>
-              );
-            })}
+            {colIds.map((fid) => (
+              <td
+                key={fid}
+                className="t-num"
+                style={{ padding: '8px 16px', borderTop: border, whiteSpace: 'nowrap' }}
+              >
+                {/* The same wording and the same direction colour the live page
+                    uses. This cell used to word a refusal its own way and print
+                    the move as flat text, so the colouring that tells a long from
+                    a short at a glance stopped working the moment a fight ended —
+                    which is exactly when a fight gets read most carefully. No `> `
+                    lead-in here: the column heading already says whose move it is. */}
+                <MoveEntry entry={cell(fid, r)} prefix={false} />
+              </td>
+            ))}
           </tr>
         ))}
       </tbody>
@@ -386,8 +382,8 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
   const leftValue  = isDraw ? resolvedValueA : winnerFinalValue;
   const rightValue = isDraw ? resolvedValueB : loserFinalValue;
 
-  const wValueDisplay = leftValue  !== null ? fmtUsdso(leftValue)  : '—';
-  const lValueDisplay = rightValue !== null ? fmtUsdso(rightValue) : '—';
+  const wValueDisplay = leftValue  !== null ? fmtUsdsoRaw(leftValue)  : '—';
+  const lValueDisplay = rightValue !== null ? fmtUsdsoRaw(rightValue) : '—';
 
   const turns = duel?.turns ?? 0;
 

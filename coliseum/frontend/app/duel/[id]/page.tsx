@@ -14,6 +14,9 @@ import { BracketButton, Chip, Dot } from '@/components/shared/OtherHUD';
 import BetPanel from '@/components/shared/BetPanel';
 import { RoundClock } from '@/components/shared/RoundClock';
 import { ThinkingTicker } from '@/components/shared/ThinkingTicker';
+// The words a move is described in, shared with the finished-fight scorecard so
+// the two pages cannot word the same event differently.
+import { MoveText, MoveEntry, NOTHING_RECORDED } from '@/components/shared/MoveRow';
 import { useUIStore } from '@/store/ui';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelLive } from '@/hooks/useDuelLive';
@@ -315,7 +318,7 @@ function FighterTimeline({
   if (rows.length === 0) {
     return (
       <div className="t-mono t-sm t-dim" style={{ padding: '10px 14px' }}>
-        {'> '}<span style={{ opacity: 0.5 }}>Nothing recorded yet</span>
+        {'> '}<span style={{ opacity: 0.5 }}>{NOTHING_RECORDED}</span>
       </div>
     );
   }
@@ -349,13 +352,9 @@ function FighterTimeline({
             {r.kind === 'move' ? `R${r.e.round}` : ''}
           </span>
           {r.kind === 'move' ? (
-            r.e.failed ? (
-              <span className="t-dim" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {'> '}refused — {r.e.reason || 'no reason given'}
-              </span>
-            ) : (
-              <MoveText move={r.e.action ?? 'HOLD'} />
-            )
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <MoveEntry entry={r.e} />
+            </span>
           ) : r.kind === 'liq' ? (
             <LiquidationRow record={r.r} />
           ) : (
@@ -400,19 +399,6 @@ function MarginLine({ status }: { status: number }) {
     <span style={{ color: 'var(--loss)' }}>
       <span aria-hidden="true">⚠ </span>{copy?.word ?? 'UNKNOWN STATUS'}
       <span className="t-faint t-xs"> · seen</span>
-    </span>
-  );
-}
-
-function MoveText({ move }: { move: string }) {
-  const [word, ...rest] = move.split(' ');
-  const up = word === 'LONG' || word === 'BUY' || word === 'BACK';
-  const down = word === 'SHORT' || word === 'SELL' || word === 'DROP';
-  return (
-    <span>
-      <span className="t-dim">{'> '}</span>
-      <span style={{ color: up ? 'var(--win)' : down ? 'var(--loss)' : 'var(--text-dim)' }}>{word}</span>
-      {rest.length > 0 && ` ${rest.join(' ')}`}
     </span>
   );
 }
