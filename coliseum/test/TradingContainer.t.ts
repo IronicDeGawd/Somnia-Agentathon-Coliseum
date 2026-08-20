@@ -89,6 +89,24 @@ describe("TradingContainer", function () {
       expect(await quote.read.balanceOf([container.address])).to.equal(parseEther("2000"));
       expect(await quote.read.allowance([container.address, pool.address])).to.equal(0n);
     });
+
+    it("unwinds the whole transaction, leaving no allowance standing, when the venue's call REVERTS", async () => {
+      const { owner, container, quote, pool } = await deploy();
+      await quote.write.mint([container.address, parseEther("2000")]);
+      await pool.write.setNextOrderShouldRevert([true]);
+
+      await expect(
+        container.write.trade(
+          [pool.address, quote.address, parseEther("2000"), true, 0n, parseEther("2000"), parseEther("1"), GTC, 1, 0n],
+          { account: owner.account },
+        ),
+      ).to.be.rejected;
+
+      // The whole transaction unwound: the mint from setup is untouched, and
+      // the approval attempted inside the reverted call never persisted.
+      expect(await quote.read.balanceOf([container.address])).to.equal(parseEther("2000"));
+      expect(await quote.read.allowance([container.address, pool.address])).to.equal(0n);
+    });
   });
 
   describe("capability 2 — sell from its own balance", function () {
@@ -137,6 +155,32 @@ describe("TradingContainer", function () {
       expect(poolBalanceAfter - poolBalanceBefore).to.equal(parseEther("1"));
       expect(await publicClient.getBalance({ address: container.address })).to.equal(0n);
       expect(await quote.read.balanceOf([container.address])).to.equal(parseEther("2000"));
+    });
+
+    it("does NOT lose its coin when the venue gracefully refuses a native-base order with value > 0", async () => {
+      // Regression test for the value-stranding bug: coin moves as part of
+      // the low-level CALL itself, before the venue's own accept/reject logic
+      // runs, so a graceful refusal — success == true, (false, 0) returned,
+      // nothing reverted — must not leave the container's coin at the venue.
+      const { owner, container, quote, pool } = await deploy();
+      const publicClient = await hre.viem.getPublicClient();
+
+      await pool.write.setPoolParams([zeroAddress, quote.address, 1n, 0n, 1n]);
+      await pool.write.setNextOrderShouldReject([true]);
+      await owner.sendTransaction({ to: container.address, value: parseEther("1") });
+
+      const poolBalanceBefore = await publicClient.getBalance({ address: pool.address });
+
+      await expect(
+        container.write.trade(
+          [pool.address, zeroAddress, 0n, false, 0n, parseEther("2000"), parseEther("1"), GTC, 1, parseEther("1")],
+          { account: owner.account },
+        ),
+      ).to.be.rejected;
+
+      const poolBalanceAfter = await publicClient.getBalance({ address: pool.address });
+      expect(poolBalanceAfter).to.equal(poolBalanceBefore);
+      expect(await publicClient.getBalance({ address: container.address })).to.equal(parseEther("1"));
     });
   });
 

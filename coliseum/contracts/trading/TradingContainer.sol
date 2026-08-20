@@ -24,6 +24,23 @@ contract TradingContainer {
     error OrderFailed(bytes data);
     error ApproveFailed();
     error TransferFailed();
+    error NativeOrderRefused();
+
+    /// @notice Fired on every order placed through `trade` (directly or via
+    ///         `settle`), win or refuse, so a refusal or a fill can be
+    ///         reconstructed from logs after the fact — a mined transaction
+    ///         exposes no ABI-decoded return value, only these.
+    event OrderPlaced(address indexed venue, address indexed token, uint256 quantity, uint256 value, bool filled, uint128 orderId);
+    event MarginFunded(address indexed bank, address indexed collateral, uint256 amount);
+    /// @notice Fired by `settle` in addition to `OrderPlaced`, marking that
+    ///         this particular order was a full-balance settlement rather
+    ///         than an ordinary trade.
+    event Settled(address indexed venue, address indexed asset, uint256 quantity, bool filled, uint128 orderId);
+    /// @notice Fired by `settle` instead of `Settled` when there was nothing
+    ///         to sell — distinct from a refusal, where an order WAS placed
+    ///         and the venue said no.
+    event NothingToSettle(address indexed venue, address indexed asset);
+    event Recovered(address indexed asset, uint256 amount);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -86,6 +103,7 @@ contract TradingContainer {
         if (!IERC20Minimal(collateral).approve(bank, amount)) revert ApproveFailed();
         IMarginBank(bank).deposit(amount);
         if (!IERC20Minimal(collateral).approve(bank, 0)) revert ApproveFailed();
+        emit MarginFunded(bank, collateral, amount);
     }
 
     /// @notice Sell the WHOLE current holding of `asset` back into `venue`, at
@@ -110,11 +128,15 @@ contract TradingContainer {
     ) external onlyOwner returns (bool ok, uint128 orderId) {
         bool isNative = asset == address(0);
         uint256 qty = isNative ? address(this).balance : IERC20Minimal(asset).balanceOf(address(this));
-        if (qty == 0) return (false, 0);
-        return _trade(
+        if (qty == 0) {
+            emit NothingToSettle(venue, asset);
+            return (false, 0);
+        }
+        (ok, orderId) = _trade(
             venue, isNative ? address(0) : asset, isNative ? 0 : qty,
             false, uint64(0), price, qty, expireTimestampNs, orderType, isNative ? qty : 0
         );
+        emit Settled(venue, asset, qty, ok, orderId);
     }
 
     function _trade(
@@ -148,6 +170,18 @@ contract TradingContainer {
 
         if (!success) revert OrderFailed(ret);
         (ok, orderId) = abi.decode(ret, (bool, uint128));
+
+        // Coin moves as part of the CALL itself, before the venue's own
+        // accept/reject logic runs — so a graceful refusal (success == true,
+        // ok == false) still leaves the value already sitting at the venue.
+        // A token order is pull-based (the venue calls transferFrom) so a
+        // refusal there costs nothing and may safely report ok == false. A
+        // native order is push-based, so the only way a refusal can cost
+        // nothing is to revert here and unwind the value transfer atomically
+        // with the rest of this call.
+        if (!ok && value > 0) revert NativeOrderRefused();
+
+        emit OrderPlaced(venue, token, quantity, value, ok, orderId);
     }
 
     /// @notice Move a token's whole balance back to the OWNER. Never any other
@@ -155,7 +189,10 @@ contract TradingContainer {
     function recoverToken(address token) external onlyOwner returns (uint256 moved) {
         IERC20Minimal t = IERC20Minimal(token);
         moved = t.balanceOf(address(this));
-        if (moved > 0 && !t.transfer(owner, moved)) revert TransferFailed();
+        if (moved > 0) {
+            if (!t.transfer(owner, moved)) revert TransferFailed();
+            emit Recovered(token, moved);
+        }
     }
 
     /// @notice Move the whole native-coin balance back to the OWNER. Never any
@@ -165,6 +202,7 @@ contract TradingContainer {
         if (moved > 0) {
             (bool ok, ) = owner.call{value: moved}("");
             if (!ok) revert TransferFailed();
+            emit Recovered(address(0), moved);
         }
     }
 

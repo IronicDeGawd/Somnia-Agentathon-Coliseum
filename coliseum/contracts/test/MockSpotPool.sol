@@ -24,10 +24,19 @@ contract MockSpotPool {
     uint128 public nextOrderId;
 
     bool private _nextShouldReject;
+    bool private _nextShouldRevert;
     uint256 public markPrice;
 
     function setNextOrderShouldReject(bool reject) external {
         _nextShouldReject = reject;
+    }
+
+    /// @notice Single-shot, mirroring `_nextShouldReject`, but models a venue
+    ///         whose low-level call REVERTS rather than gracefully returning
+    ///         `(false, 0)` — e.g. an out-of-gas revert deep in its own matching
+    ///         logic, as opposed to a deliberate refusal.
+    function setNextOrderShouldRevert(bool doRevert) external {
+        _nextShouldRevert = doRevert;
     }
 
     function setMarkPrice(uint256 price) external {
@@ -92,6 +101,11 @@ contract MockSpotPool {
         address,
         uint96
     ) external payable returns (bool, uint128) {
+        if (_nextShouldRevert) {
+            _nextShouldRevert = false;
+            revert("MockSpotPool: forced revert");
+        }
+
         if (_nextShouldReject) {
             _nextShouldReject = false;
             return (false, 0);
