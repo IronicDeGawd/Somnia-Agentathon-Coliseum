@@ -6,6 +6,7 @@ import "../interfaces/ISpotPool.sol";
 import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/IPerps.sol";
 import "../interfaces/IArena.sol";
+import "../interfaces/IPositionVenue.sol";
 
 /// @title ArenaUtils
 /// @notice Pure/view helpers for the Arena system. No state, no auth.
@@ -523,7 +524,24 @@ library ArenaUtils {
             }
             try IERC20Minimal(baseToken).balanceOf(address(this)) returns (uint256 held) {
                 return held >= need;
-            } catch { return false; }
+            } catch {
+                // The advertised token cannot answer a balance question, so ask the
+                // VENUE what it can hand over. A prediction desk owns the position
+                // itself and reports it in these units; the token it advertises for
+                // that position is an uninitialised proxy that answers nothing.
+                //
+                // Reading that refusal as "I hold none" is why no fighter was ever
+                // offered a way OUT of a prediction. Measured on duel 70: a fighter
+                // whose own prompt said it held the position was offered three ways
+                // to add and none to leave, every turn of a fifteen-round fight, so
+                // the market's order count could not grow with fight length at all.
+                //
+                // Asked second, never first, so nothing changes for a venue that
+                // does deliver a real token to this contract.
+                try IPositionVenue(pool).yesBalance18() returns (uint256 held) {
+                    return held >= need;
+                } catch { return false; }
+            }
         } catch { return false; }
     }
 

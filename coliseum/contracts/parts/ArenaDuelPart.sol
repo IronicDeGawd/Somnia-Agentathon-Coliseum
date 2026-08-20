@@ -471,7 +471,19 @@ contract ArenaDuelPart is ArenaStorage {
 
         uint256 held;
         try IERC20Minimal(base).balanceOf(address(this)) returns (uint256 b2) { held = b2; }
-        catch { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "asset would not report a balance"); return; }
+        catch {
+            // A prediction position, which is DELIBERATELY not sold here. Its
+            // collateral is a different token from this contract's cash with no
+            // swap route between them, and the desk sends what it sells to its own
+            // owner — so selling at the bell would move money away from here, not
+            // back into it. The desk claims the payout itself once the question
+            // resolves, and scoring already values the position at the mark.
+            //
+            // The message says so, because the old one read like a broken token and
+            // sent the next reader hunting a fault that was not there.
+            emit ArenaTypes.AssetSettleSkipped(duelId, pool, "a prediction is claimed at its desk, not sold here");
+            return;
+        }
         if (held == 0) return;
 
         uint256 price;
