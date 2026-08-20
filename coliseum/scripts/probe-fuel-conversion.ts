@@ -52,7 +52,12 @@ async function main() {
   // Buying the BASE of this market means paying stablecoin and being handed coin.
   const asks = await pub.readContract({ address: pool, abi: POOL, functionName: "getBookLevels", args: [false, BigInt(1)] }) as readonly { price: bigint; quantity: bigint }[];
   if (asks.length === 0) { console.log("nobody offering the coin right now"); return; }
-  let qty = minQty > lot ? minQty : lot;
+  // COINS lets this double as an operator top-up, not just a proof: the deployer
+  // pays for every contract deployment in the chain's own coin, and it ran dry while
+  // the Arena sat well funded because the pot was doing its job. Buying gas money
+  // with stablecoin is the same trade the pot makes, done by hand.
+  let qty = (BigInt(process.env.COINS ?? "1")) * BigInt(10) ** BigInt(18);
+  if (qty < minQty) qty = minQty;
   if (lot > BigInt(0) && qty % lot !== BigInt(0)) qty = ((qty / lot) + BigInt(1)) * lot;
   if (qty > asks[0].quantity) qty = (asks[0].quantity / lot) * lot;
   let price = asks[0].price + BigInt(50) * tick;
