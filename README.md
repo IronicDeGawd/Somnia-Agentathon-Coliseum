@@ -485,27 +485,30 @@ holds players' stakes — the distinction is what a contract holds, not who is a
 
 ## The test matrix — every tier, played on testnet
 
-Every tier the lobby offers, on every market, run end to end on 2026-08-19. Each fight is real — a real
+Every tier the lobby offers, on every market, run end to end on 2026-08-20. Each fight is real — a real
 deposit, real orders on real markets, a real settled result and a page you can open — and each was
 started **from the site**, by a browser carrying its own wallet, then settled and claimed. All of them
 ran **The Degen** against **The Whale**.
 
+Twelve fights, not fourteen. Two tiers were retired between runs: a three-round spot fight activates a
+single coin market, so both fighters face one identical choice every turn and the fight converges to a
+tie, and a fifteen-round practice fight was never offered in the first place. Asking for either now just
+makes the lobby click time out.
+
 | Duel | Market | Rounds | Orders | Result | Markets traded |
 |---|---|---|---|---|---|
-| [39](https://coliseum.somniaforge.com/duel/39/result) | Events | 3 | 2 | draw | ETHUP ETHHOUR BTCUP |
-| [42](https://coliseum.somniaforge.com/duel/42/result) | Events | 6 | 7 | **The Whale** | ETHUP ETHHOUR BTCUP |
-| [43](https://coliseum.somniaforge.com/duel/43/result) | Events | 9 | 11 | **The Degen** | ETHUP ETHHOUR BTCUP |
-| [46](https://coliseum.somniaforge.com/duel/46/result) | Events | 15 | 18 | **The Degen** | ETHUP ETHHOUR BTCUP |
-| [40](https://coliseum.somniaforge.com/duel/40/result) | Perps | 3 | 1 | **The Whale** | ETH SOL ADA |
-| [41](https://coliseum.somniaforge.com/duel/41/result) | Perps | 6 | 3 | **The Whale** | SOL ADA XRP |
-| [44](https://coliseum.somniaforge.com/duel/44/result) | Perps | 9 | 4 | **The Whale** | SOL ADA XRP |
-| [45](https://coliseum.somniaforge.com/duel/45/result) | Perps | 15 | 6 | **The Whale** | ADA XRP BNB |
-| [48](https://coliseum.somniaforge.com/duel/48/result) | Spot | 3 | 4 | draw | WETH WBTC SOMI |
-| [50](https://coliseum.somniaforge.com/duel/50/result) | Spot | 9 | 17 | **The Whale** | WETH WBTC SOMI |
-| [51](https://coliseum.somniaforge.com/duel/51/result) | Spot | 15 | 27 | **The Degen** | WETH WBTC SOMI |
-| [47](https://coliseum.somniaforge.com/duel/47/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
-| [49](https://coliseum.somniaforge.com/duel/49/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
-| [52](https://coliseum.somniaforge.com/duel/52/result) | Practice | 15 | 27 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+| [64](https://coliseum.somniaforge.com/duel/64/result) | Events | 3 | 4 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [66](https://coliseum.somniaforge.com/duel/66/result) | Events | 6 | 5 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [68](https://coliseum.somniaforge.com/duel/68/result) | Events | 9 | 7 | **The Degen** | BTCUP BTCLATER ETHUP |
+| [70](https://coliseum.somniaforge.com/duel/70/result) | Events | 15 | 6 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [65](https://coliseum.somniaforge.com/duel/65/result) | Perps | 3 | 2 | **The Whale** | ETH SOL ADA |
+| [67](https://coliseum.somniaforge.com/duel/67/result) | Perps | 6 | 4 | **The Whale** | ADA XRP BNB |
+| [69](https://coliseum.somniaforge.com/duel/69/result) | Perps | 9 | 8 | **The Degen** | BNB ETH SOL |
+| [71](https://coliseum.somniaforge.com/duel/71/result) | Perps | 15 | 12 | **The Whale** | SOL ADA XRP |
+| [73](https://coliseum.somniaforge.com/duel/73/result) | Spot | 9 | 18 | **The Degen** | WETH WBTC SOMI |
+| [75](https://coliseum.somniaforge.com/duel/75/result) | Spot | 15 | 29 | **The Degen** | WETH WBTC SOMI |
+| [72](https://coliseum.somniaforge.com/duel/72/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+| [74](https://coliseum.somniaforge.com/duel/74/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
 
 Every fight settled. Nothing was refused, nothing was coerced, nothing failed.
 
@@ -518,30 +521,40 @@ scheduler, then settled and claimed. The arena ended empty with nothing escrowed
 
 | | 3r | 6r | 9r | 15r | total |
 |---|---|---|---|---|---|
-| Practice | — | 10 | 16 | 27 | **53** |
-| Spot | 4 | — | 17 | 27 | **48** |
-| Events | 2 | 7 | 11 | 18 | **38** |
-| Perps | 1 | 3 | 4 | 6 | **14** |
+| Spot | — | — | 18 | 29 | **47** |
+| Perps | 2 | 4 | 8 | 12 | **26** |
+| Practice | — | 10 | 16 | — | **26** |
+| Events | 4 | 5 | 7 | 6 | **22** |
 
-**Spot went from four orders to forty-eight.** Those four were the whole of the previous run — three
-fights, every order a single SOMI, every sell refused. The prompt change and the three faults it exposed
-are the difference, and it moved spot from the least active market to the second most active. A
-fifteen-round spot fight now trades twenty-seven times without a single refusal.
+**Spot is now the busiest market on the board.** A fifteen-round spot fight trades twenty-nine times
+with nothing refused. Three runs ago the entire spot market managed four orders across three fights,
+every one of them a single SOMI buy, every sell refused because a sale was never authorised to the
+venue. That fault, the two behind it, and the fee/fuel currency mismatch found after them are the whole
+difference.
 
-**Perps trades least, and that is the market working rather than failing.** A perp is a standing
-exposure: once a fighter is long, it stays long without doing anything, and it only needs an order to
-change its mind. Every other market requires an order to *hold* a view at all. So a low count here means
-fighters are taking positions and keeping them — which is what the fifteen-round fight shows, six orders
-across thirty moves with an open XRP long carried for most of it.
+**Perps roughly doubled between runs, 14 orders to 26.** A perp is a standing exposure — once a fighter
+is long it stays long for free, and only needs an order to change its mind — so this market will always
+count lower than one where holding a view costs an order. Twelve orders in a fifteen-round fight is
+about as active as this market gets.
 
-**Every market scales with length, and none of them flatlines.** That is the real result of the table:
-before this session two of the four markets went quiet at every tier, and the reason in both cases was a
-prompt describing a market in words instead of numbers.
+**Events fell, 38 orders to 22, and that is the one number in this table pointing at a problem.** The
+shape is wrong, not just the size: the nine-round fight traded seven times and the fifteen-round fight
+only six, so the market stops scaling with length exactly where every other market keeps going. All four
+fights also drew the same three questions (BTCUP, BTCLATER, ETHUP), which is the tell — the desks have
+been parked on one set of questions since a stuck reservation flag stopped them being rotated, so by the
+time a fight reaches them there is little left to disagree about. Not yet diagnosed further; it is
+recorded as open rather than dressed up.
 
-**Which three assets a perps fight gets is genuinely rotated.** Four fights drew ETH+SOL+ADA,
-SOL+ADA+XRP, SOL+ADA+XRP and ADA+XRP+BNB. Bitcoin appeared in none of them — its margin requirement sat
-at 10.70 USDso, which prices it out of the two cheap tiers entirely and leaves it competing for a slot
-at the top two.
+**Money now comes back.** The house float ended the twelve fights within three hundredths of a
+USDso of where it started, against a measured fifty-USDso drain per fight before the settlement path
+existed. Two spot fights converted their leftover holdings back to stablecoin at the final bell (20.82
+and 34.55 USDso); every other skip was a pool with no real asset to sell, or the chain's own coin, which
+is fuel rather than inventory. Thinking cost 36 coin across the twelve, paid out of routed fees rather
+than an operator wallet.
+
+**Three settlements were deferred for gas**, which is the guard doing its job rather than failing: it
+checks there is room to finish before it starts, and steps aside when a block is nearly full. The
+holdings it left behind are still the house's and still recoverable; nothing was lost.
 
 ### What running all of it broke
 
