@@ -100,7 +100,9 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
       <span className="label-tiny">HOLDINGS</span>
       <div className="col gap-6">
         {holdings.map((h, i) => (
-          <div key={h.token} className="col gap-2">
+          // Keyed by position as well as name: the rows used to share a key when
+          // several were called the same thing, which React cannot tell apart.
+          <div key={`${h.token}-${i}`} className="col gap-2">
             <div className="row jc-sb ai-c" style={{ gap: 12 }}>
               <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
                 <span style={{ width: 6, height: 6, background: color, display: 'inline-block', boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />
@@ -473,11 +475,18 @@ export default function ArenaPage() {
   const degenPnl = liveA.pnlNum;
   const whalePnl = liveB.pnlNum;
 
-  // Real holdings: combine base+quote per pool into display rows
+  // Real holdings: each market contributes what the fighter HOLDS there and the
+  // cash it still has THERE.
+  //
+  // The cash row has to name its market. A fighter is credited a separate purse
+  // per market — spending all of one leaves the others untouched — so three
+  // markets means three genuinely different cash balances. Labelling them all
+  // "USDso" rendered as five near-identical rows that read like a duplication bug
+  // and told a spectator nothing about which market the money was sitting in.
   const toDisplayHoldings = (holdings: typeof liveA.holdings): Holding[] =>
     holdings.flatMap((h) => [
       { token: h.token, amount: Number(parseFloat(h.baseAmount).toFixed(6)) },
-      { token: 'USDso', amount: Number(parseFloat(h.quoteAmount).toFixed(4)) },
+      { token: `${h.token} cash`, amount: Number(parseFloat(h.quoteAmount).toFixed(4)) },
     ]).filter((h) => (h.amount as number) > 0);
 
   const degenHoldings = toDisplayHoldings(liveA.holdings);
