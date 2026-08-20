@@ -28,4 +28,9 @@ interface IArena {
     function finalizeDuel(uint256 duelId) external;
     function recoverFunds(uint256 duelId) external;
     function minDepositFor(uint16 turns) external view returns (uint256);
+
+    /// @notice How much of this contract's USDso balance is players' escrowed stakes.
+    ///         Everything above it is the house's; everything at or below it is not
+    ///         spendable by anything, including a fighter's buy.
+    function escrowedPot() external view returns (uint256);
 }

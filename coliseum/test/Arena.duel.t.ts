@@ -315,6 +315,58 @@ describe("Arena — Duel lifecycle", function () {
     ).to.equal(true);
   });
 
+  it("funds a buy from the arena's own balance when nothing is deposited", async function () {
+    // The venue bills a buyer directly against an allowance — measured on the live
+    // chain, tx 0x8441edb5…, a wallet with nothing deposited had its order filled and
+    // paid for out of its own balance. So money in this contract's own hands is
+    // buying power, and refusing to see it is what let the deposit drain to nothing
+    // while the balance filled up and every buy was refused with the cash in sight.
+    const { arena, poolSomi, usdso } = await deploy(true);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    // Nothing deposited anywhere, and no house money either: no buy.
+    const [, none] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      none.filter((a) => a.startsWith("Buy")),
+      `with neither pot funded there is no buy — got ${none.join(", ")}`,
+    ).to.have.length(0);
+
+    // Give the contract its own money and leave the deposit at zero. The buy must
+    // appear, because that money can genuinely pay for it.
+    await usdso.write.mint([arena.address, parseEther("100")]);
+    const [, own] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      own.some((a) => a === "BuySOMI"),
+      `the arena's own balance must fund a buy — got ${own.join(", ")}`,
+    ).to.equal(true);
+  });
+
+  it("will not fund a buy out of another player's escrowed stake", async function () {
+    // Starting a duel pulls both players' deposits into this contract, so its balance
+    // is NOT all the house's. Spending a stake on a fighter's shopping would be the
+    // one hole in a floor the rest of the contract is careful about: the owner's seed
+    // withdrawal is capped at what the owner put in, the token sweep refuses this
+    // token outright, and fees pay only from the balance above the escrowed pots.
+    //
+    // This test failed while the gate looked at the raw balance, which is how that
+    // hole was caught before it shipped.
+    const { arena, usdso } = await deploy(true);
+    await arena.write.startDuel([FIGHTER_A, FIGHTER_B, TURNS_3, false]);
+    const duelId = await arena.read.activeDuelId() as bigint;
+
+    const escrowed = await arena.read.escrowedPot() as bigint;
+    const balance  = await usdso.read.balanceOf([arena.address]) as bigint;
+    expect(escrowed, "the fight's stake must actually be escrowed here").to.be.greaterThan(0n);
+    expect(balance, "and it must be part of this contract's balance").to.be.greaterThanOrEqual(escrowed);
+
+    const [, actions] = await arena.read.previewTurnPrompt([duelId, FIGHTER_A]) as [string, string[]];
+    expect(
+      actions.filter((a) => a.startsWith("Buy")),
+      `escrowed money is not buying power — got ${actions.join(", ")}`,
+    ).to.have.length(0);
+  });
+
   // The sell side of the same rule, and the sharper case of it: here the two numbers
   // can genuinely disagree. Measured on duel 36, fighter 1's ledger recorded one whole
   // SOMI while the Arena held none of it at that pool, so the fighter was offered a

@@ -5,6 +5,7 @@ import "./ArenaTypes.sol";
 import "../interfaces/ISpotPool.sol";
 import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/IPerps.sol";
+import "../interfaces/IArena.sol";
 
 /// @title ArenaUtils
 /// @notice Pure/view helpers for the Arena system. No state, no auth.
@@ -411,13 +412,54 @@ library ArenaUtils {
         );
     }
 
-    /// @dev Can the Arena's own deposit in this pool fund one smallest buy? A pool
-    ///      that cannot answer is treated as unable, so an unreadable venue costs a
-    ///      fighter one option rather than its turn.
+    /// @dev Can this Arena pay for one smallest buy — from EITHER pot?
+    ///
+    ///      There are two, and the venue will take from both. What was DEPOSITED with
+    ///      the pool is one; this contract's OWN balance is the other. Measured
+    ///      2026-08-20: a buyer holding nothing at the venue, having granted only an
+    ///      allowance, had its order filled and paid for straight out of its wallet
+    ///      (tx 0x8441edb5…). So a buy the wallet can afford is a buy that works.
+    ///
+    ///      Asking only about the deposit is what made this a live fault rather than a
+    ///      tidy one. The deposit only ever falls — a fill is delivered to this
+    ///      contract's balance and a sale's proceeds land there too, and nothing walks
+    ///      value back — so it drains to nothing while the wallet fills up, and then
+    ///      every buy is refused with the money in plain sight. That happened: the
+    ///      three deposits fell 515.80 -> 466.29 USDso across a single fifteen-round
+    ///      fight, with 110 USDso sitting unused in this contract's own balance.
+    ///
+    ///      Counting both is therefore the fix AND what makes withdrawing the deposits
+    ///      safe. A pool that cannot answer for its deposit is treated as holding
+    ///      nothing there rather than as fatal, so an unreadable venue costs a fighter
+    ///      one option instead of its turn.
     function _vaultHolds(address pool, address token, uint256 need) internal view returns (bool) {
+        uint256 deposited;
         try ISpotPool(pool).getWithdrawableBalance(address(this), token) returns (uint256 avail) {
-            return avail >= need;
+            deposited = avail;
+        } catch { /* unreadable venue: counts as nothing deposited, not as a failure */ }
+        if (deposited >= need) return true;
+
+        // Fall back to this contract's OWN balance — but only the part of it that is
+        // the house's money. The same balance also holds every live fight's escrowed
+        // stakes, because starting a duel pulls each player's deposit in here. Paying
+        // for a fighter's shopping out of another player's stake is exactly what the
+        // rest of this contract is built to prevent: withdrawing the owner's seed is
+        // capped at what the owner put in, the token sweep refuses this very token,
+        // and fees are payable only from the balance ABOVE the escrowed pots. This
+        // uses that same rule so the buy path cannot be the one hole in the floor.
+        //
+        // The escrowed figure lives in the router's storage and this is a library, so
+        // it is asked for rather than read. A router that will not answer is treated
+        // as fully escrowed, which refuses the buy — the safe direction.
+        uint256 held;
+        try IERC20Minimal(token).balanceOf(address(this)) returns (uint256 bal) {
+            held = bal;
         } catch { return false; }
+        uint256 escrowed;
+        try IArena(address(this)).escrowedPot() returns (uint256 e) {
+            escrowed = e;
+        } catch { return false; }
+        return held > escrowed && held - escrowed >= need;
     }
 
     /// @dev Can this Arena actually deliver one smallest sell?
