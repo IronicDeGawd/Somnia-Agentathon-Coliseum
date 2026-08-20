@@ -68,6 +68,19 @@ contract MockSpotPool {
         return _balances[user][token];
     }
 
+    /// @notice Test-only settlement config for the NEXT `placeOrder` call: a bid
+    ///         pays quote and receives base, an ask pays base (or, when the base
+    ///         is native, sends value with the call instead) and receives quote.
+    ///         Single-shot, mirroring `_nextShouldReject`, because this mock has
+    ///         no real matching engine to derive a fill from.
+    uint256 private _fillBase;
+    uint256 private _fillQuote;
+
+    function setNextFill(uint256 baseAmount, uint256 quoteAmount) external {
+        _fillBase = baseAmount;
+        _fillQuote = quoteAmount;
+    }
+
     function placeOrder(
         bool isBid,
         uint64,
@@ -78,7 +91,7 @@ contract MockSpotPool {
         uint8,
         address,
         uint96
-    ) external returns (bool, uint128) {
+    ) external payable returns (bool, uint128) {
         if (_nextShouldReject) {
             _nextShouldReject = false;
             return (false, 0);
@@ -87,6 +100,28 @@ contract MockSpotPool {
         uint128 orderId = nextOrderId;
         orders.push(Order({ isBid: isBid, price: price, quantity: quantity, orderType: orderType, cancelled: false }));
         nextOrderId++;
+
+        uint256 fillBase = _fillBase;
+        uint256 fillQuote = _fillQuote;
+        _fillBase = 0;
+        _fillQuote = 0;
+        if (isBid) {
+            if (fillQuote > 0) {
+                require(IERC20Pull(_quoteToken).transferFrom(msg.sender, address(this), fillQuote), "MockSpotPool: quote pull failed");
+            }
+            if (fillBase > 0) {
+                require(IERC20Pull(_baseToken).transfer(msg.sender, fillBase), "MockSpotPool: base pay failed");
+            }
+        } else {
+            // A native base arrives as `value` on this call, so there is nothing
+            // to pull for it — only a non-native base is taken via transferFrom.
+            if (fillBase > 0 && _baseToken != address(0)) {
+                require(IERC20Pull(_baseToken).transferFrom(msg.sender, address(this), fillBase), "MockSpotPool: base pull failed");
+            }
+            if (fillQuote > 0) {
+                require(IERC20Pull(_quoteToken).transfer(msg.sender, fillQuote), "MockSpotPool: quote pay failed");
+            }
+        }
 
         return (true, orderId);
     }
