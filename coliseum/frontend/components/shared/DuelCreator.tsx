@@ -49,7 +49,7 @@ const MARKET_CHOICES: ReadonlyArray<{
     kind: MarketKind.Spot,
     label: '⚡ SPOT',
     accent: '#5eead4',
-    hint: 'Real WETH and WBTC order books. Far larger deposit, because one minimum BTC order costs dollars.',
+    hint: 'Real WETH, WBTC and SOMI order books. Far larger deposit, because one minimum BTC order costs dollars. SOMI is the chain\u2019s own coin, so a fighter can buy it but not sell it back \u2014 anything still held is valued at the closing price.',
   },
   ...(SIM_MARKET_ENABLED
     ? [{

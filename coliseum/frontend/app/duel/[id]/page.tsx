@@ -206,7 +206,9 @@ function PositionsBlock({ perp, color }: { perp: FighterPerp; color: string }) {
                     className="t-num"
                     style={{ color: up ? 'var(--win)' : 'var(--loss)', whiteSpace: 'nowrap' }}
                   >
-                    {up ? '+' : '-'}{fmtUsd(Math.abs(Number(formatUnits(unrealised, 18))))}
+                    {/* fmtUsd carries its own sign, so prefixing one here printed
+                        "-+$0.0010" on the first live position ever rendered. */}
+                    {fmtUsd(Number(formatUnits(unrealised, 18)))}
                   </span>
                 </div>
               </div>

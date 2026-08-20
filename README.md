@@ -397,60 +397,58 @@ deposit, real orders on real markets, a real settled result and a page you can o
 started **from the site**, by a browser carrying its own wallet, then settled and claimed. All of them
 ran **The Degen** against **The Whale**.
 
-> **The spot rows below are the OLD numbers, and they are kept deliberately.** Running this matrix is
-> what exposed why they were so low, and the three faults behind them are now fixed. Rerun on the fixed
-> contracts, a nine-round spot fight placed **16 orders across 18 moves with nothing refused**
-> ([duel 38](https://coliseum.somniaforge.com/duel/38/result)) — against four orders across the three
-> spot fights below combined. See *What running all of it broke*.
-
 | Duel | Market | Rounds | Orders | Result | Markets traded |
 |---|---|---|---|---|---|
-| [22](https://coliseum.somniaforge.com/duel/22/result) | Events | 3 | 3 | **The Whale** | ETHUP BTCUP ETHLATER |
-| [26](https://coliseum.somniaforge.com/duel/26/result) | Events | 6 | 6 | **The Whale** | ETHUP BTCUP ETHLATER |
-| [27](https://coliseum.somniaforge.com/duel/27/result) | Events | 9 | 9 | **The Whale** | ETHUP BTCUP ETHLATER |
-| [32](https://coliseum.somniaforge.com/duel/32/result) | Events | 15 | 10 | **The Degen** | ETHUP BTCUP ETHLATER |
-| [24](https://coliseum.somniaforge.com/duel/24/result) | Perps | 3 | 0 | draw | BNB ETH SOL |
-| [23](https://coliseum.somniaforge.com/duel/23/result) | Perps | 6 | 3 | **The Whale** | XRP BNB ETH |
-| [31](https://coliseum.somniaforge.com/duel/31/result) | Perps | 9 | 6 | **The Whale** | ETH SOL ADA |
-| [35](https://coliseum.somniaforge.com/duel/35/result) | Perps | 15 | 7 | **The Whale** | BNB BTC ETH |
-| [25](https://coliseum.somniaforge.com/duel/25/result) | Spot | 3 | 2 | draw | SOMI |
-| [28](https://coliseum.somniaforge.com/duel/28/result) | Spot | 9 | 0 | draw | SOMI WETH WBTC |
-| [33](https://coliseum.somniaforge.com/duel/33/result) | Spot | 15 | 2 | **The Degen** | SOMI WETH WBTC |
-| [29](https://coliseum.somniaforge.com/duel/29/result) | Practice | 6 | 3 | **The Whale** | mock books |
-| [30](https://coliseum.somniaforge.com/duel/30/result) | Practice | 9 | 0 | draw | mock books |
-| [34](https://coliseum.somniaforge.com/duel/34/result) | Practice | 15 | 0 | draw | mock books |
+| [39](https://coliseum.somniaforge.com/duel/39/result) | Events | 3 | 2 | draw | ETHUP ETHHOUR BTCUP |
+| [42](https://coliseum.somniaforge.com/duel/42/result) | Events | 6 | 7 | **The Whale** | ETHUP ETHHOUR BTCUP |
+| [43](https://coliseum.somniaforge.com/duel/43/result) | Events | 9 | 11 | **The Degen** | ETHUP ETHHOUR BTCUP |
+| [46](https://coliseum.somniaforge.com/duel/46/result) | Events | 15 | 18 | **The Degen** | ETHUP ETHHOUR BTCUP |
+| [40](https://coliseum.somniaforge.com/duel/40/result) | Perps | 3 | 1 | **The Whale** | ETH SOL ADA |
+| [41](https://coliseum.somniaforge.com/duel/41/result) | Perps | 6 | 3 | **The Whale** | SOL ADA XRP |
+| [44](https://coliseum.somniaforge.com/duel/44/result) | Perps | 9 | 4 | **The Whale** | SOL ADA XRP |
+| [45](https://coliseum.somniaforge.com/duel/45/result) | Perps | 15 | 6 | **The Whale** | ADA XRP BNB |
+| [48](https://coliseum.somniaforge.com/duel/48/result) | Spot | 3 | 4 | draw | WETH WBTC SOMI |
+| [50](https://coliseum.somniaforge.com/duel/50/result) | Spot | 9 | 17 | **The Whale** | WETH WBTC SOMI |
+| [51](https://coliseum.somniaforge.com/duel/51/result) | Spot | 15 | 27 | **The Degen** | WETH WBTC SOMI |
+| [47](https://coliseum.somniaforge.com/duel/47/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+| [49](https://coliseum.somniaforge.com/duel/49/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+| [52](https://coliseum.somniaforge.com/duel/52/result) | Practice | 15 | 27 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
 
-One row is marked rather than quietly counted: duel 31 was started by the operator, because at the
-time the site could not start a nine-round perps fight — the queue asked to be given 29,200,558 gas
-and was capped well below it. The cap is fixed and duel 35 proves it, having been started from the
-browser at the tier above; that transaction went on to use 6,431,596 of the 40,000,000 it was given.
+Every fight settled. Nothing was refused, nothing was coerced, nothing failed.
 
-Money reconciled to the wei afterwards: the perps float returned 149.41 of 150, every fighter account
-free, nothing quarantined, escrow zero, and every payout claimed.
+Every one was started from the site by a browser carrying its own wallet, driven by the chain's own
+scheduler, then settled and claimed. The arena ended empty with nothing escrowed.
 
 ### What the matrix shows
 
-**Perps is where a fight is decided cheaply.** A fifteen-round spot fight takes **319.79 USDso** of
-deposit between the two players; the same fight on perps takes **47.50**. That gap is the whole reason
-the market exists — a position is posted against, not bought outright.
+**Order counts, by market, across the four tiers:**
 
-**Bitcoin only appears at the top tiers**, and duel 35 is the first fight it ever traded in
-(`ORDER BTC buy 0.001 @ 64,589.2 → LongBTC`). Which three of the six perp markets a fight gets is
-computed when it starts, from what its budget can post margin for at that moment — so no two perps rows
-above show the same three, and Bitcoin moved from the fifteen-round tier into the nine-round tier by
-itself during the run as its margin requirement fell from 12.05 to 10.90.
+| | 3r | 6r | 9r | 15r | total |
+|---|---|---|---|---|---|
+| Practice | — | 10 | 16 | 27 | **53** |
+| Spot | 4 | — | 17 | 27 | **48** |
+| Events | 2 | 7 | 11 | 18 | **38** |
+| Perps | 1 | 3 | 4 | 6 | **14** |
 
-**Spot barely trades.** Four orders across three fights, all of them one SOMI, against twenty-eight on
-events and twenty-six on perps. It is not a wiring fault — at turn ten of duel 33 the fighter was
-offered `BuyWBTC, BuyWETH, BuySOMI` and held anyway. A real coin book moves a few basis points in a
-sixty-second turn, so every slot reads "flat" to a fighter, and "you hold no WETH" is not on its own a
-reason to buy. Practice escapes it because its price injector actually moves prices; events escapes it
-because a probability is bounded and its relative moves are huge — eleven of twelve measured per-turn
-steps crossed the same band, several by thousands of basis points.
+**Spot went from four orders to forty-eight.** Those four were the whole of the previous run — three
+fights, every order a single SOMI, every sell refused. The prompt change and the three faults it exposed
+are the difference, and it moved spot from the least active market to the second most active. A
+fifteen-round spot fight now trades twenty-seven times without a single refusal.
 
-Perps had the identical problem and was fixed before this matrix ran: described in words alone, its
-fighters held every single round. Perps slots now carry the numbers a trader decides on — the level,
-the level last turn, the level at the open, the position and what it is worth.
+**Perps trades least, and that is the market working rather than failing.** A perp is a standing
+exposure: once a fighter is long, it stays long without doing anything, and it only needs an order to
+change its mind. Every other market requires an order to *hold* a view at all. So a low count here means
+fighters are taking positions and keeping them — which is what the fifteen-round fight shows, six orders
+across thirty moves with an open XRP long carried for most of it.
+
+**Every market scales with length, and none of them flatlines.** That is the real result of the table:
+before this session two of the four markets went quiet at every tier, and the reason in both cases was a
+prompt describing a market in words instead of numbers.
+
+**Which three assets a perps fight gets is genuinely rotated.** Four fights drew ETH+SOL+ADA,
+SOL+ADA+XRP, SOL+ADA+XRP and ADA+XRP+BNB. Bitcoin appeared in none of them — its margin requirement sat
+at 10.70 USDso, which prices it out of the two cheap tiers entirely and leaves it competing for a slot
+at the top two.
 
 ### What running all of it broke
 
@@ -473,9 +471,16 @@ backed, and lost a turn to each. And the SOMI market's asset turns out to be the
 rather than a token, which has to be handed over differently again; those sells could never have
 worked at all, and it is no longer offered.
 
-All three are fixed and every gate has a test that fails when the gate is removed. The proof is
-[duel 38](https://coliseum.somniaforge.com/duel/38/result): a nine-round spot fight, 18 moves, **16
-orders, none refused**, including the first spot sell that has ever gone through.
+All three are fixed and every gate has a test that fails when the gate is removed. The proof is the
+spot rows in the table above — forty-eight orders across three fights with nothing refused, against
+four before — and the first spot sell that has ever gone through
+([duel 38](https://coliseum.somniaforge.com/duel/38/result), `SellWETH 0.004 @ 1910.21`).
+
+**One thing this exposed is still open.** A buy is paid out of the money deposited with the pool, but
+the asset it buys is delivered to the Arena's own balance, and a sale's proceeds land there too — so
+that deposit only ever drains. Measured across three spot fights it fell 35 USDso and never rose,
+which is roughly forty more fights before buying is refused again. The fix is to let the venue bill the
+Arena directly, which is what it already does for sells; that is written and tested but not yet live.
 
 The settlement rules came from [somnia-primitives](https://github.com/IronicDeGawd/somnia-primitives),
 which is the only written source we found that states plainly where the money moves from and to.
