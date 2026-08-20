@@ -497,10 +497,10 @@ makes the lobby click time out.
 
 | Duel | Market | Rounds | Orders | Result | Markets traded |
 |---|---|---|---|---|---|
-| [64](https://coliseum.somniaforge.com/duel/64/result) | Events | 3 | 4 | **The Whale** | BTCUP BTCLATER ETHUP |
-| [66](https://coliseum.somniaforge.com/duel/66/result) | Events | 6 | 5 | **The Whale** | BTCUP BTCLATER ETHUP |
-| [68](https://coliseum.somniaforge.com/duel/68/result) | Events | 9 | 7 | **The Degen** | BTCUP BTCLATER ETHUP |
-| [76](https://coliseum.somniaforge.com/duel/76/result) † | Events | 15 | 10 | **The Whale** | BTCUP ETHUP BTCHOUR |
+| [78](https://coliseum.somniaforge.com/duel/78/result) | Events | 3 | 2 | draw | BTCUP ETHUP BTCHOUR |
+| [77](https://coliseum.somniaforge.com/duel/77/result) | Events | 6 | 5 | **The Whale** | BTCUP ETHUP BTCHOUR |
+| [79](https://coliseum.somniaforge.com/duel/79/result) | Events | 9 | 11 | **The Degen** | BTCUP ETHUP BTCHOUR |
+| [76](https://coliseum.somniaforge.com/duel/76/result) | Events | 15 | 10 | **The Whale** | BTCUP ETHUP BTCHOUR |
 | [65](https://coliseum.somniaforge.com/duel/65/result) | Perps | 3 | 2 | **The Whale** | ETH SOL ADA |
 | [67](https://coliseum.somniaforge.com/duel/67/result) | Perps | 6 | 4 | **The Whale** | ADA XRP BNB |
 | [69](https://coliseum.somniaforge.com/duel/69/result) | Perps | 9 | 8 | **The Degen** | BNB ETH SOL |
@@ -510,10 +510,9 @@ makes the lobby click time out.
 | [72](https://coliseum.somniaforge.com/duel/72/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
 | [74](https://coliseum.somniaforge.com/duel/74/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
 
-† Re-run after the events fix below. The fifteen-round events fight in the original batch (duel 70,
-six orders) was played on code that could never offer a fighter a way out of a question, so the row
-would record a limit of the code rather than a result. **The three shorter events rows still
-predate the fix** and are left as they were run — they have not been re-played.
+All four events rows were re-played (duels 76–79) after the events fix below. The original batch ran on
+code that could never offer a fighter a way out of a question, so those rows recorded a limit of the code
+rather than a result. Every other row is from the original batch.
 
 Every fight settled. Nothing was refused, nothing was coerced, nothing failed.
 
@@ -527,9 +526,9 @@ scheduler, then settled and claimed. The arena ended empty with nothing escrowed
 | | 3r | 6r | 9r | 15r | total |
 |---|---|---|---|---|---|
 | Spot | — | — | 18 | 29 | **47** |
+| Events | 2 | 5 | 11 | 10 | **28** |
 | Perps | 2 | 4 | 8 | 12 | **26** |
 | Practice | — | 10 | 16 | — | **26** |
-| Events | 4 | 5 | 7 | 10 † | **26** |
 
 **Spot is now the busiest market on the board.** A fifteen-round spot fight trades twenty-nine times
 with nothing refused. Three runs ago the entire spot market managed four orders across three fights,
@@ -544,8 +543,11 @@ about as active as this market gets.
 
 **Events fell, 38 orders to 22 — and chasing that one number found a market with no exit.** The shape
 was wrong, not just the size: the nine-round fight traded seven times and the fifteen-round only six, so
-it stopped scaling with length exactly where every other market kept going. The 26 in the table above
-already includes the re-run; on the code that produced the other three events rows it was 22. The cause turned out to be
+it stopped scaling with length exactly where every other market kept going. The cause was that **a
+fighter could back a question but never drop it**, for the life of that market. Re-played on the fixed
+code the four tiers give 2, 5, 11 and 10 orders — 28 against 22, and growing with fight length again,
+which was the part that was actually broken. Three of the four fights used the exit. The three-round
+tier went the other way, 4 to 2, on a tier with barely room to do anything; it is left as measured. The cause turned out to be
 that **a fighter could back a question but never drop it**, for the entire life of that market. Before
 offering an exit the arena asks whether it can hand over the goods, and it asked by weighing the position
 token the venue advertises — which for a prediction is an uninitialised proxy that answers nothing. The
@@ -561,6 +563,14 @@ existed. Two spot fights converted their leftover holdings back to stablecoin at
 and 34.55 USDso); every other skip was a pool with no real asset to sell, or the chain's own coin, which
 is fuel rather than inventory. Thinking cost 36 coin across the twelve, paid out of routed fees rather
 than an operator wallet.
+
+**The per-account perps rescue is proven, and the venue's own figure is not to be trusted.** Recovering
+collateral from an account that will not flatten had been written and never run, because no account has
+ever failed. Run on duel 80 against an account holding a live position: 16.8159 came back to the float,
+the position stayed open and funded, and the total across float and accounts was unchanged. The venue
+reported 18 as withdrawable while the truth was 16.815 — that 1.18 gap is the margin the open position
+still needs, and asking for the larger figure is refused outright and recovers nothing. `getAccountHealth`
+minus the initial requirement is the number; `getWithdrawableCollateral` is not.
 
 **Three settlements were deferred for gas**, which is the guard doing its job rather than failing: it
 checks there is room to finish before it starts, and steps aside when a block is nearly full. The
