@@ -243,6 +243,12 @@ library ArenaTypes {
     /// @notice The entry fee left for the pot that buys the fighters' thinking.
     ///         Absent means it stayed here as accrued fees — the fallback.
     event FeeRouted(address indexed pot, uint256 amount);
+    /// @notice A held asset was sold back to cash when a fight ended.
+    event AssetSettled(uint256 indexed duelId, address indexed pool, uint256 quantity, uint256 proceeds);
+    /// @notice Why an asset was NOT sold at the end of a fight. Never fatal — a
+    ///         fight must finish whatever the market does.
+    event AssetSettleSkipped(uint256 indexed duelId, address indexed pool, string reason);
+
     /// @notice House surplus moved out, for an upgrade or a migration.
     event SurplusMigrated(address indexed to, uint256 amount);
 
