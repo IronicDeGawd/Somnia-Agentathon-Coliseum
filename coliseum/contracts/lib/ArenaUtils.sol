@@ -5,6 +5,7 @@ import "./ArenaTypes.sol";
 import "../interfaces/ISpotPool.sol";
 import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/IPerps.sol";
+import "../interfaces/IArena.sol";
 
 /// @title ArenaUtils
 /// @notice Pure/view helpers for the Arena system. No state, no auth.
@@ -403,7 +404,7 @@ library ArenaUtils {
         // Whatever causes that gap, a fighter should not pay for it with its turn.
         return (
             bal.quoteTokenAmount >= minCost
-                && _vaultHolds(pool, usdso, minCost)
+                && canFundBuy(pool, usdso, minCost)
                 && _hasSize(pool, false),
             bal.baseTokenAmount >= meta.minQuantity
                 && _canDeliverBase(pool, meta.minQuantity)
@@ -411,14 +412,74 @@ library ArenaUtils {
         );
     }
 
-    /// @dev Can the Arena's own deposit in this pool fund one smallest buy? A pool
-    ///      that cannot answer is treated as unable, so an unreadable venue costs a
-    ///      fighter one option rather than its turn.
-    function _vaultHolds(address pool, address token, uint256 need) internal view returns (bool) {
+    /// @notice Can this Arena pay for one smallest buy — from EITHER pot?
+    ///
+    ///         Deliberately not private: the turn path asks the SAME question again
+    ///         before it places the order, and the two answers must come from one
+    ///         piece of code. They did not, and that is how a widened offer gate
+    ///         still produced "vault below min cost" on every buy — the gate had
+    ///         learned about the second pot and the executor had not.
+    ///
+    ///      There are two, and the venue will take from both. What was DEPOSITED with
+    ///      the pool is one; this contract's OWN balance is the other. Measured
+    ///      2026-08-20: a buyer holding nothing at the venue, having granted only an
+    ///      allowance, had its order filled and paid for straight out of its wallet
+    ///      (tx 0x8441edb5…). So a buy the wallet can afford is a buy that works.
+    ///
+    ///      Asking only about the deposit is what made this a live fault rather than a
+    ///      tidy one. The deposit only ever falls — a fill is delivered to this
+    ///      contract's balance and a sale's proceeds land there too, and nothing walks
+    ///      value back — so it drains to nothing while the wallet fills up, and then
+    ///      every buy is refused with the money in plain sight. That happened: the
+    ///      three deposits fell 515.80 -> 466.29 USDso across a single fifteen-round
+    ///      fight, with 110 USDso sitting unused in this contract's own balance.
+    ///
+    ///      Counting both is therefore the fix AND what makes withdrawing the deposits
+    ///      safe. A pool that cannot answer for its deposit is treated as holding
+    ///      nothing there rather than as fatal, so an unreadable venue costs a fighter
+    ///      one option instead of its turn.
+    function canFundBuy(address pool, address token, uint256 need) internal view returns (bool) {
+        uint256 deposited;
         try ISpotPool(pool).getWithdrawableBalance(address(this), token) returns (uint256 avail) {
-            return avail >= need;
+            deposited = avail;
+        } catch { /* unreadable venue: counts as nothing deposited, not as a failure */ }
+        if (deposited >= need) return true;
+
+        // Fall back to this contract's OWN balance — but only the part of it that is
+        // the house's money. The same balance also holds every live fight's escrowed
+        // stakes, because starting a duel pulls each player's deposit in here. Paying
+        // for a fighter's shopping out of another player's stake is exactly what the
+        // rest of this contract is built to prevent: withdrawing the owner's seed is
+        // capped at what the owner put in, the token sweep refuses this very token,
+        // and fees are payable only from the balance ABOVE the escrowed pots. This
+        // uses that same rule so the buy path cannot be the one hole in the floor.
+        //
+        // The escrowed figure lives in the router's storage and this is a library, so
+        // it is asked for rather than read. A router that will not answer is treated
+        // as fully escrowed, which refuses the buy — the safe direction.
+        uint256 held;
+        try IERC20Minimal(token).balanceOf(address(this)) returns (uint256 bal) {
+            held = bal;
         } catch { return false; }
+        uint256 escrowed;
+        try IArena(address(this)).escrowedPot() returns (uint256 e) {
+            escrowed = e;
+        } catch { return false; }
+        return held > escrowed && held - escrowed >= need;
     }
+
+    /// @notice The reserve of the chain's own coin this contract will never trade
+    ///         away, because that balance is also what pays for the fighters'
+    ///         thinking.
+    ///
+    ///         Measured: a round of a fight costs about 0.243 coin in inference, so a
+    ///         fifteen-round fight burns roughly 3.6, and six fights can run at once.
+    ///         Thirty leaves room for every one of them plus a wide margin.
+    ///
+    ///         Above this line the coin is inventory a fighter may sell. At or below
+    ///         it, it is fuel and the sale is simply not offered — which is a lost
+    ///         option for one fighter, against fighters that cannot think at all.
+    uint256 internal constant FUEL_RESERVE = 30e18;
 
     /// @dev Can this Arena actually deliver one smallest sell?
     ///
@@ -426,29 +487,25 @@ library ArenaUtils {
     ///      asset. A venue takes the quote for a buy out of what was deposited to it,
     ///      but it DELIVERS a fill to the Arena's own wallet — so the tokens a sell
     ///      has to hand over sit in this contract's ERC-20 balance, not in any vault.
-    ///      Measured live: the Arena's wallet held 0.002 of the WETH base after two
-    ///      filled buys while the pool reported nothing for it.
     ///
-    ///      A base asset with no code is the NATIVE coin, and selling that means sending
-    ///      value with the order, which this contract does not do. Offering it spends a
-    ///      turn on an order the venue must refuse, so it is refused here instead.
+    ///      A base asset with no code is the chain's own COIN, and selling that means
+    ///      sending value with the order.
     ///
-    ///      THAT IS A DECISION, NOT AN OMISSION, and it is deliberately not "fixed":
-    ///        - Nothing needs the sell. A non-perps fighter is scored as its cash plus
-    ///          its holdings valued at the mark, so a fighter that bought the coin and
-    ///          cannot sell it is valued exactly as if it had. See the scoring loop in
-    ///          ArenaDuelPart.
-    ///        - It does not strand the fighter either. Each active pool is credited its
-    ///          own quote balance at duel start, so spending this slot's cash leaves the
-    ///          other two slots untouched.
-    ///        - The alternative costs more than it returns. Sending native value would
-    ///          spend this contract's own coin balance, which is ALSO the fuel that pays
-    ///          for every fighter's turn — a coupling that has already deadlocked the
-    ///          keeper once. Letting a fighter trade the fuel is worse than letting it
-    ///          hold one asset in one direction.
+    ///      THAT USED TO BE REFUSED OUTRIGHT, and the reason was real: the only coin
+    ///      this contract holds is the same coin that buys the fighters' reasoning, so
+    ///      a busy trading day could quietly stop them deciding anything — and that
+    ///      coupling had already deadlocked the keeper once. A fighter losing one
+    ///      option was the cheaper failure.
     ///
-    ///      So the cost is narrow and understood: a fighter cannot reverse one of its
-    ///      three slots. Revisit only if a fight is ever actually decided by it.
+    ///      What changed is that the coin now has an income. The fuel pot converts
+    ///      entry fees into it and tops this contract up, so the balance is replenished
+    ///      from revenue rather than by hand. The coupling is bounded instead of
+    ///      open-ended, and a reserve is enough to keep the two uses apart: above the
+    ///      line it is inventory, at or below it, it is fuel.
+    ///
+    ///      Verified on chain before this was opened up: a contract CAN sell this
+    ///      market by sending coin with the order — one coin out, 0.0956 stablecoin
+    ///      in, tx 0x3b803fcc…. So this is a policy change, not a new mechanism.
     ///
     ///      The base token is asked of the pool rather than stored, so a re-pointed pool
     ///      cannot leave this reading a stale token's balance.
@@ -456,7 +513,14 @@ library ArenaUtils {
         try ISpotPool(pool).getPoolParams() returns (
             address baseToken, address, uint256, uint256, uint256, uint256, uint256
         ) {
-            if (baseToken == address(0) || baseToken.code.length == 0) return false;
+            if (baseToken == address(0)) return false;
+            if (baseToken.code.length == 0) {
+                // The chain's own coin. Only what sits ABOVE the fuel reserve is
+                // sellable, so a fighter can never trade away the ability to think.
+                uint256 coin = address(this).balance;
+                if (coin <= FUEL_RESERVE) return false;
+                return coin - FUEL_RESERVE >= need;
+            }
             try IERC20Minimal(baseToken).balanceOf(address(this)) returns (uint256 held) {
                 return held >= need;
             } catch { return false; }

@@ -2,7 +2,9 @@
 # ============================================================================
 # run-matrix.sh — every tier the lobby offers, played end to end, unattended.
 #
-# Fourteen fights in seven batches of two. The batching is not arbitrary:
+# Twelve fights in six batches of two — one per tier the lobby actually offers.
+# There is no three-round SPOT tier and no fifteen-round PRACTICE tier; asking for
+# either makes the lobby click time out. The batching is not arbitrary:
 #
 #   - A WALLET CANNOT BE IN TWO FIGHTS AT ONCE. Transactions from one address are
 #     ordered, so a pair in two concurrent fights collides on its own nonce. Four
@@ -69,9 +71,8 @@ BATCHES=(
   '[{"market":"EVENTS","turns":6,"pair":0},{"market":"PERPS","turns":6,"pair":1}]'
   '[{"market":"EVENTS","turns":9,"pair":0},{"market":"PERPS","turns":9,"pair":1}]'
   '[{"market":"EVENTS","turns":15,"pair":0},{"market":"PERPS","turns":15,"pair":1}]'
-  '[{"market":"SPOT","turns":3,"pair":0},{"market":"PRACTICE","turns":6,"pair":1}]'
-  '[{"market":"SPOT","turns":9,"pair":0},{"market":"PRACTICE","turns":9,"pair":1}]'
-  '[{"market":"SPOT","turns":15,"pair":0},{"market":"PRACTICE","turns":15,"pair":1}]'
+  '[{"market":"SPOT","turns":9,"pair":0},{"market":"PRACTICE","turns":6,"pair":1}]'
+  '[{"market":"SPOT","turns":15,"pair":0},{"market":"PRACTICE","turns":9,"pair":1}]'
 )
 
 # Reads one field out of the duels() tuple. Solidity OMITS the uint8[2] array, so
@@ -86,7 +87,7 @@ ALL_DUELS=""
 for n in "${!BATCHES[@]}"; do
   BATCH="${BATCHES[$n]}"
   MIN_DUEL=$(cast call "$ARENA" 'nextDuelId()(uint256)' --rpc-url "$RPC" | cut -d' ' -f1)
-  say "── batch $((n+1))/7  $BATCH  (min duel $MIN_DUEL)"
+  say "── batch $((n+1))/6  $BATCH  (min duel $MIN_DUEL)"
 
   BATCH_RESULTS=$(mktemp)
   ( cd e2e && MATRIX="$BATCH" WALLET_FILE="$WALLET_FILE" RESULT_FILE="$BATCH_RESULTS" \

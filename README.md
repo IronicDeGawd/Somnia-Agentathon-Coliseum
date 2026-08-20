@@ -52,8 +52,31 @@ possible.
 | Buying native STT on the SOMI book | `coliseum/scripts/buy-stt.ts` |
 
 The real pool has **no `getMarkPrice()`** — compute the midpoint yourself. And the SOMI book's "base
-token" address holds **no code**: it is a sentinel meaning native STT, and orders against it need a
-raised gas limit or they revert on a payout check. `buy-stt.ts` has both details in working form.
+token" address holds **no code**: it is a sentinel meaning native STT.
+
+Three things about this venue cost a day between them, and all three are load-bearing:
+
+- **The typed interface in this repo is a reconstruction, not the source of truth.** An identical
+  order — same nine arguments, same values — was refused through a typed `placeOrder` call and filled
+  through a raw `abi.encodeWithSignature`, with every other parameter eliminated one at a time. The
+  order paths now use the raw encode. It is also the only way to carry value, which is what makes a
+  native-base sale possible at all.
+- **Approve a margin above the notional, never the exact notional.** An order approved for exactly
+  `price × quantity` was refused; the same order approved generously filled. The venue reserves at the
+  limit price and rounds in its own favour. Approvals are returned to zero straight after, so a margin
+  costs nothing and being exact costs the whole order.
+- **It reports its own gas requirement rather than failing quietly.** A short-of-gas order reverts
+  carrying `2,862,641` in its returndata. Only 63/64ths is forwarded per nesting level, so a caller
+  must supply well above that: the same order was refused at a four-million limit and filled at
+  twelve. Anything wrapping this in a `try/catch` must check `gasleft()` first, or it converts a gas
+  problem into a phantom "venue refusal" — and because the outer call still succeeds, gas estimation
+  then reproduces the failure on every retry.
+
+**Selling native is supported now.** It was refused for months, and the reason was never that it
+could not be done: the only STT the Arena held was the same STT that pays for the fighters' reasoning,
+so a busy trading day could quietly stop them thinking. `FuelPot` gave that balance an income, so the
+coupling is bounded, and `ArenaUtils.FUEL_RESERVE` keeps the two uses apart — above the line the coin
+is inventory, at or below it, it is fuel and no sale is offered.
 
 ### On-chain LLM inference (Somnia Agents)
 
@@ -126,7 +149,7 @@ the chain silently. Three consequences worth copying:
   the old Bookmaker did — and you have an orphan firing forever that nothing can cancel. The only cure
   was starving it of gas. Never abandon a deployment with a native balance still in it.
 
-### Player-matching and escrow### Player-matching and escrow
+### Player-matching and escrow
 
 | What | Where |
 |---|---|
@@ -149,6 +172,56 @@ or buy or sell one of three markets. The Arena contract places that order for re
 
 Players do not start duels directly. They **join a queue**, get matched with whoever is waiting on
 the same line, and the fight begins on its own.
+
+Spot is offered at 9 and 15 rounds only. A three-round spot fight activates a single market, so both
+fighters face the identical one choice every turn and it converges to a tie — which is precisely what
+duel #1 did. Events and perps keep their three-round tiers, because they get three questions and three
+markets there. The single-market tier survives as a **test fixture**, and forcing it is how the
+native-STT sale was finally exercised end to end.
+
+## Where the money goes
+
+Worth reading before the code, because the *shape* of this was wrong for three months and nothing
+noticed.
+
+**One pot, not two.** A buy used to be charged to a deposit lodged with the venue, while the asset
+bought was delivered to the Arena's own balance — payer and receiver being different addresses, with
+nothing moving value back. So the deposit only ever fell, and when it could no longer cover the
+smallest order the venue accepts, every buy was refused with the money in plain sight. Measured across
+one fifteen-round fight: the deposits fell **515.80 → 466.29 USDso**. The deposits are retired
+now — `fundPools` is no longer part of operating the game — and buying power is one balance that both
+pays and receives.
+
+That fault was invisible for months for a reason worth remembering: spot fighters barely traded, so
+almost nothing walked down the path. Four orders across three whole fights. Once they started trading,
+one fight placed forty-eight.
+
+**Assets convert back at the end of every fight.** Each buy still turns cash into an asset, so
+`_resolveDuel` sells the house's holdings back — after the result is stored, because a fighter is
+scored on cash *plus* holdings at the mark and selling first would change who won.
+
+**The entry fee pays for the fighters' thinking, and now actually can.** Players pay in USDso;
+inference is billed in native STT; nothing converted between them, so the fee — priced at six to
+eleven times what thinking costs — sat unusable while an operator's wallet topped the Arena up by
+hand. `FuelPot` closes that: the fee is routed to it at duel creation, and `refuel()` buys STT on the
+SOMI book and tops the Arena up. `refuel()` is **permissionless**, because a pot only its owner can
+fill runs dry at three in the morning — so a spend cap, a price ceiling, and an act-only-below-floor
+band are what stop it being used to make the house buy badly.
+
+The failure mode it removes was silent, which is the point. When STT ran low the Arena did not stop:
+it marked the turn taken, recorded a failure, and moved on. The fight finished with nobody trading and
+the scoreboard showed a draw rather than a fault — the same disguise the spot bug wore.
+
+| | measured |
+|---|---|
+| inference cost | ~0.243 STT per round |
+| entry fee against it | **6–11× cover**, every tier |
+| one fight's proof | fee 1.40 USDso in, 1.29 of STT bought, operator wallet untouched |
+
+**The fee is not withdrawable.** It is the cost of operation, so no path pays it out as profit.
+`migrateSurplus` exists for upgrades only and is capped at the balance above escrowed stakes — because
+deleting the only exit strands house money, and 4.23 USDso already sits in a superseded Arena for
+exactly that reason.
 
 ## Three games, not one
 
@@ -361,6 +434,21 @@ Each of these was bought with a real failure, not added defensively.
 - **No digits in a prompt** — a number in the prompt was echoed back and executed as a move.
 - **Desks are claimed, not shared** — a desk refuses to be re-pointed while claimed, so a question
   cannot move under a live fight.
+- **The offer gate and the executor ask one function** — they used to ask the same question in two
+  places and drifted apart, so a fighter was offered a buy every turn and refused it every turn.
+- **Buying power excludes escrowed stakes** — starting a duel pulls both players' deposits into the
+  Arena's own balance, so anything spending that balance subtracts `escrowedPot` first. A test that
+  fails when the subtraction is removed is what caught this before it shipped.
+- **A fuel reserve the fighters cannot trade away** — above it, native STT is inventory; at or below
+  it, it is what pays for thinking.
+- **Settlement can never block a resolution** — every sale at fight end is wrapped, every refusal is
+  an event, and it stops early on low gas. A fight that cannot finish is a payout nobody can claim,
+  and an unclaimed payout blocks the next rewire.
+- **Storage is only ever appended, after every mapping** — this is the layout of a router that is
+  never redeployed, so a slot inserted anywhere else silently reinterprets every value after it.
+- **Never swallow a failure you have not inspected** — three separate faults here reported success
+  while an inner call had run out of gas, and each one taught the gas estimator to reproduce it.
+  Report *why* separately: reverted, refused, and filled-but-nothing-arrived need different fixes.
 
 ## Key addresses (Somnia testnet, chain 50312)
 
@@ -377,6 +465,7 @@ Each of these was bought with a real failure, not added defensively.
 | dreamDEX SOMI/USDso | `0x259fD6559214dd5aD3752322426eA9F9fABEFff4` |
 | dreamDEX WBTC/USDso | `0x3605f28aA7C50e7441211e77Cb0762d49539326C` |
 | dreamDEX WETH/USDso | `0xD180195da5459C7a0DEA188ed61216ec43682b50` |
+| FuelPot (turns fees into STT) | `0x1e840a1267148b38d02135b36f1daa50ae329f4c` |
 | Somnia Agents platform | `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` |
 
 The Arena's part addresses and the six desks live in `coliseum/deployments/somnia.json`, which is
@@ -390,29 +479,36 @@ contract keeps spending any balance you send it.
 The SOMI book's "base token" is an address with **no code**. It is a sentinel for native STT, not a
 token — a detail that costs an afternoon to rediscover.
 
+`FuelPot` is replaceable and holds no player money, so its owner exit is uncapped and it has a
+one-call `migrate` to a successor. That is safe *there* and would be theft in the Arena, whose balance
+holds players' stakes — the distinction is what a contract holds, not who is asking.
+
 ## The test matrix — every tier, played on testnet
 
-Every tier the lobby offers, on every market, run end to end on 2026-08-19. Each fight is real — a real
+Every tier the lobby offers, on every market, run end to end on 2026-08-20. Each fight is real — a real
 deposit, real orders on real markets, a real settled result and a page you can open — and each was
 started **from the site**, by a browser carrying its own wallet, then settled and claimed. All of them
 ran **The Degen** against **The Whale**.
 
+Twelve fights, not fourteen. Two tiers were retired between runs: a three-round spot fight activates a
+single coin market, so both fighters face one identical choice every turn and the fight converges to a
+tie, and a fifteen-round practice fight was never offered in the first place. Asking for either now just
+makes the lobby click time out.
+
 | Duel | Market | Rounds | Orders | Result | Markets traded |
 |---|---|---|---|---|---|
-| [39](https://coliseum.somniaforge.com/duel/39/result) | Events | 3 | 2 | draw | ETHUP ETHHOUR BTCUP |
-| [42](https://coliseum.somniaforge.com/duel/42/result) | Events | 6 | 7 | **The Whale** | ETHUP ETHHOUR BTCUP |
-| [43](https://coliseum.somniaforge.com/duel/43/result) | Events | 9 | 11 | **The Degen** | ETHUP ETHHOUR BTCUP |
-| [46](https://coliseum.somniaforge.com/duel/46/result) | Events | 15 | 18 | **The Degen** | ETHUP ETHHOUR BTCUP |
-| [40](https://coliseum.somniaforge.com/duel/40/result) | Perps | 3 | 1 | **The Whale** | ETH SOL ADA |
-| [41](https://coliseum.somniaforge.com/duel/41/result) | Perps | 6 | 3 | **The Whale** | SOL ADA XRP |
-| [44](https://coliseum.somniaforge.com/duel/44/result) | Perps | 9 | 4 | **The Whale** | SOL ADA XRP |
-| [45](https://coliseum.somniaforge.com/duel/45/result) | Perps | 15 | 6 | **The Whale** | ADA XRP BNB |
-| [48](https://coliseum.somniaforge.com/duel/48/result) | Spot | 3 | 4 | draw | WETH WBTC SOMI |
-| [50](https://coliseum.somniaforge.com/duel/50/result) | Spot | 9 | 17 | **The Whale** | WETH WBTC SOMI |
-| [51](https://coliseum.somniaforge.com/duel/51/result) | Spot | 15 | 27 | **The Degen** | WETH WBTC SOMI |
-| [47](https://coliseum.somniaforge.com/duel/47/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
-| [49](https://coliseum.somniaforge.com/duel/49/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
-| [52](https://coliseum.somniaforge.com/duel/52/result) | Practice | 15 | 27 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+| [64](https://coliseum.somniaforge.com/duel/64/result) | Events | 3 | 4 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [66](https://coliseum.somniaforge.com/duel/66/result) | Events | 6 | 5 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [68](https://coliseum.somniaforge.com/duel/68/result) | Events | 9 | 7 | **The Degen** | BTCUP BTCLATER ETHUP |
+| [70](https://coliseum.somniaforge.com/duel/70/result) | Events | 15 | 6 | **The Whale** | BTCUP BTCLATER ETHUP |
+| [65](https://coliseum.somniaforge.com/duel/65/result) | Perps | 3 | 2 | **The Whale** | ETH SOL ADA |
+| [67](https://coliseum.somniaforge.com/duel/67/result) | Perps | 6 | 4 | **The Whale** | ADA XRP BNB |
+| [69](https://coliseum.somniaforge.com/duel/69/result) | Perps | 9 | 8 | **The Degen** | BNB ETH SOL |
+| [71](https://coliseum.somniaforge.com/duel/71/result) | Perps | 15 | 12 | **The Whale** | SOL ADA XRP |
+| [73](https://coliseum.somniaforge.com/duel/73/result) | Spot | 9 | 18 | **The Degen** | WETH WBTC SOMI |
+| [75](https://coliseum.somniaforge.com/duel/75/result) | Spot | 15 | 29 | **The Degen** | WETH WBTC SOMI |
+| [72](https://coliseum.somniaforge.com/duel/72/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
+| [74](https://coliseum.somniaforge.com/duel/74/result) | Practice | 9 | 16 | **The Whale** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
 
 Every fight settled. Nothing was refused, nothing was coerced, nothing failed.
 
@@ -425,30 +521,80 @@ scheduler, then settled and claimed. The arena ended empty with nothing escrowed
 
 | | 3r | 6r | 9r | 15r | total |
 |---|---|---|---|---|---|
-| Practice | — | 10 | 16 | 27 | **53** |
-| Spot | 4 | — | 17 | 27 | **48** |
-| Events | 2 | 7 | 11 | 18 | **38** |
-| Perps | 1 | 3 | 4 | 6 | **14** |
+| Spot | — | — | 18 | 29 | **47** |
+| Perps | 2 | 4 | 8 | 12 | **26** |
+| Practice | — | 10 | 16 | — | **26** |
+| Events | 4 | 5 | 7 | 6 | **22** |
 
-**Spot went from four orders to forty-eight.** Those four were the whole of the previous run — three
-fights, every order a single SOMI, every sell refused. The prompt change and the three faults it exposed
-are the difference, and it moved spot from the least active market to the second most active. A
-fifteen-round spot fight now trades twenty-seven times without a single refusal.
+**Spot is now the busiest market on the board.** A fifteen-round spot fight trades twenty-nine times
+with nothing refused. Three runs ago the entire spot market managed four orders across three fights,
+every one of them a single SOMI buy, every sell refused because a sale was never authorised to the
+venue. That fault, the two behind it, and the fee/fuel currency mismatch found after them are the whole
+difference.
 
-**Perps trades least, and that is the market working rather than failing.** A perp is a standing
-exposure: once a fighter is long, it stays long without doing anything, and it only needs an order to
-change its mind. Every other market requires an order to *hold* a view at all. So a low count here means
-fighters are taking positions and keeping them — which is what the fifteen-round fight shows, six orders
-across thirty moves with an open XRP long carried for most of it.
+**Perps roughly doubled between runs, 14 orders to 26.** A perp is a standing exposure — once a fighter
+is long it stays long for free, and only needs an order to change its mind — so this market will always
+count lower than one where holding a view costs an order. Twelve orders in a fifteen-round fight is
+about as active as this market gets.
 
-**Every market scales with length, and none of them flatlines.** That is the real result of the table:
-before this session two of the four markets went quiet at every tier, and the reason in both cases was a
-prompt describing a market in words instead of numbers.
+**Events fell, 38 orders to 22, and that is the one number in this table pointing at a problem.** The
+shape is wrong, not just the size: the nine-round fight traded seven times and the fifteen-round fight
+only six, so the market stops scaling with length exactly where every other market keeps going. All four
+fights also drew the same three questions (BTCUP, BTCLATER, ETHUP), which is the tell — the desks have
+been parked on one set of questions since a stuck reservation flag stopped them being rotated, so by the
+time a fight reaches them there is little left to disagree about. Not yet diagnosed further; it is
+recorded as open rather than dressed up.
 
-**Which three assets a perps fight gets is genuinely rotated.** Four fights drew ETH+SOL+ADA,
-SOL+ADA+XRP, SOL+ADA+XRP and ADA+XRP+BNB. Bitcoin appeared in none of them — its margin requirement sat
-at 10.70 USDso, which prices it out of the two cheap tiers entirely and leaves it competing for a slot
-at the top two.
+**Money now comes back.** The house float ended the twelve fights within three hundredths of a
+USDso of where it started, against a measured fifty-USDso drain per fight before the settlement path
+existed. Two spot fights converted their leftover holdings back to stablecoin at the final bell (20.82
+and 34.55 USDso); every other skip was a pool with no real asset to sell, or the chain's own coin, which
+is fuel rather than inventory. Thinking cost 36 coin across the twelve, paid out of routed fees rather
+than an operator wallet.
+
+**Three settlements were deferred for gas**, which is the guard doing its job rather than failing: it
+checks there is room to finish before it starts, and steps aside when a block is nearly full. The
+holdings it left behind are still the house's and still recoverable; nothing was lost.
+
+### The receipts for the run above
+
+Nothing in the table is asserted from a log. These are the on-chain figures, and the commands that read
+them back, so any of it can be rechecked against the chain rather than taken on trust.
+
+**Settlement at the final bell** — the house's leftover holdings sold back to stablecoin:
+
+| Duel | Sold | Proceeds | Block |
+|---|---|---|---|
+| 73 | 0.009 WETH | 20.82105 USDso | 466671635 |
+| 75 | 0.015 WETH | 34.5549 USDso | 466681074 |
+
+Fifteen more assets were skipped, each with its reason recorded on chain: nine were pools with no real
+asset to sell (the practice simulator, and the event desks, which hold a position rather than a token),
+three were the chain's own coin — fuel, not inventory — and three stepped aside because the block did
+not have gas left to finish safely.
+
+**The two balances that matter, before the first fight and after the twelfth:**
+
+| | Before | After | Change |
+|---|---|---|---|
+| Arena stablecoin (the house float) | 617.201 | 617.175 | **−0.026** |
+| Arena native coin (the thinking fuel) | 79.07 | 42.67 | −36.40 |
+| Escrowed player stakes | 0 | 0 | 0 |
+
+The float is the headline: twelve fights, 121 orders, and the house ended where it began. The fuel spend
+works out at 0.197 coin per round against a fee that collects 0.8–2.0 stablecoin per fight, which is why
+the fee pot still holds 74.9 stablecoin and never needed to convert any of it during the run.
+
+**Reproduce it:**
+
+```bash
+WALLET_FILE=<four-wallet json> bash coliseum/scripts/run-matrix.sh   # the whole run, unattended
+DUELS=64,65,66,67,68,69,70,71,72,73,74,75 MD=1 \
+  pnpm exec hardhat run scripts/matrix-summary.ts --network somnia   # the table above
+SPAN=70000 pnpm exec hardhat run scripts/check-settlement.ts --network somnia
+DUEL=<id> pnpm exec hardhat run scripts/check-rejections.ts --network somnia
+pnpm exec hardhat run scripts/check-arena-vaults.ts --network somnia
+```
 
 ### What running all of it broke
 
@@ -513,6 +659,46 @@ Four more faults that only appear under load, all found by this matrix and all f
   and it tops the arena up from the deployer, which will not go below its own. Both were low at once.
 - **Leaving a queue was capped at 200,000 gas** against a 1,144,175 estimate, so a player who could not
   cancel could not recover their deposit until somebody happened to match them.
+
+### What the day after broke, and what it settled
+
+The matrix opened the spot market. Trading it properly then exposed the rest of the money path, and
+four faults came out of it — every one of them reporting success while doing nothing.
+
+**A widened rule applied in one place and not the other.** Buying power was taught to count the
+Arena's own balance, but the check that runs immediately before the order still looked only at the
+deposit. A fighter was offered a buy every turn and refused it every turn — fourteen refusals in
+[duel 56](https://coliseum.somniaforge.com/duel/56/result), all reading `vault below min cost`. Both
+places now call one function, so they cannot drift again.
+
+**Three faults that were the same fault.** A rescue order, a fuel purchase, and a probe script all
+reported success while an inner call had run out of gas:
+
+- the perps rescue ran out inside a price lookup that normally costs ~25,000 units and that day cost
+  960,000; a bare `catch` absorbed it and called it a venue refusal. The fingerprint was in plain
+  sight — three attempts consuming **96.4%, 99.3% and 98.9%** of everything they were given.
+- the fuel purchase hit the same wall, except the venue *told us*: `2,862,641`, in returndata nothing
+  was reading.
+- a probe script printed each receipt's status without checking it, so the process exited zero after
+  an on-chain revert.
+
+And in all three, because the outer call succeeded, gas estimation learned the wrong lesson and
+starved every retry. **A swallowed failure is not a quiet failure — it is an invisible one that
+teaches the machinery to reproduce it.**
+
+**Settlement that no real venue would have accepted.** A new contract's sell-everything call offered
+the raw balance as the order size, with no rounding to the venue's trading step, and passed a full
+test suite — because the mock has no matching engine and accepts any size at all. Green tests,
+non-functional feature.
+
+**And the buy-only market is buy-only no longer.** Selling native STT was refused since May, and the
+objection was real: the only STT the Arena held was the STT that paid for thinking. Once fees funded
+that balance the objection dissolved, and a fighter sold on
+[duel 63](https://coliseum.somniaforge.com/duel/63/result) — the first time in the project's life.
+Reaching it took forcing the single-market tier, because three attempts to cover it from a mock all
+passed whether the code was right or wrong, and one still passed with the fuel reserve deleted. They
+were deleted rather than kept. **A test that passes with the fix removed is worse than no test**: it
+claims coverage it does not have, and that happened four times in one day.
 
 ## Where to read next
 

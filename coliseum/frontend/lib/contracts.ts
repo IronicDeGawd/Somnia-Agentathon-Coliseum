@@ -177,7 +177,18 @@ export enum MarketKind {
 export const LOBBY_MENU: ReadonlyArray<{ turns: number; market: MarketKind }> = [
   { turns: 3,  market: MarketKind.Events },
   { turns: 3,  market: MarketKind.Perps },
-  { turns: 3,  market: MarketKind.Spot },
+  // NO three-round SPOT tier, deliberately.
+  //
+  // That tier activates exactly ONE coin market (see TIER_POOLS in DuelCreator), so
+  // both fighters face the identical single choice every turn and the fight converges
+  // to a tie — which is exactly what the very first duel did: both bought the same
+  // asset in round one, both held rounds two and three, drawn. Events and Perps keep
+  // their three-round tiers because they get three questions and three markets there,
+  // so there is still something to disagree about.
+  //
+  // It is genuinely useful as a TEST fixture — forcing the one market is how the
+  // native-coin sale was finally exercised end to end — but a fixture is not a game
+  // mode, and it was reaching the public lobby by accident.
   { turns: 6,  market: MarketKind.Events },
   { turns: 6,  market: MarketKind.Perps },
   ...(SIM_MARKET_ENABLED ? [{ turns: 6, market: MarketKind.Practice }] : []),

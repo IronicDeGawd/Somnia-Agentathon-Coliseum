@@ -262,6 +262,17 @@ abstract contract ArenaStorage {
     ///         getter for storage it did not know about.
     mapping(uint256 => mapping(address => uint256)) internal duelOpenMarkSnapshots;
 
+    /// @notice Where the entry fee goes, so it can be turned into the coin that pays
+    ///         for the fighters' thinking. Zero until set, and while it is zero the
+    ///         fee behaves exactly as it always did — accrued here.
+    ///
+    ///         APPENDED AT THE VERY END, after every mapping. This contract is the
+    ///         storage layout of a router that is never redeployed, so a slot added
+    ///         anywhere but the end shifts everything after it and silently
+    ///         reinterprets live values. A first attempt at this put it above the
+    ///         perp-desk mapping, which would have moved that mapping's slot.
+    address public fuelPot;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {

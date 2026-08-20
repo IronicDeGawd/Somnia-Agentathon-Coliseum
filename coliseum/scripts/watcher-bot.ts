@@ -351,6 +351,52 @@ async function releaseIdleDesks(opts: {
   }
 }
 
+/**
+ * Ask the fuel pot to convert collected fees into the coin that pays for the
+ * fighters' thinking, and report the Arena's balance afterwards.
+ *
+ * Why this runs BEFORE the wallet top-up below it: the entry fee is priced to cover
+ * the thinking and collects six to eleven times what it costs, but it arrives as
+ * stablecoin while inference is billed in the chain's own coin. For months it could
+ * not reach what it was named for, and this bot covered the gap from the operator's
+ * wallet. The pot converts. Trying it first is the difference between a system that
+ * is self-funding and one that merely looks it.
+ *
+ * The gas limit is EXPLICIT and large. The venue does not fail quietly when short of
+ * gas — it reverts carrying its own requirement, measured at 2,862,641 — and only
+ * 63/64ths is forwarded per nesting level, so an estimate made through the pot's
+ * internal catch converges far too low. Measured: refused at four million, filled at
+ * twelve.
+ *
+ * Never throws. A pot that cannot buy must not stop a fight being refereed.
+ */
+async function tryRefuel(
+  pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>,
+  wallet: Awaited<ReturnType<typeof hre.viem.getWalletClients>>[number],
+  arena: `0x${string}`,
+  current: bigint,
+): Promise<bigint> {
+  const pot = process.env.FUEL_POT as `0x${string}` | undefined;
+  if (!pot) return current;
+  try {
+    const h = await wallet.writeContract({
+      address: pot,
+      abi: [{ name: "refuel", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] }] as const,
+      functionName: "refuel",
+      gas: BigInt(process.env.FUEL_GAS ?? 12_000_000),
+    });
+    const r = await pub.waitForTransactionReceipt({ hash: h });
+    const after = await pub.getBalance({ address: arena });
+    log(`  fuel-pot: refuel tx=${h} status=${r.status} arena ${formatEther(current)} -> ${formatEther(after)} STT`);
+    if (after <= current) log(`    fuel-pot bought nothing this round — falling back to the operator wallet`);
+    return after;
+  } catch (e) {
+    const m = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+    log(`  fuel-pot: refuel failed (${m}) — falling back to the operator wallet`);
+    return current;
+  }
+}
+
 async function driveActiveDuels(opts: {
   bookmaker: `0x${string}` | undefined;
   pub: Awaited<ReturnType<typeof hre.viem.getPublicClient>>;
@@ -375,7 +421,23 @@ async function driveActiveDuels(opts: {
 
   // Fuel for the whole set before ringing any bell.
   const need = activeDuelArenaMin * BigInt(ids.length);
-  const arenaBal = await pub.getBalance({ address: arena });
+  let arenaBal = await pub.getBalance({ address: arena });
+
+  // FIRST ask the pot to buy fuel with the entry fees it has already collected.
+  //
+  // The fee is priced to cover the fighters' thinking and comes in at six to
+  // eleven times what the thinking costs — but it arrives as stablecoin while
+  // inference is billed in the chain's own coin, so for months it could not reach
+  // what it was named for and this bot topped the Arena up from the operator's
+  // wallet instead. The pot converts. Trying it before falling back to the wallet
+  // is what makes the system self-funding rather than merely look it.
+  //
+  // Best-effort in every direction: no pot configured, an empty pot, a market with
+  // nobody offering — all just fall through to the wallet as before.
+  if (arenaBal < need) {
+    arenaBal = await tryRefuel(pub, wallet, arena, arenaBal);
+  }
+
   if (arenaBal < need) {
     const topup = arenaTopup * BigInt(ids.length);
     const deployerBal = await pub.getBalance({ address: deployer });

@@ -43,6 +43,16 @@ contract MockPerpPool {
     bool    private _priceable = true;
     bool    private _restricted;
 
+    /// @notice Reproduces the live oracle fault: `placeOrder` never returns, it runs
+    ///         until whatever gas the caller forwarded is gone. A bare `try/catch`
+    ///         around a call into this swallows the resulting out-of-gas as a clean
+    ///         `(false, 0)` — this flag is what makes that swallowing testable.
+    bool    private _burnGas;
+    /// @notice A plain revert, as distinct from the silent `(false, 0)` refusal shape
+    ///         this mock otherwise uses — so a rescue path can be checked against
+    ///         both failure shapes the live pool is known to produce.
+    bool    private _revertOnPlace;
+
     uint128 public nextOrderId = 1;
 
     /// @dev isBid => levels, index 0 = best (highest bid / lowest ask).
@@ -74,6 +84,8 @@ contract MockPerpPool {
     function setEffectiveIMF(uint256 imf_) external { _imf = imf_; }
     function setPriceable(bool ok) external { _priceable = ok; }
     function setRestricted(bool r) external { _restricted = r; }
+    function setBurnGas(bool b) external { _burnGas = b; }
+    function setRevertOnPlace(bool r) external { _revertOnPlace = r; }
 
     function clearBook(bool isBid) external { delete _book[isBid]; }
 
@@ -141,6 +153,14 @@ contract MockPerpPool {
         address /* builder */,
         uint96  /* builderFeeBpsTimes1k */
     ) external payable returns (bool success, uint128 id) {
+        if (_revertOnPlace) revert("MockPerpPool: forced revert");
+        if (_burnGas) {
+            // No gasleft() check on purpose: a loop that stops itself near empty
+            // would just return normally, which is not the failure being modelled.
+            // This one only ever ends by exhausting whatever gas was forwarded.
+            uint256 i;
+            while (true) { i++; }
+        }
         if (_restricted) return (false, 0);
         if (!_priceable) return (false, 0);
         if (quantity == 0 || quantity < _minQuantity) return (false, 0);

@@ -283,19 +283,47 @@ contract ArenaVaultPart is ArenaStorage {
     ///         accounting counter that can drift slightly above the real balance
     ///         due to rounding in fighter-balance math when pots get traded into
     ///         base tokens that don't round-trip cleanly back to quote.
-    function withdrawFees(address to) external onlyOwner {
-        uint256 amount = accruedFees;
+    /// @notice Where the entry fee goes from now on. Zero disables routing and the
+    ///         fee accrues here as it always did.
+    function setFuelPot(address pot) external onlyOwner {
+        fuelPot = pot;
+        emit ArenaTypes.FeeRouted(pot, 0);
+    }
+
+    /// @notice Move house surplus out of this contract — for an upgrade, or to seed
+    ///         the pot that pays for the fighters' thinking.
+    ///
+    ///         Replaces the old fee withdrawal, and deliberately is NOT a way to take
+    ///         profit: the fee is operating cost now and leaves at duel creation, so
+    ///         what this reaches is whatever the house has left sitting here.
+    ///
+    ///         WHY IT EXISTS AT ALL, rather than being deleted outright. Removing the
+    ///         only exit would leave no way to ever recover house money from this
+    ///         contract, and that has already cost real money: 4.23 USDso sits
+    ///         stranded in a superseded Arena today, because the token sweep refuses
+    ///         USDso so an owner can never take player deposits — and the same guard
+    ///         refuses the surplus. An upgrade needs this. A player never does.
+    ///
+    ///         THE CAP IS THE SAFETY PROPERTY, carried over unchanged from the
+    ///         withdrawal it replaces: never below the sum of un-recovered duel pots.
+    ///         Whatever is above that is not any player's money. `seedLiquidity` is
+    ///         deliberately NOT subtracted here — it is a claim on the house's own
+    ///         principal governed by `ownerWithdrawSeed`, not a reserve, and
+    ///         subtracting it would strand the surplus whenever it exceeds the
+    ///         balance, which it does today.
+    function migrateSurplus(address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ArenaTypes.ZeroAmount();
         if (amount == 0) revert ArenaTypes.ZeroAmount();
-        // Only the balance above escrowed duel pots is withdrawable as fees, so
-        // this can never pay out depositor principal still held in escrow.
         uint256 bal  = IERC20Minimal(USDSO).balanceOf(address(this));
         uint256 free = bal > escrowedPot ? bal - escrowedPot : 0;
-        if (free < amount) amount = free;
+        if (amount > free) amount = free;
         if (amount == 0) revert ArenaTypes.ZeroAmount();
-        accruedFees = 0;
+        // Whatever leaves stops being claimable as accrued fees, so the counter comes
+        // down with it rather than describing money that is no longer here.
+        accruedFees = amount >= accruedFees ? 0 : accruedFees - amount;
         bool ok = IERC20Minimal(USDSO).transfer(to, amount);
         if (!ok) revert ArenaTypes.TransferFailed();
-        emit ArenaTypes.FeesWithdrawn(to, amount);
+        emit ArenaTypes.SurplusMigrated(to, amount);
     }
 
     // ─── Reactivity subscription ─────────────────────────────────────────────

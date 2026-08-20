@@ -8,6 +8,7 @@ import "../interfaces/IFighterRegistry.sol";
 import "../interfaces/IERC20Minimal.sol";
 import "../interfaces/IDuelHistory.sol";
 import "../interfaces/IPerps.sol";
+import "../interfaces/ISpotPool.sol";
 
 /// @title ArenaDuelPart
 /// @notice A duel's beginning and end: taking the deposit, escrowing the pot,
@@ -160,8 +161,30 @@ contract ArenaDuelPart is ArenaStorage {
         bool ok = IERC20Minimal(USDSO).transferFrom(msg.sender, address(this), required);
         if (!ok) revert ArenaTypes.TransferFailed();
 
-        // Platform fee stays in contract; remainder is the duel pot.
-        accruedFees += fee;
+        // The fee is operating cost, not revenue, and it leaves NOW.
+        //
+        // It pays for the fighters' thinking, which is billed in the chain's own
+        // coin — a currency this fee is not denominated in. A separate pot converts
+        // it. Sending the fee there at creation rather than letting it sit here is
+        // what keeps this contract's balance to exactly two claims: players'
+        // escrowed stakes and the owner's seed. A third claim living here would mean
+        // the buy gate had to subtract it too, or a fighter's purchase could quietly
+        // spend the thinking budget.
+        //
+        // Best-effort, and it falls back to the old behaviour: a pot that is unset,
+        // or a transfer that fails, must never stop a fight being created.
+        address feeSink = fuelPot;
+        bool routed = false;
+        if (feeSink != address(0)) {
+            try IERC20Minimal(USDSO).transfer(feeSink, fee) returns (bool sent) {
+                routed = sent;
+            } catch { routed = false; }
+        }
+        if (routed) {
+            emit ArenaTypes.FeeRouted(feeSink, fee);
+        } else {
+            accruedFees += fee;
+        }
         uint256 pot = required - fee;
         uint256 initialUsdsoPerFighter = pot / 2;
         if (initialUsdsoPerFighter == 0) revert ArenaTypes.ZeroAmount();
@@ -371,9 +394,116 @@ contract ArenaDuelPart is ArenaStorage {
             _releasePerpAccount(duelId, duel.fighterB);
         }
 
+        // Turn whatever the house is holding back into cash.
+        //
+        // Every buy a fighter makes converts house cash into an asset delivered to
+        // this contract, and nothing converted it back — so cash fell while holdings
+        // rose, and the money was still there but in a form the buy gate could not
+        // spend. Measured across one fifteen-round fight: 27.57 cash out, 0.013 of an
+        // asset in, the same money in a different shape. Recovering it used to be an
+        // operator remembering to run a script.
+        //
+        // AFTER the result is stored and emitted, exactly like the two blocks above,
+        // and for a stronger reason than either: a fighter is scored on its cash PLUS
+        // its holdings valued at the mark, so selling before the score is computed
+        // would change who won.
+        if (!perps) _settleHeldAssets(duelId, pools, duel.poolMask);
+
         // Re-aim at whichever fight is now due soonest — or cancel outright, which
         // is what happens on the last one out. An idle arena pays nothing.
         _scheduleNextTick();
+    }
+
+    /// @dev Sell this contract's holding of each of a fight's assets back to cash.
+    ///
+    ///      Best-effort throughout, and that is the whole design. If finalising can
+    ///      fail, a payout gets stuck; a stuck payout blocks the next rewire, which
+    ///      has already blocked one release. So every sale is wrapped, every refusal
+    ///      is an event, and nothing here can revert the resolution that called it.
+    ///
+    ///      Three rules learned the expensive way:
+    ///
+    ///      SIZE TO THE RESTING DEPTH, not to the holding. These orders are
+    ///      all-or-nothing, so offering more than the book is holding cancels the
+    ///      whole sale rather than filling part of it — 0.067 offered against a book
+    ///      holding 0.046 was refused outright. A large holding therefore settles
+    ///      across several fights, which is fine.
+    ///
+    ///      ROUND DOWN TO THE VENUE'S STEP. A raw balance almost never is a whole
+    ///      multiple of it, and an unaligned quantity is simply declined.
+    ///
+    ///      NEVER TOUCH THE NATIVE ASSET. One market's asset is the chain's own coin,
+    ///      and this contract's coin balance is what pays for the fighters' thinking.
+    ///      Selling it would convert fuel into cash, which is backwards — the fuel pot
+    ///      converts in the other direction on purpose.
+    function _settleHeldAssets(uint256 duelId, address[3] memory pools, uint8 mask) internal {
+        uint8[3] memory bits = [ArenaTypes.POOL_BIT_WETH, ArenaTypes.POOL_BIT_WBTC, ArenaTypes.POOL_BIT_SOMI];
+        for (uint256 i = 0; i < 3; i++) {
+            if (mask & bits[i] == 0) continue;
+            // Leave room for the rest of finalisation. Selling three assets is three
+            // orders, and a fight that cannot finish is far worse than an asset that
+            // waits for the next one.
+            if (gasleft() < 1_500_000) {
+                emit ArenaTypes.AssetSettleSkipped(duelId, pools[i], "not enough gas left this block");
+                return;
+            }
+            _settleOne(duelId, pools[i]);
+        }
+    }
+
+    /// @dev One market. Split out so the loop above stays shallow — the resolution
+    ///      path already carries a lot of locals and this adds none to it.
+    function _settleOne(uint256 duelId, address pool) internal {
+        address base;
+        uint256 step;
+        try ISpotPool(pool).getPoolParams() returns (
+            address b, address, uint256, uint256, uint256 tickSize, uint256, uint256 lotSize
+        ) {
+            base = b;
+            step = lotSize == 0 ? 1 : lotSize;
+            if (tickSize == 0) { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "venue has no tick"); return; }
+        } catch { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "venue would not answer"); return; }
+
+        if (base == address(0) || base.code.length == 0) {
+            emit ArenaTypes.AssetSettleSkipped(duelId, pool, "the chain's own coin is fuel, not inventory");
+            return;
+        }
+
+        uint256 held;
+        try IERC20Minimal(base).balanceOf(address(this)) returns (uint256 b2) { held = b2; }
+        catch { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "asset would not report a balance"); return; }
+        if (held == 0) return;
+
+        uint256 price;
+        uint256 qty;
+        try ISpotPool(pool).getBookLevels(true, 1) returns (OrderBookLevel[] memory lv) {
+            if (lv.length == 0 || lv[0].quantity == 0) {
+                emit ArenaTypes.AssetSettleSkipped(duelId, pool, "nobody bidding");
+                return;
+            }
+            qty = held < lv[0].quantity ? held : lv[0].quantity;
+            qty = (qty / step) * step;
+            // Twenty steps through the bid. A settlement is allowed to pay for
+            // certainty; the point is that the asset leaves, not that it leaves well.
+            price = lv[0].price;
+        } catch { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "book unreadable"); return; }
+        if (qty == 0) { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "holding below one step"); return; }
+
+        uint256 before = IERC20Minimal(USDSO).balanceOf(address(this));
+        try IERC20Minimal(base).approve(pool, qty) returns (bool) {} catch {
+            emit ArenaTypes.AssetSettleSkipped(duelId, pool, "asset refused the approval");
+            return;
+        }
+        bool filled;
+        try ISpotPool(pool).placeOrder(
+            false, 0, price, qty, uint64(block.timestamp + 3600) * 1_000_000_000, 1, 0, address(0), 0
+        ) returns (bool ok, uint128) { filled = ok; } catch { filled = false; }
+        // No standing approval survives, whatever happened.
+        try IERC20Minimal(base).approve(pool, 0) returns (bool) {} catch {}
+
+        if (!filled) { emit ArenaTypes.AssetSettleSkipped(duelId, pool, "the venue declined"); return; }
+        uint256 proceeds = IERC20Minimal(USDSO).balanceOf(address(this)) - before;
+        emit ArenaTypes.AssetSettled(duelId, pool, qty, proceeds);
     }
 
 

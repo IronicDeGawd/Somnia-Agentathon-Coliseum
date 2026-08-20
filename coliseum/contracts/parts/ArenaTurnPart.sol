@@ -356,10 +356,16 @@ contract ArenaTurnPart is ArenaStorage {
                 _reject(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
             }
-            uint256 minCost = (meta.minQuantity * price) / baseUnit;
-            uint256 vaultQuote = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO);
-            if (vaultQuote < minCost) {
-                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "vault below min cost");
+            // The same question the offer gate asked, answered by the same code.
+            // Asking it differently here is what produced a refusal on every buy
+            // after the gate was widened: the gate counted this contract's own
+            // balance and this check still looked only at the venue's deposit.
+            //
+            // Written as one call with no locals on purpose — this function is one
+            // local away from Solidity's stack limit, so the two variables that used
+            // to be here are a cost as well as a duplication.
+            if (!ArenaUtils.canFundBuy(pool, USDSO, (meta.minQuantity * price) / baseUnit)) {
+                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "cannot fund min cost");
                 return (false, 0);
             }
             desired = meta.minQuantity;
@@ -438,6 +444,16 @@ contract ArenaTurnPart is ArenaStorage {
     ///      A base asset with no code is the native coin, which cannot be approved at
     ///      all — selling it needs value sent with the order, which this path does not
     ///      do. `tradability` already declines to offer that sell.
+    /// @dev Is this market's asset the chain's own coin? A base address with no code
+    ///      behind it is the coin itself, not a token.
+    function _baseIsNative(address pool) internal view returns (bool) {
+        try ISpotPool(pool).getPoolParams() returns (
+            address b, address, uint256, uint256, uint256, uint256, uint256
+        ) {
+            return b != address(0) && b.code.length == 0;
+        } catch { return false; }
+    }
+
     function _approveBaseForSale(address pool, uint256 quantity) internal {
         address baseToken;
         try ISpotPool(pool).getPoolParams() returns (
@@ -501,18 +517,47 @@ contract ArenaTurnPart is ArenaStorage {
             }
         }
 
-        try ISpotPool(pool).placeOrder(isBid, userData, price, quantity, expireTimestampNs, orderType, 0, address(0), 0)
-            returns (bool success, uint128 returnedId)
+        // Sent as a RAW call rather than through the typed interface, for two reasons
+        // that turned out to be the same reason.
+        //
+        // The typed declaration is non-payable, so it cannot carry value — and one
+        // market's asset is the chain's own COIN, where selling means sending the coin
+        // WITH the order. That sale was refused outright for months because of this.
+        //
+        // And separately, measured 2026-08-20: an identical order with identical
+        // arguments was refused through the typed interface and filled through a raw
+        // encode, every other parameter reproduced and eliminated one at a time. The
+        // interface in this repo is a reconstruction; this encoding is the one the
+        // deployed venue demonstrably accepts.
         {
+            uint256 value = 0;
+            if (!isBid && !poolIsPerp[pool] && _baseIsNative(pool)) {
+                // Only ever the order's own quantity, and only what sits above the
+                // fuel reserve — the gate already refused otherwise, and this is the
+                // second line of defence rather than the first.
+                value = quantity;
+                if (address(this).balance < value) {
+                    _reject(pool, fighterId, duelId, isBid, price, quantity, orderType, "not enough coin to deliver");
+                    return (false, 0);
+                }
+            }
+            (bool sent, bytes memory ret) = pool.call{value: value}(
+                abi.encodeWithSignature(
+                    "placeOrder(bool,uint64,uint256,uint256,uint64,uint8,uint8,address,uint96)",
+                    isBid, userData, price, quantity, expireTimestampNs, orderType, uint8(0), address(0), uint96(0)
+                )
+            );
+            if (!sent || ret.length != 64) {
+                _reject(pool, fighterId, duelId, isBid, price, quantity, orderType, "pool reverted");
+                return (false, 0);
+            }
+            (bool success, uint128 returnedId) = abi.decode(ret, (bool, uint128));
             if (!success) {
                 _reject(pool, fighterId, duelId, isBid, price, quantity, orderType, "silent reject");
                 return (false, 0);
             }
             ok = true;
             orderId = returnedId;
-        } catch {
-            _reject(pool, fighterId, duelId, isBid, price, quantity, orderType, "pool reverted");
-            return (false, 0);
         }
 
         emit ArenaTypes.OrderPlaced(pool, fighterId, duelId, orderId, isBid, price, quantity, orderType);

@@ -21,6 +21,7 @@ import type { FighterPerp } from '@/hooks/useDuelLive';
 import { useFighters } from '@/hooks/useFighters';
 import { FIGHTERS } from '@/lib/fighters';
 import { fmtUsd, fmtPct } from '@/lib/format';
+import { marginStatusCopy } from '@/lib/marginStatus';
 
 type Layout = 'split' | 'oneUp' | 'stacked';
 
@@ -234,11 +235,9 @@ function PositionsBlock({ perp, color }: { perp: FighterPerp; color: string }) {
  * reads a fighter being wiped out as the page having broken.
  */
 function MarginWarning({ status }: { status: number }) {
-  const [word, detail] = status === 1
-    ? ['MARGIN CALL', 'equity has fallen to the maintenance line']
-    : status === 2
-      ? ['LIQUIDATING', 'the venue is closing part of this position']
-      : ['CLOSE-OUT', 'the position is being closed out entirely'];
+  const copy = marginStatusCopy(status);
+  if (!copy) return null;
+  const { word, detail } = copy;
   return (
     <div
       className="col gap-2"
