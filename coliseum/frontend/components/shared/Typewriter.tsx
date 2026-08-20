@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 interface TypewriterProps {
   text: string;
@@ -19,6 +20,7 @@ export const Typewriter: React.FC<TypewriterProps> = ({
 }) => {
   const [n, setN] = useState(0);
   const onDoneRef = useRef<(() => void) | undefined>(onDone);
+  const still = useReducedMotion();
 
   useEffect(() => {
     onDoneRef.current = onDone;
@@ -27,6 +29,14 @@ export const Typewriter: React.FC<TypewriterProps> = ({
   useEffect(() => {
     setN(0);
     if (!text) {
+      if (onDoneRef.current) onDoneRef.current();
+      return;
+    }
+    // Asked for less motion: hand over the whole line at once. Text that
+    // rewrites itself is the single most common complaint behind that setting,
+    // and the reasoning it reveals is worth reading either way.
+    if (still) {
+      setN(text.length);
       if (onDoneRef.current) onDoneRef.current();
       return;
     }
@@ -44,7 +54,7 @@ export const Typewriter: React.FC<TypewriterProps> = ({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [text, speed]);
+  }, [text, speed, still]);
 
   const done = n >= (text?.length ?? 0);
 

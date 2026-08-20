@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 // Trader-phase status lines shown while an agent is deciding its move (the
 // on-chain LLM inference step). Each persona gets its own voice so the wait
@@ -89,18 +90,32 @@ export const ThinkingTicker: React.FC<ThinkingTickerProps> = ({
 }) => {
   const phrases = (fighterId && BY_FIGHTER[fighterId.toLowerCase()]) || GENERIC;
   const [i, setI] = React.useState(startIndex % phrases.length);
+  const still = useReducedMotion();
 
   React.useEffect(() => {
+    // A CSS media query cannot reach a setInterval, so the check has to happen
+    // here. Someone who asked the OS for less motion gets the first phrase and
+    // no cycling, rather than text that rewrites itself every 1.7 seconds.
+    if (still) return;
     const t = setInterval(() => setI((p) => (p + 1) % phrases.length), intervalMs);
     return () => clearInterval(t);
-  }, [intervalMs, phrases.length]);
+  }, [intervalMs, phrases.length, still]);
 
   return (
-    <span className="t-dim">
+    // HIDDEN FROM ASSISTIVE TECH, on purpose. These phrases are flavour — they
+    // are not read off the chain and say nothing about what the agent is really
+    // doing. The label beside this one already announces "DECIDING…", which is
+    // the fact. Left visible to a screen reader inside a live region, this
+    // announced a new sentence every 1.7 seconds for the whole fight.
+    <span className="t-dim" aria-hidden="true">
       {'> '}
       <span
         key={i}
-        style={{ color, display: 'inline-block', animation: 'fadeIn 0.4s ease-out' }}
+        style={{
+          color,
+          display: 'inline-block',
+          animation: still ? undefined : 'fadeIn 0.4s ease-out',
+        }}
       >
         {phrases[i % phrases.length]}…
       </span>

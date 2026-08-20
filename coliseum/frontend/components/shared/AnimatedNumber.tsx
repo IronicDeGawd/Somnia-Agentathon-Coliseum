@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 interface AnimatedNumberProps {
   value: number;
@@ -23,8 +24,15 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
   const startValueRef = useRef<number>(value);
   const endValueRef = useRef<number>(value);
   const startTimeRef = useRef<number>(0);
+  const still = useReducedMotion();
 
   useEffect(() => {
+    // Asked for less motion: show the figure, don't roll to it. A PnL counting
+    // itself up is decoration; the number is the information.
+    if (still) {
+      setDisplayValue(value);
+      return;
+    }
     startValueRef.current = displayValue;
     endValueRef.current = value;
     startTimeRef.current = performance.now();
@@ -51,7 +59,7 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [value, duration]);
+  }, [value, duration, still]);
 
   return (
     <span className={`t-num ${className}`}>
