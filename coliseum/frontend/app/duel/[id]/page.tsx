@@ -160,13 +160,16 @@ function FightTimeline({
   marginSeen,
   liquidations,
   nameOf,
-  hexOf,
+  sideOf,
 }: {
   story: TranscriptEntry[];
   marginSeen: MarginObservation[];
   liquidations: LiquidationRecord[];
   nameOf: (fighterId: number) => string;
-  hexOf: (fighterId: number) => string;
+  /** Which corner this fighter is in, so a row is washed in the same colour the
+   *  card above it uses. Passed in rather than derived: only the page knows which
+   *  registry index took slot A. */
+  sideOf: (fighterId: number) => 'a' | 'b';
 }) {
   type Row =
     | { kind: 'move'; at?: number; sort: number; e: TranscriptEntry }
@@ -200,49 +203,61 @@ function FightTimeline({
   }
 
   return (
-    <div className="col" style={{ maxHeight: 360, overflowY: 'auto' }}>
-      {rows.map((r, i) => (
-        <div
-          key={
-            r.kind === 'move' ? `m${r.e.block}-${r.e.fighterId}-${i}`
-              : r.kind === 'liq' ? `l${r.r.block}-${r.r.fighterId}-${i}`
-              : `g${r.o.seenAt}-${r.o.fighterId}-${i}`
-          }
-          className="row ai-c t-mono t-sm"
-          style={{ gap: 12, padding: '7px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}
-        >
-          <span className="t-num t-xs t-faint" style={{ width: 66, flexShrink: 0 }}>
-            {clockOf(r.at)}
-          </span>
-          <span className="t-xs t-dim" style={{ width: 34, flexShrink: 0 }}>
-            {r.kind === 'move' ? `R${r.e.round}` : ''}
-          </span>
-          <span
-            className="t-xs"
+    <div className="col gap-2" style={{ maxHeight: 360, overflowY: 'auto' }}>
+      {rows.map((r, i) => {
+        const fid = r.kind === 'move' ? r.e.fighterId : r.kind === 'liq' ? r.r.fighterId : r.o.fighterId;
+        const side = sideOf(fid);
+        return (
+          <div
+            key={
+              r.kind === 'move' ? `m${r.e.block}-${r.e.fighterId}-${i}`
+                : r.kind === 'liq' ? `l${r.r.block}-${r.r.fighterId}-${i}`
+                : `g${r.o.seenAt}-${r.o.fighterId}-${i}`
+            }
+            className="row ai-c t-mono t-sm"
+            // The same treatment as the corner cards above: a bar in the fighter's
+            // colour and a wash of it behind. Without this the timeline read as a
+            // spreadsheet bolted under a HUD — the rows carried the same
+            // information and none of the same language, which is what made it
+            // look broken rather than merely plain.
             style={{
-              width: 96, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              color: hexOf(r.kind === 'move' ? r.e.fighterId : r.kind === 'liq' ? r.r.fighterId : r.o.fighterId),
-              letterSpacing: '0.04em',
+              gap: 14,
+              padding: '7px 14px',
+              borderLeft: `2px solid var(--fighter-${side})`,
+              background: `linear-gradient(90deg, var(--fighter-${side}-soft), transparent 55%)`,
             }}
           >
-            {nameOf(r.kind === 'move' ? r.e.fighterId : r.kind === 'liq' ? r.r.fighterId : r.o.fighterId)}
-          </span>
-          {r.kind === 'move' ? (
-            r.e.failed ? (
-              <span className="t-dim" style={{ minWidth: 0 }}>
-                {'> '}refused — {r.e.reason || 'no reason given'}
-              </span>
+            <span className="t-num t-xs t-faint" style={{ width: 62, flexShrink: 0 }}>
+              {clockOf(r.at)}
+            </span>
+            <span className="label-tiny" style={{ width: 26, flexShrink: 0 }}>
+              {r.kind === 'move' ? `R${r.e.round}` : ''}
+            </span>
+            <span
+              className="label-tiny"
+              style={{
+                width: 92, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap', color: `var(--fighter-${side})`,
+              }}
+            >
+              {nameOf(fid)}
+            </span>
+            {r.kind === 'move' ? (
+              r.e.failed ? (
+                <span className="t-dim" style={{ minWidth: 0 }}>
+                  {'> '}refused — {r.e.reason || 'no reason given'}
+                </span>
+              ) : (
+                <MoveText move={r.e.action ?? 'HOLD'} />
+              )
+            ) : r.kind === 'liq' ? (
+              <LiquidationRow record={r.r} />
             ) : (
-              <MoveText move={r.e.action ?? 'HOLD'} />
-            )
-          ) : r.kind === 'liq' ? (
-            <LiquidationRow record={r.r} />
-          ) : (
-            <MarginLine status={r.o.status} />
-          )}
-        </div>
-      ))}
+              <MarginLine status={r.o.status} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -657,7 +672,7 @@ export default function ArenaPage() {
   const whalePnl = liveB.pnlNum;
 
   // Real holdings: each market contributes what the fighter HOLDS there and the
-  // cash it still has THERE.
+  // money it has left to spend THERE.
   //
   // The cash row has to name its market. A fighter is credited a separate purse
   // per market — spending all of one leaves the others untouched — so three
@@ -667,7 +682,10 @@ export default function ArenaPage() {
   const toDisplayHoldings = (holdings: typeof liveA.holdings): Holding[] =>
     holdings.flatMap((h) => [
       { token: h.token, amount: Number(parseFloat(h.baseAmount).toFixed(6)) },
-      { token: `${h.token} cash`, amount: Number(parseFloat(h.quoteAmount).toFixed(4)) },
+      // "purse", not "cash": `WETH cash` reads as cash DENOMINATED in WETH, which
+      // is not a thing. This row is stablecoin — the money still unspent in that
+      // market's own purse, which is why it sits beside the WETH actually held.
+      { token: `${h.token} purse`, amount: Number(parseFloat(h.quoteAmount).toFixed(4)) },
     ]).filter((h) => (h.amount as number) > 0);
 
   const degenHoldings = toDisplayHoldings(liveA.holdings);
@@ -965,7 +983,7 @@ export default function ArenaPage() {
             marginSeen={marginSeen}
             liquidations={liquidations}
             nameOf={(fid) => (duel && fid === duel.fighterA ? degenF.name : whaleF.name)}
-            hexOf={(fid) => (duel && fid === duel.fighterA ? degenF.hex : whaleF.hex)}
+            sideOf={(fid) => (duel && fid === duel.fighterA ? 'a' : 'b')}
           />
 
           {marginSeen.length > 0 && (
