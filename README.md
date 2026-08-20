@@ -537,13 +537,17 @@ is long it stays long for free, and only needs an order to change its mind — s
 count lower than one where holding a view costs an order. Twelve orders in a fifteen-round fight is
 about as active as this market gets.
 
-**Events fell, 38 orders to 22, and that is the one number in this table pointing at a problem.** The
-shape is wrong, not just the size: the nine-round fight traded seven times and the fifteen-round fight
-only six, so the market stops scaling with length exactly where every other market keeps going. All four
-fights also drew the same three questions (BTCUP, BTCLATER, ETHUP), which is the tell — the desks have
-been parked on one set of questions since a stuck reservation flag stopped them being rotated, so by the
-time a fight reaches them there is little left to disagree about. Not yet diagnosed further; it is
-recorded as open rather than dressed up.
+**Events fell, 38 orders to 22 — and chasing that one number found a market with no exit.** The shape
+was wrong, not just the size: the nine-round fight traded seven times and the fifteen-round only six, so
+it stopped scaling with length exactly where every other market kept going. The cause turned out to be
+that **a fighter could back a question but never drop it**, for the entire life of that market. Before
+offering an exit the arena asks whether it can hand over the goods, and it asked by weighing the position
+token the venue advertises — which for a prediction is an uninitialised proxy that answers nothing. The
+refusal read as "I hold none", so the exit was withheld every question, every turn. Fixed by asking the
+venue instead when the token cannot answer; the desk already reported exactly that. Proven on duel 76:
+`DropETHUP` and `DropBTCUP` offered to the fighter holding them and withheld from the one that did not,
+one exit executed and filled, 10 orders against the old 6. One fight is one sample — the count is not yet
+back to the 38 an earlier run managed.
 
 **Money now comes back.** The house float ended the twelve fights within three hundredths of a
 USDso of where it started, against a measured fifty-USDso drain per fight before the settlement path
