@@ -51,6 +51,27 @@ function formatUsdso(raw: bigint, decimals?: number): string {
   return n > 0 ? '<0.00000001' : '>-0.00000001';
 }
 
+/**
+ * The number exactly as the chain holds it, trailing zeros trimmed.
+ *
+ * THE SETTLEMENT CARD IS WHERE THE RESULT IS JUSTIFIED, so it does not round.
+ * Duel 74 was won by 0.000000800524579414 — rounded to a readable width both
+ * fighters printed the same figure and the margin printed zero, and a correct
+ * result read as a draw the arena had botched. It had not: a draw here means
+ * EXACTLY equal, to the wei, and these were not.
+ *
+ * The tape above still rounds, because that is a scoreboard being scanned. This
+ * one line is the evidence, and evidence does not round.
+ */
+function formatUsdsoExact(raw: bigint): string {
+  const s = formatUnits(raw, 18);
+  if (!s.includes('.')) return `${s}.00`;
+  const trimmed = s.replace(/0+$/, '');
+  // Keep at least two decimals so a whole number still reads as money.
+  const [whole, frac = ''] = trimmed.split('.');
+  return `${whole}.${frac.padEnd(2, '0')}`;
+}
+
 // ─── Matchmaker Claim Section ─────────────────────────────────────────────────
 
 function MatchmakerClaimSection({ duelId, winnerSlot }: { duelId: bigint; winnerSlot: number | null }) {
@@ -336,14 +357,14 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false,
           <div className="row ai-c gap-16">
             <div className="col gap-2">
               <span className="label-tiny t-dim">Winning Portfolio</span>
-              <span className="t-num t-mono" style={{ color: winnerColor, fontSize: '1rem' }}>
-                {winnerBalance !== null ? `${formatUsdso(winnerBalance)} USDso` : '—'}
+              <span className="t-num t-mono" style={{ color: winnerColor, fontSize: '1rem', wordBreak: 'break-all' }}>
+                {winnerBalance !== null ? `${formatUsdsoExact(winnerBalance)} USDso` : '—'}
               </span>
             </div>
             <div className="col gap-2">
               <span className="label-tiny t-dim">Margin</span>
-              <span className="t-num t-mono text-win" style={{ fontSize: '1rem' }}>
-                {margin !== null ? `+${formatUsdso(margin)} USDso` : '—'}
+              <span className="t-num t-mono text-win" style={{ fontSize: '1rem', wordBreak: 'break-all' }}>
+                {margin !== null ? `+${formatUsdsoExact(margin)} USDso` : '—'}
               </span>
             </div>
           </div>
@@ -351,7 +372,7 @@ export default function SettlePanel({ duelId, isCreator, matchmakerDuel = false,
           <div className="row ai-c gap-8 t-faint t-xs" style={{ marginTop: 4 }}>
             <span style={{ color: loserColorProp ?? undefined }}>Loser ({loserLabel}):</span>
             <span className="t-num t-mono text-loss">
-              {loserBalance !== null ? `${formatUsdso(loserBalance)} USDso` : '—'}
+              {loserBalance !== null ? `${formatUsdsoExact(loserBalance)} USDso` : '—'}
             </span>
           </div>
         </div>

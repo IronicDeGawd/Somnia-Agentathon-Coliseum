@@ -62,6 +62,24 @@ export default function ResultPage() {
   const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
   const duelLastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
   const duelSlots = useDuelSlots(duelId);
+
+  // WHICH GAME THIS WAS. The page showed a winner, a portfolio and a move tape and
+  // never once said whether the fight was coins, predictions or perpetuals — so a
+  // tape reading "BUY SIMPOOLWETH" was the only clue, and only to someone who
+  // already knew the codebase.
+  //
+  // Read off what the fight actually traded rather than from anything stored: a
+  // perp slot makes it perps, a labelled question makes it predictions, and the
+  // simulated flag separates the practice ring from the real coin books.
+  const marketName = duelSlots === undefined
+    ? null
+    : duelSlots.some((sl) => sl.isPerp)
+      ? 'PERPETUALS'
+      : duelSlots.some((sl) => sl.label && sl.label.length > 0)
+        ? 'PREDICTIONS'
+        : duel?.simulated
+          ? 'PRACTICE RING'
+          : 'SPOT COINS';
   const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
 
   const fighterNameOf = (fid: number): string => {
@@ -317,6 +335,14 @@ export default function ResultPage() {
             § POST-DUEL · DUEL #{rawId}
           </span>
           <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+          {marketName && (
+            <>
+              <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-dim)' }}>
+                {marketName}
+              </span>
+              <span style={{ height: 12, width: 1, background: 'var(--border)' }} />
+            </>
+          )}
           {isLoading ? (
             <Chip variant="gold">LOADING…</Chip>
           ) : isResolved ? (
