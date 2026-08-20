@@ -96,6 +96,65 @@ const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | '
   );
 };
 
+/**
+ * A label that explains itself on hover, without the browser's help.
+ *
+ * The native `title` attribute was the first attempt and it is wrong twice over: it
+ * drags a question-mark cursor across the text, and it waits about a second before
+ * saying anything, by which time the pointer has usually moved on. Neither is
+ * something a page can style away.
+ *
+ * So the tip is drawn here: instant, in the HUD's own colours, and reachable by
+ * keyboard because the trigger takes focus. `role="tooltip"` with `aria-describedby`
+ * means a screen reader announces the explanation as part of the label rather than as
+ * a stray sentence floating nearby.
+ *
+ * No underline and no special cursor: the row is information, not a control, and
+ * decorating every label with a dotted line made a holdings panel look like a form.
+ */
+function InfoTip({ id, text, children }: { id: string; text: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-flex', minWidth: 0 }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+      tabIndex={0}
+      aria-describedby={open ? id : undefined}
+    >
+      {children}
+      {open && (
+        <span
+          id={id}
+          role="tooltip"
+          className="t-mono t-xs"
+          style={{
+            position: 'absolute',
+            bottom: 'calc(100% + 8px)',
+            left: 0,
+            zIndex: 40,
+            width: 260,
+            maxWidth: '70vw',
+            padding: '8px 10px',
+            background: 'var(--bg-stage)',
+            border: '1px solid var(--border)',
+            color: 'var(--text-dim)',
+            lineHeight: 1.5,
+            // The tip must never eat the pointer, or moving toward it would
+            // re-trigger the leave handler and make it flicker.
+            pointerEvents: 'none',
+            whiteSpace: 'normal',
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string }) {
   const totals = holdings.map((h) => {
     const num = typeof h.amount === 'number' ? h.amount : parseFloat(String(h.amount).replace(/[^0-9.-]/g, '')) || 0;
@@ -113,21 +172,17 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
             <div className="row jc-sb ai-c" style={{ gap: 12 }}>
               <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
                 <span style={{ width: 6, height: 6, background: color, display: 'inline-block', boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />
-                {/* A native title, not a custom popover: it reaches a keyboard and a
-                    screen reader for free, and this is a label needing one sentence
-                    of explanation rather than a UI of its own. The dotted underline
-                    is the only hint that hovering will say more. */}
-                <span
-                  className="t-mono t-xs t-dim"
-                  title={h.hint}
-                  style={{
-                    whiteSpace: 'nowrap',
-                    borderBottom: h.hint ? '1px dotted var(--text-faint)' : undefined,
-                    cursor: h.hint ? 'help' : undefined,
-                  }}
-                >
-                  {h.token}
-                </span>
+                {h.hint ? (
+                  <InfoTip id={`hold-${i}-${h.token.replace(/\s+/g, '-')}`} text={h.hint}>
+                    <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
+                      {h.token}
+                    </span>
+                  </InfoTip>
+                ) : (
+                  <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>
+                    {h.token}
+                  </span>
+                )}
               </span>
               <span className="t-num t-sm" style={{ whiteSpace: 'nowrap' }}>{h.amount}</span>
             </div>
@@ -182,22 +237,46 @@ function FighterTimeline({
   story,
   marginSeen,
   liquidations,
+  latestShown,
 }: {
   fighterId: number;
   side: 'a' | 'b';
   story: TranscriptEntry[];
   marginSeen: MarginObservation[];
   liquidations: LiquidationRecord[];
+  /**
+   * The move the card above is currently displaying, or '' when it is showing a
+   * thinking ticker instead.
+   *
+   * Without this the newest move appears twice — once as "ACTED · BUY WETH" and
+   * again as the first line of EARLIER — which reads as the fighter having done it
+   * twice. "Earlier" has to mean earlier.
+   *
+   * MATCHED, not merely counted. The card is fed by the live websocket and updates
+   * the instant a move lands; the history is re-read from the chain once per turn.
+   * So for up to a minute the card can be showing a move the history has not caught
+   * up to — and blindly dropping the history's last row would then delete a
+   * DIFFERENT, older move from the record for that whole minute.
+   */
+  latestShown: string;
 }) {
   type Row =
     | { kind: 'move'; at?: number; sort: number; e: TranscriptEntry }
     | { kind: 'margin'; at: number; sort: number; o: MarginObservation }
     | { kind: 'liq'; at?: number; sort: number; r: LiquidationRecord };
 
+  // This fighter's moves, newest last. Drop the newest only when it is the very
+  // move the card above is showing.
+  const mine = story.filter((e) => e.fighterId === fighterId);
+  const newest = mine[mine.length - 1];
+  const earlier = latestShown && newest && !newest.failed && newest.action === latestShown
+    ? mine.slice(0, -1)
+    : mine;
+
   const rows: Row[] = [
     // A move with no timestamp yet still sorts by its block, so the order is right
     // from the first paint and only the clock arrives late.
-    ...story.filter((e) => e.fighterId === fighterId).map((e) => ({
+    ...earlier.map((e) => ({
       kind: 'move' as const, at: e.timestamp, sort: e.timestamp ?? Number(e.block), e,
     })),
     ...marginSeen.filter((o) => o.fighterId === fighterId).map((o) => ({
@@ -1011,6 +1090,7 @@ export default function ArenaPage() {
                     story={story}
                     marginSeen={marginSeen}
                     liquidations={liquidations}
+                    latestShown={live.thinking ? '' : live.lastAction}
                   />
                 </div>
               </div>
