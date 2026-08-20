@@ -127,8 +127,13 @@ describe("Arena — escrow fund custody (C-2 / H-2 / HIGH-2)", function () {
     expect(String(caught)).to.include("AlreadyRecovered");
   });
 
-  it("withdrawFees cannot touch escrowed pot principal (HIGH-2)", async function () {
-    const { arena, mockPlatform, poolWeth, usdso, owner } = await deploy();
+  it("migrating surplus cannot touch escrowed pot principal (HIGH-2)", async function () {
+    // This guarded the fee withdrawal, which is gone: the fee is operating cost now
+    // and leaves at duel creation. The SAFETY PROPERTY it guarded is unchanged and
+    // still needs guarding — whatever the owner can move must never dip into
+    // un-recovered duel pots — so the test moved onto the function that replaced it
+    // rather than being deleted with it.
+    const { arena, usdso, owner } = await deploy();
     const to = owner.account.address;
 
     // Start (don't resolve) a duel so its pot is escrowed in the Arena balance.
@@ -137,13 +142,44 @@ describe("Arena — escrow fund custody (C-2 / H-2 / HIGH-2)", function () {
     expect(await arena.read.escrowedPot()).to.equal(POT);
 
     const balBefore = await usdso.read.balanceOf([to]) as bigint;
-    await arena.write.withdrawFees([to]);
+    // Ask for far more than exists. The cap, not the caller, decides what leaves.
+    await arena.write.migrateSurplus([to, POT * 100n]);
     const balAfter = await usdso.read.balanceOf([to]) as bigint;
 
-    // Only the fee leaves the contract — the 2 USDso pot stays escrowed.
-    expect(balAfter - balBefore, "only the platform fee is withdrawable").to.equal(fee);
+    // With no pot configured the fee is still accrued here, so the surplus above
+    // escrow is exactly that fee — and not one unit of the players' stakes.
+    expect(balAfter - balBefore, "only surplus above escrow may leave").to.equal(fee);
     const arenaBal = await usdso.read.balanceOf([arena.address]) as bigint;
     expect(arenaBal, "pot principal remains in Arena").to.equal(POT);
+  });
+
+  it("routes the fee to the pot when one is set, and keeps accruing when not", async function () {
+    // The fee pays for the fighters' thinking, which is billed in a currency the fee
+    // is not denominated in. Sending it out at creation is what keeps this contract's
+    // balance to two claims — players' stakes and the owner's seed — so the buy gate
+    // never has to reason about a third.
+    const { arena, usdso, owner } = await deploy();
+    const sink = "0x000000000000000000000000000000000000FEE1" as `0x${string}`;
+
+    // Unset: the old behaviour, unchanged.
+    await arena.write.startDuel([0, 1, 3, false]);
+    const fee = await arena.read.platformFee([3]) as bigint;
+    expect(await arena.read.accruedFees(), "with no pot the fee stays here").to.equal(fee);
+    expect(await usdso.read.balanceOf([sink])).to.equal(0n);
+
+    // Set: the fee leaves immediately and stops being counted here.
+    await arena.write.setFuelPot([sink], { account: owner.account });
+    const accruedBefore = await arena.read.accruedFees() as bigint;
+    await arena.write.finalizeDuel([await arena.read.activeDuelId() as bigint]).catch(() => {});
+    await arena.write.startDuel([0, 1, 3, false]).catch(() => {});
+    expect(
+      await usdso.read.balanceOf([sink]),
+      "a configured pot must receive the fee",
+    ).to.be.greaterThan(0n);
+    expect(
+      await arena.read.accruedFees(),
+      "and a routed fee must not also be counted as accrued here",
+    ).to.equal(accruedBefore);
   });
 
   it("a duel with fighter indexes >= 2 runs turns and finalizes without array overflow (lastAction slot)", async function () {

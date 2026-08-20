@@ -160,8 +160,30 @@ contract ArenaDuelPart is ArenaStorage {
         bool ok = IERC20Minimal(USDSO).transferFrom(msg.sender, address(this), required);
         if (!ok) revert ArenaTypes.TransferFailed();
 
-        // Platform fee stays in contract; remainder is the duel pot.
-        accruedFees += fee;
+        // The fee is operating cost, not revenue, and it leaves NOW.
+        //
+        // It pays for the fighters' thinking, which is billed in the chain's own
+        // coin — a currency this fee is not denominated in. A separate pot converts
+        // it. Sending the fee there at creation rather than letting it sit here is
+        // what keeps this contract's balance to exactly two claims: players'
+        // escrowed stakes and the owner's seed. A third claim living here would mean
+        // the buy gate had to subtract it too, or a fighter's purchase could quietly
+        // spend the thinking budget.
+        //
+        // Best-effort, and it falls back to the old behaviour: a pot that is unset,
+        // or a transfer that fails, must never stop a fight being created.
+        address feeSink = fuelPot;
+        bool routed = false;
+        if (feeSink != address(0)) {
+            try IERC20Minimal(USDSO).transfer(feeSink, fee) returns (bool sent) {
+                routed = sent;
+            } catch { routed = false; }
+        }
+        if (routed) {
+            emit ArenaTypes.FeeRouted(feeSink, fee);
+        } else {
+            accruedFees += fee;
+        }
         uint256 pot = required - fee;
         uint256 initialUsdsoPerFighter = pot / 2;
         if (initialUsdsoPerFighter == 0) revert ArenaTypes.ZeroAmount();
