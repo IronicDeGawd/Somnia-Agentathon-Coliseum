@@ -335,7 +335,7 @@ somniaforge-agentathon/
 │   │   ├── FighterRegistry.sol     # the six fighter prompts
 │   │   └── lib/                    # ArenaTypes (structs, MarketKind) · ArenaUtils (deposits, prompts)
 │   ├── scripts/                    # deploy, operate, and drive fights — see context/structure.md
-│   ├── test/                       # 404 passing Hardhat tests
+│   ├── test/                       # 422 passing Hardhat tests
 │   ├── frontend/                   # Next.js 15 + wagmi + RainbowKit
 │   └── deployments/somnia.json     # live addresses (gitignored)
 ├── sandbox/                        # early primitive validation — kept for reference, not built on
@@ -347,7 +347,7 @@ somniaforge-agentathon/
 
 ```bash
 pnpm install
-cd coliseum && pnpm exec hardhat test              # 404 passing
+cd coliseum && pnpm exec hardhat test              # 422 passing
 
 # Put two throwaway players through the real queue. One wallet per player —
 # transactions from one address are ordered, so a shared wallet serialises
@@ -479,6 +479,44 @@ Each of these was bought with a real failure, not added defensively.
 - **Never swallow a failure you have not inspected** — three separate faults here reported success
   while an inner call had run out of gas, and each one taught the gas estimator to reproduce it.
   Report *why* separately: reverted, refused, and filled-but-nothing-arrived need different fixes.
+- **A log window shorter than what it covers reads as "nothing happened"** — and this chain's nodes
+  answer an over-wide range with an *empty result* rather than an error, so silence and absence are
+  indistinguishable. Measured on the margin desk: 5,000 blocks returned nothing while 1,000 returned
+  260. Every scanner here states its window and says out loud when it found nothing. This one cost
+  three wrong conclusions in a single day before the rule was written down.
+
+## What a fight records, and what it cannot
+
+A spectator sees a fight's whole story: every move by both fighters, timestamped from the block it was
+mined in, live and historical in one place. Times are *asked of the chain* rather than derived from the
+nominal block interval — a fight can stall between rounds, and an invented clock would show a cadence
+that never happened.
+
+The margin warnings on a perps fight are a harder problem, and worth writing down because the answer
+was counter-intuitive twice over.
+
+**A margin state is a live calculation, not a recorded fact.** The venue is asked what an account's
+state is *right now* and answers from current equity. Nothing emits it — ours or the venue's — and the
+link from a fighter to its rented trading account is deleted at the final bell, so after the bell the
+registry answers "healthy" forever, whatever happened. The page has polled this every ten seconds for
+months. So a state can only ever be *witnessed*, by a page that happened to be open, and those rows say
+"seen" rather than pretending to be chain facts.
+
+**A liquidation is different in kind, because it is an act rather than a threshold.** The venue does it
+and records that it did. It is not on the margin desk — that emits only `CollateralLocked`,
+`CollateralUnlocked`, `PositionUpdated` and `FundingSettled` — it is on the **liquidation engine**, as
+`AccountLiquidated`, indexed by account and carrying the margin status *before and after*. So a fight
+finished months ago can still be asked what the venue did to a fighter, and answer. Those rows say
+"on-chain". **No storage contract was needed; the chain already had it and we were asking the wrong
+contract.**
+
+**And the states cannot be induced on purpose.** Measured on duel 83: equity 0.0627, initial margin
+requirement 0.0618, maintenance 0.0309, close-out 0.0155. A margin call fires below *maintenance* — half
+the equity present — while every withdrawal we control is capped at equity minus *initial*, which by
+construction leaves the account above initial. Nothing on our side can reach the line; only an adverse
+market move can. Zero liquidations have occurred on this venue at all, to anyone, across 150,000 blocks.
+So the three warning states are **unproven on screen**, deliberately: the logic that will catch one is
+unit-tested against synthetic events rather than demonstrated, and that is stated rather than glossed.
 
 ## Key addresses (Somnia testnet, chain 50312)
 
