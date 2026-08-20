@@ -20,6 +20,7 @@ const DESK = [
   { name: "getBookLevels", type: "function", stateMutability: "view",
     inputs: [{ type: "bool" }, { type: "uint64" }],
     outputs: [{ type: "tuple[]", components: [{ name: "price", type: "uint256" }, { name: "quantity", type: "uint256" }] }] },
+  { name: "yesBalance18", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "getPoolParams", type: "function", stateMutability: "view", inputs: [],
     outputs: [{ type: "address" }, { type: "address" }, { type: "uint256" }, { type: "uint256" },
               { type: "uint256" }, { type: "uint256" }, { type: "uint256" }] },
@@ -63,13 +64,25 @@ async function main() {
       leftMin = Math.floor((Number(ns / 1_000_000_000n) - nowS) / 60);
     } catch {}
 
-    // The exit gate, asked exactly the way Arena asks it.
+    // The exit gate, asked exactly the way Arena asks it: the advertised position
+    // token first, then — when that cannot answer — the venue itself. Both steps
+    // must be here, or this tool reports the old fault forever and contradicts the
+    // code it is meant to observe.
     const base = (await rd("getPoolParams") as any[])[0] as `0x${string}`;
-    let exit = "withheld — the position token cannot answer a balance question";
+    let exit: string;
     try {
       const held = await pub.readContract({ address: base, abi: ERC20 as any, functionName: "balanceOf", args: [arena] }) as bigint;
-      exit = `offerable — arena holds ${formatUnits(held, 18)}`;
-    } catch { /* the message above is the finding, not a failure of this script */ }
+      exit = `arena holds ${formatUnits(held, 18)} of the position token`;
+    } catch {
+      try {
+        const held = await rd("yesBalance18") as bigint;
+        exit = held > 0n
+          ? `offerable — the desk holds ${formatUnits(held, 18)} to deliver`
+          : "the desk answers, and holds nothing right now — an exit opens as soon as a fighter backs";
+      } catch {
+        exit = "WITHHELD — neither the position token nor the venue will say what can be delivered";
+      }
+    }
 
     console.log(
       `${desk.slice(0, 10)}  mid ${f.toFixed(3)} (${word(f)})  ` +
