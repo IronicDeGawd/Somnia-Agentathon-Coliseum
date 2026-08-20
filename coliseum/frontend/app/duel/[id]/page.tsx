@@ -22,9 +22,10 @@ import { useMarginWatch, type MarginObservation } from '@/hooks/useMarginWatch';
 import { useLiquidations } from '@/hooks/useLiquidations';
 import { liquidationWord, type LiquidationRecord } from '@/lib/liquidations';
 import { clockOf } from '@/lib/blockTime';
+import { newestFirst } from '@/lib/timelineOrder';
 import type { FighterPerp } from '@/hooks/useDuelLive';
 import { useFighters } from '@/hooks/useFighters';
-import { FIGHTERS } from '@/lib/fighters';
+import { FIGHTERS, FIGHTER_VISUAL_MAP as ROSTER_VISUALS } from '@/lib/fighters';
 import { fmtUsd, fmtPct } from '@/lib/format';
 import { marginStatusCopy } from '@/lib/marginStatus';
 
@@ -38,23 +39,35 @@ interface Holding {
   hint?: string;
 }
 
-// Visual identity per fighter index — mirrors VISUAL_IDENTITY in useFighters.ts.
-const FIGHTER_VISUAL_MAP: Record<number, {
-  hex: string;
+/**
+ * What this page shows for each fighter index, beyond the roster itself.
+ *
+ * THE COLOUR IS NOT REPEATED HERE. It used to be — all six, as raw hex, which is
+ * the same list that also lived in the roster file, the duel card and the
+ * creator. Four copies of a colour is four places to change it and three of them
+ * get forgotten. The ring name, rank and fallback portrait stay local because
+ * they are this page's own wording and differ from the roster's on purpose.
+ */
+const RING_IDENTITY: Record<number, {
   side: 'a' | 'b';
   tier: string;
   rank: string;
   fallbackId: string;
 }> = {
-  0: { hex: '#ff3366', side: 'a', tier: 'AGGRESSOR', rank: 'S', fallbackId: 'degen' },
-  1: { hex: '#00d9ff', side: 'b', tier: 'TACTICIAN', rank: 'S', fallbackId: 'whale' },
-  2: { hex: '#a78bfa', side: 'a', tier: 'QUANT',     rank: 'A', fallbackId: 'quant' },
-  3: { hex: '#fcd34d', side: 'b', tier: 'HOLDER',    rank: 'A', fallbackId: 'diamond' },
-  4: { hex: '#f97316', side: 'a', tier: 'SCALPER',   rank: 'A', fallbackId: 'scalper' },
-  5: { hex: '#34d399', side: 'b', tier: 'REBEL',     rank: 'B', fallbackId: 'contrarian' },
+  0: { side: 'a', tier: 'AGGRESSOR', rank: 'S', fallbackId: 'degen' },
+  1: { side: 'b', tier: 'TACTICIAN', rank: 'S', fallbackId: 'whale' },
+  2: { side: 'a', tier: 'QUANT',     rank: 'A', fallbackId: 'quant' },
+  3: { side: 'b', tier: 'HOLDER',    rank: 'A', fallbackId: 'diamond' },
+  4: { side: 'a', tier: 'SCALPER',   rank: 'A', fallbackId: 'scalper' },
+  5: { side: 'b', tier: 'REBEL',     rank: 'B', fallbackId: 'contrarian' },
 };
 
-const DEFAULT_VISUAL = { hex: '#ffffff', side: 'a' as const, tier: 'FIGHTER', rank: 'A', fallbackId: 'degen' };
+/** Ring identity plus the roster's colour, which is the one that owns it. */
+const visualOf = (index: number) => {
+  const ring = RING_IDENTITY[index];
+  if (!ring) return { hex: 'var(--text)', side: 'a' as const, tier: 'FIGHTER', rank: 'A', fallbackId: 'degen' };
+  return { ...ring, hex: ROSTER_VISUALS[index]?.hex ?? 'var(--text)' };
+};
 
 const RIBBON = ({ hex, side, tier, rank, winning }: { hex: string; side: 'a' | 'b'; tier: string; rank: string; winning: boolean | null }) => {
   const isRight = side === 'b';
@@ -261,9 +274,9 @@ function FighterTimeline({
   latestShown: string;
 }) {
   type Row =
-    | { kind: 'move'; at?: number; sort: number; e: TranscriptEntry }
-    | { kind: 'margin'; at: number; sort: number; o: MarginObservation }
-    | { kind: 'liq'; at?: number; sort: number; r: LiquidationRecord };
+    | { kind: 'move'; at?: number; e: TranscriptEntry }
+    | { kind: 'margin'; at: number; o: MarginObservation }
+    | { kind: 'liq'; at?: number; r: LiquidationRecord };
 
   // This fighter's moves, newest last. Drop the newest only when it is the very
   // move the card above is showing.
@@ -273,23 +286,31 @@ function FighterTimeline({
     ? mine.slice(0, -1)
     : mine;
 
-  const rows: Row[] = [
-    // A move with no timestamp yet still sorts by its block, so the order is right
-    // from the first paint and only the clock arrives late.
-    ...earlier.map((e) => ({
-      kind: 'move' as const, at: e.timestamp, sort: e.timestamp ?? Number(e.block), e,
-    })),
+  const unordered: Row[] = [
+    ...earlier.map((e) => ({ kind: 'move' as const, at: e.timestamp, e })),
     ...marginSeen.filter((o) => o.fighterId === fighterId).map((o) => ({
-      kind: 'margin' as const, at: o.seenAt, sort: o.seenAt, o,
+      kind: 'margin' as const, at: o.seenAt, o,
     })),
     ...liquidations.filter((r) => r.fighterId === fighterId).map((r) => ({
-      kind: 'liq' as const, at: r.timestamp, sort: r.timestamp ?? Number(r.block), r,
+      kind: 'liq' as const, at: r.timestamp, r,
     })),
   ];
 
   // Newest first: a live fight's next line is the one a spectator is waiting for,
   // and it should not require scrolling to a bottom that keeps moving.
-  rows.sort((a, b) => b.sort - a.sort);
+  //
+  // The ordering lives in its own tested file because it is not the one-line sort
+  // it looks like: a chain event knows its BLOCK from the moment it lands but may
+  // never learn its clock, while a margin sighting only ever knows a clock. The
+  // first version compared the two directly, which put any move still waiting for
+  // its timestamp underneath every move that had one.
+  const rows = newestFirst(unordered, (r) =>
+    r.kind === 'margin'
+      ? { seenAt: r.o.seenAt }
+      : r.kind === 'move'
+        ? { block: r.e.block, timestamp: r.e.timestamp }
+        : { block: r.r.block, timestamp: r.r.timestamp },
+  );
 
   if (rows.length === 0) {
     return (
@@ -301,24 +322,25 @@ function FighterTimeline({
 
   return (
     <div className="col gap-2" style={{ maxHeight: 320, overflowY: 'auto', minWidth: 0 }}>
-      {rows.map((r, i) => (
+      {rows.map((r) => (
         <div
+          // IDENTIFIED BY WHAT THE ROW IS, never by where it sits in the list.
+          // The keys used to include the array index, and the list is ordered
+          // newest-first — so one new move renumbered every row beneath it and
+          // the browser rebuilt the whole history. A spectator scrolled back a
+          // few rounds was thrown to the top each time a fighter acted.
           key={
-            r.kind === 'move' ? `m${r.e.block}-${i}`
-              : r.kind === 'liq' ? `l${r.r.block}-${i}`
-              : `g${r.o.seenAt}-${i}`
+            r.kind === 'move' ? `m-${r.e.round}-${r.e.block}-${r.e.failed ? 'x' : 'o'}`
+              : r.kind === 'liq' ? `l-${r.r.block}-${r.r.stage}`
+              : `g-${r.o.seenAt}-${r.o.status}`
           }
-          className="row ai-c t-mono t-sm"
+          className={`row ai-c t-mono t-sm tint-${side}`}
           // The same treatment as the corner card this sits under: a bar in the
           // fighter's colour and a wash of it behind, so the column reads as one
-          // object rather than a table that happens to be nearby.
-          style={{
-            gap: 12,
-            padding: '7px 14px',
-            minWidth: 0,
-            borderLeft: `2px solid var(--fighter-${side})`,
-            background: `linear-gradient(90deg, var(--fighter-${side}-soft), transparent 70%)`,
-          }}
+          // object rather than a table that happens to be nearby. The wash is a
+          // design-layer class rather than an inline gradient because it also has
+          // to lift the faint text tier — see `.tint-a` for the measurements.
+          style={{ gap: 12, padding: '7px 14px', minWidth: 0 }}
         >
           <span className="t-num t-xs t-faint" style={{ width: 62, flexShrink: 0 }}>
             {clockOf(r.at)}
@@ -708,8 +730,10 @@ export default function ArenaPage() {
   const fighterBIndex = duel ? duel.fighterB : 1;
 
   // Visual identity
-  const visualA = FIGHTER_VISUAL_MAP[fighterAIndex] ?? DEFAULT_VISUAL;
-  const visualB = FIGHTER_VISUAL_MAP[fighterBIndex] ?? { ...DEFAULT_VISUAL, side: 'b' as const };
+  const visualA = visualOf(fighterAIndex);
+  // An unknown index falls back to side B here, so an unrecognised pairing still
+  // renders as two opposing corners rather than two red ones.
+  const visualB = { ...visualOf(fighterBIndex), side: (RING_IDENTITY[fighterBIndex]?.side ?? 'b') as 'a' | 'b' };
 
   // Static FIGHTERS persona fallback for name/tagline/avatar
   const fallbackA = FIGHTERS[visualA.fallbackId] ?? FIGHTERS.degen;
@@ -1014,14 +1038,14 @@ export default function ArenaPage() {
         </div>
 
         {/* § FEED — Real last action + thinking state */}
-        {/* The feed is the primary content of a live duel and updates without
-            any user action, so it is announced politely rather than silently
-            replaced. `atomic` off: only the corner that changed is read. */}
+        {/* DELIBERATELY NOT A LIVE REGION AS A WHOLE. It was one, and then the
+            fight history moved inside it — so every backfilled timestamp, every
+            margin sighting, and every phrase of the decorative thinking ticker
+            (which changes every 1.7s, twice over, for the length of a fight) was
+            read aloud. The announcement belongs on the one thing that is news:
+            each fighter's current move, below. */}
         <div
           className="card pad-24 col gap-16"
-          aria-live="polite"
-          aria-atomic="false"
-          aria-label="Fighter actions feed"
           style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%), var(--bg-card)' }}
         >
           <div className="sect-head">
@@ -1045,14 +1069,16 @@ export default function ArenaPage() {
               // one tall box whose top half was mostly empty, and buried the live
               // line above a list that scrolls.
               <div key={side} className="col gap-12 flex-1" style={{ minWidth: 0 }}>
-                {/* NOW */}
+                {/* NOW — the only part of the feed that is announced. One
+                    fighter's current state and move, read as a whole so it
+                    arrives as "The Degen acted, long ETH" rather than as two
+                    unrelated fragments. */}
                 <div
-                  className="col gap-6"
-                  style={{
-                    minWidth: 0, padding: '14px 16px',
-                    borderLeft: `2px solid var(--fighter-${side})`,
-                    background: `linear-gradient(180deg, var(--fighter-${side}-soft), transparent 70%)`,
-                  }}
+                  className={`col gap-6 tint-${side} tint-down`}
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  style={{ minWidth: 0, padding: '14px 16px' }}
                 >
                   <div className="row gap-8 ai-c jc-sb">
                     <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
