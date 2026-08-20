@@ -75,6 +75,16 @@ contract ArenaViewPart is ArenaStorage {
     ///
     ///         A view rather than three public variables because the router's
     ///         compiled getters are frozen and it is never redeployed.
+    /// @notice Where the entry fee is routed, and what is still accrued here.
+    ///
+    ///         An explicit view because the router's compiled getters are frozen and
+    ///         it is never redeployed: a `public` variable added to the layout after
+    ///         the router shipped generates a getter in the PARTS that the router has
+    ///         no selector for, so reading it reverts. Found exactly that way.
+    function fuelStatus() external view returns (address pot, uint256 stillAccrued) {
+        return (fuelPot, accruedFees);
+    }
+
     function reactivityStatus() external view returns (bool on, uint64 armedFor, uint256 subId, uint64 nextDue) {
         return (reactivityOn, armedForBlock, subscriptionId, _nextTurnBlock());
     }

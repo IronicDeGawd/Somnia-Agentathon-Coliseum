@@ -45,7 +45,7 @@ describe("FuelPot", function () {
   describe("it only acts when there is something to do", function () {
     it("does nothing, and does not revert, when the pot is empty", async () => {
       const { owner, pot, publicClient } = await deploy();
-      const hash = await pot.write.refuel({ account: owner.account });
+      const hash = await pot.write.refuel({ account: owner.account, gas: 12_000_000n });
       const r = await publicClient.waitForTransactionReceipt({ hash });
       expect(r.status, "a keeper on a timer must not see a stream of failures").to.equal("success");
       const skipped = await pot.getEvents.RefuelSkipped({}, { blockHash: r.blockHash });
@@ -57,7 +57,7 @@ describe("FuelPot", function () {
       await stable.write.mint([pot.address, parseEther("100")]);
       // Give the stand-in arena more coin than the floor.
       await owner.sendTransaction({ to: await pot.read.arena() as `0x${string}`, value: parseEther("30") });
-      const hash = await pot.write.refuel({ account: owner.account });
+      const hash = await pot.write.refuel({ account: owner.account, gas: 12_000_000n });
       const r = await publicClient.waitForTransactionReceipt({ hash });
       const skipped = await pot.getEvents.RefuelSkipped({}, { blockHash: r.blockHash });
       expect(skipped.map((e: any) => e.args.reason)).to.deep.equal(["arena above floor"]);
@@ -113,6 +113,45 @@ describe("FuelPot", function () {
       // Ten percent is the documented ceiling and must still be allowed.
       await pot.write.setLimits([parseEther("10"), 1_000n], { account: owner.account });
       expect(await pot.read.maxPremiumBps()).to.equal(1_000n);
+    });
+  });
+
+  describe("it refuses to half-try", function () {
+    it("reverts rather than ordering when there is not enough gas to finish", async () => {
+      // The failure this guards was silent and self-perpetuating. The first version
+      // placed its order inside a catch with no floor: every attempt failed while
+      // reporting success, because the nested call ran out of gas and the catch
+      // absorbed it — and because the outer call still succeeded, the estimator
+      // sized every retry to fail the same way. Measured on chain: 1,075,403 gas
+      // spent in total against 1,157,110 needed for the venue's work alone.
+      const { owner, pot, stable, market } = await deploy();
+      await stable.write.mint([pot.address, parseEther("100")]);
+      // A book to cross, so the call actually reaches the point of ordering rather
+      // than returning early with "nobody offering".
+      await market.write.setBookLevel([false, parseEther("0.1"), parseEther("500")]);
+      await expect(
+        pot.write.refuel({ account: owner.account, gas: 500_000n }),
+        "a call too small to finish must fail loudly, not report a venue refusal",
+      ).to.be.rejected;
+
+      // And with room to work, the same call gets past the floor.
+      const hash = await pot.write.refuel({ account: owner.account, gas: 12_000_000n });
+      const receipt = await (await hre.viem.getPublicClient()).waitForTransactionReceipt({ hash });
+      const skipped = await pot.getEvents.RefuelSkipped({}, { blockHash: receipt.blockHash });
+      expect(
+        skipped.map((e: any) => e.args.reason),
+        "with enough gas it must get past the floor and reach the venue",
+      ).to.not.include("nobody offering coin");
+    });
+
+    it("will not let the floor be set below the venue's measured cost", async () => {
+      const { owner, pot } = await deploy();
+      // A four-million limit was refused by the real venue, so any floor at or
+      // below it would permit the same silent half-try this guard exists to stop.
+      await expect(pot.write.setGasFloor([100_000n], { account: owner.account })).to.be.rejected;
+      await expect(pot.write.setGasFloor([3_000_000n], { account: owner.account })).to.be.rejected;
+      await pot.write.setGasFloor([9_000_000n], { account: owner.account });
+      expect(await pot.read.rescueGasFloor()).to.equal(9_000_000n);
     });
   });
 

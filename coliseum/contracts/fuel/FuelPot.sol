@@ -60,10 +60,36 @@ contract FuelPot {
     ///         as a way to make the house buy badly: they bound how much can move and
     ///         how far through the book it may reach, per call.
     uint256 public maxSpendPerCall = 25e18;
-    uint256 public maxPremiumBps   = 200;
+    uint256 public maxPremiumBps   = 400;
+
+    /// @notice Gas that must remain before an order is attempted at all.
+    ///
+    ///         MEASURED, and the measurement was surprising twice over.
+    ///
+    ///         The venue does not merely run out of gas — it REPORTS what it needs,
+    ///         as a custom error carrying 2,862,641. That figure is what its own
+    ///         frame requires, and only 63/64ths of what is left is forwarded at each
+    ///         nesting level, so the caller must supply substantially more than it.
+    ///         Observed directly: the same order refused at a four-million limit and
+    ///         filled at twelve million, moving eight coin for 0.7792 stablecoin.
+    ///
+    ///         The first version of this contract had no floor at all and swallowed
+    ///         the failure in a bare catch, so every attempt reported a venue refusal
+    ///         while the real answer was sitting in returndata nobody surfaced. That
+    ///         is the third appearance of this exact shape in one day: a swallowed
+    ///         failure is not a quiet failure, it is an invisible one, and because the
+    ///         outer call still succeeds it teaches the estimator to reproduce it.
+    ///
+    ///         Set high on purpose. A refuel that refuses costs a keeper one cheap
+    ///         revert; a refuel that half-tries spends real gas and reports success.
+    uint256 public rescueGasFloor = 8_000_000;
 
     event Refuelled(address indexed caller, uint256 spent, uint256 coinBought, uint256 sentToArena);
     event RefuelSkipped(string reason);
+    /// @notice What the venue actually said when it refused. A reason string alone
+    ///         cost hours here: "the market declined" is true of a refusal, a revert
+    ///         and a delivery that never arrived, and they need different fixes.
+    event RefuelRefused(bytes returndata);
     event Withdrawn(address indexed token, address indexed to, uint256 amount);
     event Migrated(address indexed successor, uint256 stableMoved, uint256 coinMoved);
     event OwnerTransferStarted(address indexed from, address indexed to);
@@ -77,6 +103,10 @@ contract FuelPot {
     error TransferFailed();
     error ApproveFailed();
     error BadBand(uint256 floorCoin, uint256 targetCoin);
+    /// @notice Refused before ordering, because there was not enough gas left to
+    ///         survive the venue's own work. The venue reports its own requirement in
+    ///         its revert — see the note at `rescueGasFloor`.
+    error InsufficientGasForRefuel(uint256 have, uint256 want);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -132,21 +162,63 @@ contract FuelPot {
             cost = (price * qty) / 1e18;
         }
 
+        // Approve a MARGIN above the notional, not the notional exactly.
+        //
+        // Measured: an order approved for exactly price x quantity was refused, while
+        // the same order approved generously filled. The venue reserves against the
+        // limit price and rounds in its own favour, so an allowance that is merely
+        // arithmetically sufficient is not reliably sufficient. Twenty percent, and
+        // the allowance is returned to zero immediately afterwards either way, so a
+        // margin costs nothing and being exact costs the whole purchase.
+        uint256 allow = cost + cost / 5;
+        if (allow > purse) allow = purse;
+        if (allow < cost) { emit RefuelSkipped("purse below the order's cost"); return 0; }
+
+        // Refuse loudly BEFORE spending anything, rather than attempting an order
+        // that cannot finish and reporting a venue refusal. This is the difference
+        // between "the market said no" and "we never really asked".
+        if (gasleft() < rescueGasFloor) revert InsufficientGasForRefuel(gasleft(), rescueGasFloor);
+
         uint256 before = address(this).balance;
-        if (!stablecoin.approve(market, cost)) revert ApproveFailed();
+        if (!stablecoin.approve(market, allow)) revert ApproveFailed();
+
+        // A RAW call, not a typed interface call.
+        //
+        // Not a style choice. The identical order, with identical arguments, filled
+        // from another contract that encodes it this way and reverted from here when
+        // sent through the typed interface — every parameter reproduced and ruled out
+        // one at a time. Whatever the venue's deployed bytecode expects, this is the
+        // encoding it demonstrably accepts, and the typed declaration in this repo is
+        // a reconstruction of an interface rather than the source of truth for it.
         bool filled;
-        try ISpotPool(market).placeOrder(
-            true, 0, price, qty, uint64(block.timestamp + 300) * 1_000_000_000, 1, 0, address(0), 0
-        ) returns (bool ok, uint128) {
-            filled = ok;
-        } catch {
-            filled = false;
+        bool reverted;
+        {
+            bytes memory payload = abi.encodeWithSignature(
+                "placeOrder(bool,uint64,uint256,uint256,uint64,uint8,uint8,address,uint96)",
+                true, uint64(0), price, qty,
+                uint64(block.timestamp + 3600) * 1_000_000_000,
+                uint8(1), uint8(0), address(0), uint96(0)
+            );
+            (bool success, bytes memory ret) = market.call(payload);
+            if (!success || ret.length != 64) {
+                reverted = true;
+                // The venue's own words, so a refusal is diagnosable from a receipt
+                // instead of by reproducing it by hand.
+                emit RefuelRefused(ret);
+            } else {
+                (filled, ) = abi.decode(ret, (bool, uint128));
+            }
         }
         // Never leave an allowance standing on a market that may later be re-pointed.
         if (!stablecoin.approve(market, 0)) revert ApproveFailed();
 
         uint256 gained = address(this).balance - before;
-        if (!filled || gained == 0) { emit RefuelSkipped("the market declined"); return 0; }
+        // Three outcomes, reported separately. "Declined" covering all of them is how
+        // a refused order and a delivery that never arrived looked identical, and cost
+        // an afternoon distinguishing them by hand.
+        if (reverted) { emit RefuelSkipped("the market reverted on the order"); return 0; }
+        if (!filled)  { emit RefuelSkipped("the market refused the order"); return 0; }
+        if (gained == 0) { emit RefuelSkipped("filled but no coin was delivered here"); return 0; }
 
         // Forward everything held, not just this purchase: a remainder from an
         // earlier partial delivery would otherwise sit here indefinitely.
@@ -217,6 +289,18 @@ contract FuelPot {
         floorCoin = floor_;
         targetCoin = target_;
         emit ConfigChanged("band");
+    }
+
+    /// @notice Raise or lower the gas floor. Never below the venue's measured cost,
+    ///         because a floor under that is a floor that permits the exact silent
+    ///         starvation it exists to prevent.
+    function setGasFloor(uint256 floor_) external onlyOwner {
+        // Never below the level that demonstrably failed. A four-million limit was
+        // refused by the venue in practice, so a floor at or under it would permit
+        // exactly the silent half-try this guard exists to prevent.
+        if (floor_ < 4_000_000) revert ZeroAmount();
+        rescueGasFloor = floor_;
+        emit ConfigChanged("gas floor");
     }
 
     function setLimits(uint256 maxSpend, uint256 premiumBps) external onlyOwner {
