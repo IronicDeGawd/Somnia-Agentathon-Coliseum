@@ -136,6 +136,21 @@ async function main() {
   const usdso = m.external.usdso as `0x${string}`;
   const pub = await hre.viem.getPublicClient();
   const [op] = await hre.viem.getWalletClients();
+
+  /** Send-side chokepoint: wait for the receipt, then verify the transaction
+   *  itself did not revert. A reverted tx resolves normally in viem — it does
+   *  not throw — so without this check `main().catch(...)` never sees it and
+   *  the process exits 0 after an on-chain revert. This does NOT replace the
+   *  event-based outcome checks below: a successful receipt still does not
+   *  mean the order filled, so both checks are needed. */
+  async function waitOk(hash: `0x${string}`) {
+    const r = await pub.waitForTransactionReceipt({ hash });
+    if (r.status !== "success") {
+      console.error(`  tx ${hash} REVERTED (status=${r.status})`);
+      throw new Error(`transaction ${hash} reverted (status=${r.status})`);
+    }
+    return r;
+  }
   const stage = (process.env.STAGE || "").toLowerCase();
   const impl = (process.env.IMPL || "container").toLowerCase();
 
@@ -193,13 +208,25 @@ async function main() {
     return (block.timestamp + BigInt(3600)) * BigInt(1_000_000_000);
   }
 
+  /** Find the requested perp desk by market — fail loudly rather than silently
+   *  falling back to some other desk. A typo in MARKET must never trade a
+   *  market the operator did not ask for. */
+  function pickDesk(want: string) {
+    const desk = m.contracts.PerpDesks.desks.find((d: any) => d.market === want);
+    if (!desk) {
+      const known = m.contracts.PerpDesks.desks.map((d: any) => d.market).join(", ");
+      throw new Error(`MARKET="${want}" matches no perp desk — known markets: ${known}`);
+    }
+    return desk;
+  }
+
   // ------------------------------------------------------------------ deploy
   if (stage === "deploy") {
     const artifactName = impl === "probe" ? "AccountProbe" : "TradingContainer";
     if (!mustConfirm([`deploy ${artifactName} (impl=${impl}) from ${op.account.address}`])) return;
     const art = await hre.artifacts.readArtifact(artifactName);
     const hash = await op.deployContract({ abi: art.abi, bytecode: art.bytecode as `0x${string}`, args: [] });
-    const r = await pub.waitForTransactionReceipt({ hash });
+    const r = await waitOk(hash);
     fs.writeFileSync(STATE, r.contractAddress!);
     console.log(`${artifactName} deployed at ${r.contractAddress}  (${(art.deployedBytecode.length - 2) / 2} bytes)`);
     return;
@@ -247,15 +274,15 @@ async function main() {
       ];
       if (!mustConfirm(lines)) return;
       let h = await op.writeContract({ address: usdso, abi: ERC20, functionName: "mint", args: [container, fund] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
       h = await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "approveToken", args: [usdso, v.pool, fund] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
       const b0 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       h = await op.writeContract({
         address: container, abi: PROBE_ABI, functionName: "trade",
         args: [v.pool, true, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
       });
-      const r = await pub.waitForTransactionReceipt({ hash: h });
+      const r = await waitOk(h);
       const b1 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
       console.log(`  base  ${formatUnits(b0, v.dec)} -> ${formatUnits(b1, v.dec)}`);
@@ -269,14 +296,14 @@ async function main() {
     ];
     if (!mustConfirm(lines)) return;
     let h = await op.writeContract({ address: usdso, abi: ERC20, functionName: "mint", args: [container, fund] });
-    await pub.waitForTransactionReceipt({ hash: h });
+    await waitOk(h);
     const u0 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const b0 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     h = await op.writeContract({
       address: container, abi: CONTAINER_ABI, functionName: "trade",
       args: [v.pool, usdso, fund, true, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
     });
-    const r = await pub.waitForTransactionReceipt({ hash: h });
+    const r = await waitOk(h);
     const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const b1 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const ev = findContainerEvent(r, container);
@@ -306,13 +333,13 @@ async function main() {
       ];
       if (!mustConfirm(lines)) return;
       let h = await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "approveToken", args: [v.base, v.pool, qty] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
       const u0 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       h = await op.writeContract({
         address: container, abi: PROBE_ABI, functionName: "trade",
         args: [v.pool, false, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
       });
-      const r = await pub.waitForTransactionReceipt({ hash: h });
+      const r = await waitOk(h);
       const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
       console.log(`  USDso ${formatUnits(u0, 18)} -> ${formatUnits(u1, 18)}`);
@@ -327,7 +354,7 @@ async function main() {
       address: container, abi: CONTAINER_ABI, functionName: "trade",
       args: [v.pool, v.base, qty, false, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
     });
-    const r = await pub.waitForTransactionReceipt({ hash: h });
+    const r = await waitOk(h);
     const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const b1 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const ev = findContainerEvent(r, container);
@@ -357,7 +384,7 @@ async function main() {
 
     if (needed > BigInt(0)) {
       const h = await op.sendTransaction({ to: container, value: needed });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
     }
     const c0 = await pub.getBalance({ address: container });
     const u0 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
@@ -367,7 +394,7 @@ async function main() {
         address: container, abi: PROBE_ABI, functionName: "trade",
         args: [v.pool, false, BigInt(0), cross.price, qty, await expireNs(), 1, qty],
       });
-      const r = await pub.waitForTransactionReceipt({ hash: h });
+      const r = await waitOk(h);
       const c1 = await pub.getBalance({ address: container });
       const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
@@ -381,7 +408,7 @@ async function main() {
       address: container, abi: CONTAINER_ABI, functionName: "trade",
       args: [v.pool, "0x0000000000000000000000000000000000000000", BigInt(0), false, BigInt(0), cross.price, qty, await expireNs(), 1, qty],
     });
-    const r = await pub.waitForTransactionReceipt({ hash: h });
+    const r = await waitOk(h);
     const c1 = await pub.getBalance({ address: container });
     const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const ev = findContainerEvent(r, container);
@@ -409,7 +436,7 @@ async function main() {
         address: container, abi: CONTAINER_ABI, functionName: "settle",
         args: [v.pool, "0x0000000000000000000000000000000000000000", cross.price, await expireNs(), 1],
       });
-      const r = await pub.waitForTransactionReceipt({ hash: h });
+      const r = await waitOk(h);
       const c1 = await pub.getBalance({ address: container });
       const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       const ev = findContainerEvent(r, container);
@@ -432,7 +459,7 @@ async function main() {
       address: container, abi: CONTAINER_ABI, functionName: "settle",
       args: [v.pool, v.base, cross.price, await expireNs(), 1],
     });
-    const r = await pub.waitForTransactionReceipt({ hash: h });
+    const r = await waitOk(h);
     const b1 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const u1 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const ev = findContainerEvent(r, container);
@@ -447,7 +474,7 @@ async function main() {
   if (stage === "perp") {
     const bank = m.contracts.PerpDesks.marginBank as `0x${string}`;
     const want = process.env.MARKET || "XRP";
-    const desk = m.contracts.PerpDesks.desks.find((d: any) => d.market === want) ?? m.contracts.PerpDesks.desks[0];
+    const desk = pickDesk(want);
     const perpPool = desk.perpPool as `0x${string}`;
 
     const OBP = parseAbi(["function getOrderBookParameters() view returns (uint256,uint256,uint256)"]);
@@ -466,12 +493,12 @@ async function main() {
       ];
       if (!mustConfirm(lines)) return;
       let h = await op.writeContract({ address: usdso, abi: ERC20, functionName: "mint", args: [container, fund] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
       h = await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "approveToken", args: [usdso, bank, fund] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
       const depositData = ("0xb6b55f25" + fund.toString(16).padStart(64, "0")) as `0x${string}`;
       h = await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "exec", args: [bank, depositData, BigInt(0)] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
       const MKT = parseAbi(["function market() view returns (address)"]);
       const POS = parseAbi(["function getPosition(address,address) view returns (int256,uint256,uint256,uint256)"]);
       const market = (await pub.readContract({ address: desk.desk as `0x${string}`, abi: MKT, functionName: "market" })) as `0x${string}`;
@@ -480,7 +507,7 @@ async function main() {
         address: container, abi: PROBE_ABI, functionName: "trade",
         args: [perpPool, true, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
       });
-      const r = await pub.waitForTransactionReceipt({ hash: h });
+      const r = await waitOk(h);
       const p1 = (await pub.readContract({ address: bank, abi: POS, functionName: "getPosition", args: [container, market] })) as readonly [bigint, bigint, bigint, bigint];
       console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
       console.log(`  position ${formatUnits(p0[0], desk.baseDecimals)} -> ${formatUnits(p1[0], desk.baseDecimals)}`);
@@ -494,9 +521,9 @@ async function main() {
     ];
     if (!mustConfirm(lines)) return;
     let h = await op.writeContract({ address: usdso, abi: ERC20, functionName: "mint", args: [container, fund] });
-    await pub.waitForTransactionReceipt({ hash: h });
+    await waitOk(h);
     h = await op.writeContract({ address: container, abi: CONTAINER_ABI, functionName: "fundMargin", args: [usdso, bank, fund] });
-    const rFund = await pub.waitForTransactionReceipt({ hash: h });
+    const rFund = await waitOk(h);
     const fundEv = findContainerEvent(rFund, container);
     console.log(fundEv ? `  event ${fundEv.eventName}` : "  no MarginFunded event found");
 
@@ -508,7 +535,7 @@ async function main() {
       address: container, abi: CONTAINER_ABI, functionName: "trade",
       args: [perpPool, "0x0000000000000000000000000000000000000000", BigInt(0), true, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
     });
-    const r = await pub.waitForTransactionReceipt({ hash: h });
+    const r = await waitOk(h);
     const p1 = (await pub.readContract({ address: bank, abi: POS, functionName: "getPosition", args: [container, market] })) as readonly [bigint, bigint, bigint, bigint];
     const ev = findContainerEvent(r, container);
     console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
@@ -521,7 +548,7 @@ async function main() {
   if (stage === "perpclose") {
     const bank = m.contracts.PerpDesks.marginBank as `0x${string}`;
     const want = process.env.MARKET || "XRP";
-    const desk = m.contracts.PerpDesks.desks.find((d: any) => d.market === want) ?? m.contracts.PerpDesks.desks[0];
+    const desk = pickDesk(want);
     const perpPool = desk.perpPool as `0x${string}`;
     const OBP = parseAbi(["function getOrderBookParameters() view returns (uint256,uint256,uint256)"]);
     const POS = parseAbi(["function getPosition(address,address) view returns (int256,uint256,uint256,uint256)"]);
@@ -546,7 +573,7 @@ async function main() {
           address: container, abi: PROBE_ABI, functionName: "trade",
           args: [perpPool, !isLong, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
         });
-        const r = await pub.waitForTransactionReceipt({ hash: h });
+        const r = await waitOk(h);
         const p1 = (await pub.readContract({ address: bank, abi: POS, functionName: "getPosition", args: [container, market] })) as readonly [bigint, bigint, bigint, bigint];
         console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
         console.log(`  position ${formatUnits(p0[0], desk.baseDecimals)} -> ${formatUnits(p1[0], desk.baseDecimals)}  ${p1[0] === BigInt(0) ? "FLAT" : "still open"}`);
@@ -555,7 +582,7 @@ async function main() {
           address: container, abi: CONTAINER_ABI, functionName: "trade",
           args: [perpPool, "0x0000000000000000000000000000000000000000", BigInt(0), !isLong, BigInt(0), cross.price, qty, await expireNs(), 1, BigInt(0)],
         });
-        const r = await pub.waitForTransactionReceipt({ hash: h });
+        const r = await waitOk(h);
         const p1 = (await pub.readContract({ address: bank, abi: POS, functionName: "getPosition", args: [container, market] })) as readonly [bigint, bigint, bigint, bigint];
         const ev = findContainerEvent(r, container);
         console.log(`  tx ${h} status=${r.status} gas=${r.gasUsed}`);
@@ -569,11 +596,18 @@ async function main() {
       const w = (await pub.readContract({ address: bank, abi: WD, functionName: "getWithdrawableCollateral", args: [container] })) as bigint;
       console.log(`  withdrawable margin ${formatUnits(w, 18)}`);
       if (w > BigInt(0)) {
+        // A separate, explicit flag on top of CONFIRM=1: closing the position and
+        // withdrawing margin are two unrelated value-moving actions, and one
+        // CONFIRM=1 must not silently authorize both in the same run.
+        if (process.env.CONFIRM_WITHDRAW !== "1") {
+          console.log(`  withdrawable margin ${formatUnits(w, 18)} — set CONFIRM_WITHDRAW=1 (in addition to CONFIRM=1) to withdraw it; CONFIRM=1 alone only authorizes closing the position.`);
+          return;
+        }
         const lines = [`container.exec(bank, withdraw(${formatUnits(w, 18)}))`];
         if (!mustConfirm(lines)) return;
         const data = ("0x2e1a7d4d" + w.toString(16).padStart(64, "0")) as `0x${string}`;
         const h = await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "exec", args: [bank, data, BigInt(0)] });
-        const r = await pub.waitForTransactionReceipt({ hash: h });
+        const r = await waitOk(h);
         console.log(`  margin withdrawn: status=${r.status}`);
       }
     } else {
@@ -607,14 +641,14 @@ async function main() {
         impl === "probe"
           ? await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "sweep", args: [t, op.account.address] })
           : await op.writeContract({ address: container, abi: CONTAINER_ABI, functionName: "recoverToken", args: [t] });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
     }
     if (nativeBal > BigInt(0)) {
       const h =
         impl === "probe"
           ? await op.writeContract({ address: container, abi: PROBE_ABI, functionName: "sweepNative", args: [op.account.address] })
           : await op.writeContract({ address: container, abi: CONTAINER_ABI, functionName: "recoverNative" });
-      await pub.waitForTransactionReceipt({ hash: h });
+      await waitOk(h);
     }
     console.log("everything recovered from the container");
     return;
