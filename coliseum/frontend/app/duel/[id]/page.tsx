@@ -34,6 +34,8 @@ interface Holding {
   token: string;
   amount: string | number;
   pct?: number;
+  /** Plain-words explanation, shown on hover and to a screen reader. */
+  hint?: string;
 }
 
 // Visual identity per fighter index — mirrors VISUAL_IDENTITY in useFighters.ts.
@@ -111,7 +113,21 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
             <div className="row jc-sb ai-c" style={{ gap: 12 }}>
               <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
                 <span style={{ width: 6, height: 6, background: color, display: 'inline-block', boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />
-                <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>{h.token}</span>
+                {/* A native title, not a custom popover: it reaches a keyboard and a
+                    screen reader for free, and this is a label needing one sentence
+                    of explanation rather than a UI of its own. The dotted underline
+                    is the only hint that hovering will say more. */}
+                <span
+                  className="t-mono t-xs t-dim"
+                  title={h.hint}
+                  style={{
+                    whiteSpace: 'nowrap',
+                    borderBottom: h.hint ? '1px dotted var(--text-faint)' : undefined,
+                    cursor: h.hint ? 'help' : undefined,
+                  }}
+                >
+                  {h.token}
+                </span>
               </span>
               <span className="t-num t-sm" style={{ whiteSpace: 'nowrap' }}>{h.amount}</span>
             </div>
@@ -136,40 +152,42 @@ function HoldingsBlock({ holdings, color }: { holdings: Holding[]; color: string
  * weight.
  */
 /**
- * The fight as it happened: every move, both fighters, oldest at the bottom.
+ * One fighter's fight, in its own corner's colour.
  *
- * WHAT THIS REPLACES, and why it was worth replacing. The feed used to show two
- * lines — each fighter's LATEST move. A spectator arriving in round nine read
- * "HOLD / HOLD" and was told nothing about the eight rounds they had missed. The
- * data was never missing: the page already reads every move as it happens and
- * already backfills every earlier one, then overwrote a single value per fighter
- * and threw the rest away.
+ * WHY PER FIGHTER RATHER THAN ONE INTERLEAVED LIST. The panel above it already
+ * divides the fight into two corners, red on the left and blue on the right, and a
+ * spectator reads it that way. A single merged list fought that: every row had to
+ * carry a name to say whose it was, the eye zig-zagged to follow one fighter, and
+ * the colour of a row was decoration rather than structure.
+ *
+ * Split into columns the name becomes redundant — the column IS the fighter — so
+ * each row is just when, which round, and what it did. Reading one agent's whole
+ * campaign is now a straight line down, and comparing the two is a glance across.
  *
  * Times come from the block each move was mined in, asked of the chain rather than
- * calculated from a nominal block interval — a fight can stall between rounds, and
- * an invented clock would show a smooth cadence that never happened.
+ * calculated from a nominal block interval: a fight can stall between rounds, and
+ * an invented clock would show a cadence that never happened.
  *
- * MARGIN SIGHTINGS ARE THREADED IN, and they are a different KIND of fact from the
- * moves around them. A move is a permanent on-chain event. A margin state is a live
- * reading that nothing records, on an account whose link to its fighter is deleted
- * at the final bell — so the only way it can ever be seen is for a page that was
- * open at the time to remember it. They are marked "seen" for exactly that reason.
+ * MARGIN SIGHTINGS AND LIQUIDATIONS LAND IN THE FIGHTER THEY BELONG TO, and they
+ * are different kinds of fact from the moves around them. A move is a permanent
+ * on-chain event. A margin state is a live reading that nothing records, on an
+ * account whose link to its fighter is deleted at the final bell — so it can only
+ * ever be something a page that was open happened to witness. A liquidation, by
+ * contrast, is an act the venue performs and records, so it can be read back for
+ * any fight however old. The rows say which is which.
  */
-function FightTimeline({
+function FighterTimeline({
+  fighterId,
+  side,
   story,
   marginSeen,
   liquidations,
-  nameOf,
-  sideOf,
 }: {
+  fighterId: number;
+  side: 'a' | 'b';
   story: TranscriptEntry[];
   marginSeen: MarginObservation[];
   liquidations: LiquidationRecord[];
-  nameOf: (fighterId: number) => string;
-  /** Which corner this fighter is in, so a row is washed in the same colour the
-   *  card above it uses. Passed in rather than derived: only the page knows which
-   *  registry index took slot A. */
-  sideOf: (fighterId: number) => 'a' | 'b';
 }) {
   type Row =
     | { kind: 'move'; at?: number; sort: number; e: TranscriptEntry }
@@ -179,13 +197,13 @@ function FightTimeline({
   const rows: Row[] = [
     // A move with no timestamp yet still sorts by its block, so the order is right
     // from the first paint and only the clock arrives late.
-    ...story.map((e) => ({
+    ...story.filter((e) => e.fighterId === fighterId).map((e) => ({
       kind: 'move' as const, at: e.timestamp, sort: e.timestamp ?? Number(e.block), e,
     })),
-    ...marginSeen.map((o) => ({ kind: 'margin' as const, at: o.seenAt, sort: o.seenAt, o })),
-    // Sorted by its timestamp when known and by its block otherwise, the same as a
-    // move — so it lands in the right place from the first paint.
-    ...liquidations.map((r) => ({
+    ...marginSeen.filter((o) => o.fighterId === fighterId).map((o) => ({
+      kind: 'margin' as const, at: o.seenAt, sort: o.seenAt, o,
+    })),
+    ...liquidations.filter((r) => r.fighterId === fighterId).map((r) => ({
       kind: 'liq' as const, at: r.timestamp, sort: r.timestamp ?? Number(r.block), r,
     })),
   ];
@@ -196,68 +214,54 @@ function FightTimeline({
 
   if (rows.length === 0) {
     return (
-      <div className="t-mono t-sm t-dim" style={{ padding: '10px 0' }}>
-        {'> '}<span style={{ opacity: 0.5 }}>No moves recorded yet</span>
+      <div className="t-mono t-sm t-dim" style={{ padding: '10px 14px' }}>
+        {'> '}<span style={{ opacity: 0.5 }}>Nothing recorded yet</span>
       </div>
     );
   }
 
   return (
-    <div className="col gap-2" style={{ maxHeight: 360, overflowY: 'auto' }}>
-      {rows.map((r, i) => {
-        const fid = r.kind === 'move' ? r.e.fighterId : r.kind === 'liq' ? r.r.fighterId : r.o.fighterId;
-        const side = sideOf(fid);
-        return (
-          <div
-            key={
-              r.kind === 'move' ? `m${r.e.block}-${r.e.fighterId}-${i}`
-                : r.kind === 'liq' ? `l${r.r.block}-${r.r.fighterId}-${i}`
-                : `g${r.o.seenAt}-${r.o.fighterId}-${i}`
-            }
-            className="row ai-c t-mono t-sm"
-            // The same treatment as the corner cards above: a bar in the fighter's
-            // colour and a wash of it behind. Without this the timeline read as a
-            // spreadsheet bolted under a HUD — the rows carried the same
-            // information and none of the same language, which is what made it
-            // look broken rather than merely plain.
-            style={{
-              gap: 14,
-              padding: '7px 14px',
-              borderLeft: `2px solid var(--fighter-${side})`,
-              background: `linear-gradient(90deg, var(--fighter-${side}-soft), transparent 55%)`,
-            }}
-          >
-            <span className="t-num t-xs t-faint" style={{ width: 62, flexShrink: 0 }}>
-              {clockOf(r.at)}
-            </span>
-            <span className="label-tiny" style={{ width: 26, flexShrink: 0 }}>
-              {r.kind === 'move' ? `R${r.e.round}` : ''}
-            </span>
-            <span
-              className="label-tiny"
-              style={{
-                width: 92, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap', color: `var(--fighter-${side})`,
-              }}
-            >
-              {nameOf(fid)}
-            </span>
-            {r.kind === 'move' ? (
-              r.e.failed ? (
-                <span className="t-dim" style={{ minWidth: 0 }}>
-                  {'> '}refused — {r.e.reason || 'no reason given'}
-                </span>
-              ) : (
-                <MoveText move={r.e.action ?? 'HOLD'} />
-              )
-            ) : r.kind === 'liq' ? (
-              <LiquidationRow record={r.r} />
+    <div className="col gap-2" style={{ maxHeight: 320, overflowY: 'auto', minWidth: 0 }}>
+      {rows.map((r, i) => (
+        <div
+          key={
+            r.kind === 'move' ? `m${r.e.block}-${i}`
+              : r.kind === 'liq' ? `l${r.r.block}-${i}`
+              : `g${r.o.seenAt}-${i}`
+          }
+          className="row ai-c t-mono t-sm"
+          // The same treatment as the corner card this sits under: a bar in the
+          // fighter's colour and a wash of it behind, so the column reads as one
+          // object rather than a table that happens to be nearby.
+          style={{
+            gap: 12,
+            padding: '7px 14px',
+            minWidth: 0,
+            borderLeft: `2px solid var(--fighter-${side})`,
+            background: `linear-gradient(90deg, var(--fighter-${side}-soft), transparent 70%)`,
+          }}
+        >
+          <span className="t-num t-xs t-faint" style={{ width: 62, flexShrink: 0 }}>
+            {clockOf(r.at)}
+          </span>
+          <span className="label-tiny" style={{ width: 26, flexShrink: 0 }}>
+            {r.kind === 'move' ? `R${r.e.round}` : ''}
+          </span>
+          {r.kind === 'move' ? (
+            r.e.failed ? (
+              <span className="t-dim" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {'> '}refused — {r.e.reason || 'no reason given'}
+              </span>
             ) : (
-              <MarginLine status={r.o.status} />
-            )}
-          </div>
-        );
-      })}
+              <MoveText move={r.e.action ?? 'HOLD'} />
+            )
+          ) : r.kind === 'liq' ? (
+            <LiquidationRow record={r.r} />
+          ) : (
+            <MarginLine status={r.o.status} />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -681,11 +685,19 @@ export default function ArenaPage() {
   // and told a spectator nothing about which market the money was sitting in.
   const toDisplayHoldings = (holdings: typeof liveA.holdings): Holding[] =>
     holdings.flatMap((h) => [
-      { token: h.token, amount: Number(parseFloat(h.baseAmount).toFixed(6)) },
+      {
+        token: h.token,
+        amount: Number(parseFloat(h.baseAmount).toFixed(6)),
+        hint: `${h.token} this fighter is holding, bought on the ${h.token} market. Valued at the going price when the fight is scored.`,
+      },
       // "purse", not "cash": `WETH cash` reads as cash DENOMINATED in WETH, which
       // is not a thing. This row is stablecoin — the money still unspent in that
       // market's own purse, which is why it sits beside the WETH actually held.
-      { token: `${h.token} purse`, amount: Number(parseFloat(h.quoteAmount).toFixed(4)) },
+      {
+        token: `${h.token} purse`,
+        amount: Number(parseFloat(h.quoteAmount).toFixed(4)),
+        hint: `Stablecoin (USDso) still unspent on the ${h.token} market. Every market gives a fighter its own purse, so emptying this one leaves the others untouched.`,
+      },
     ]).filter((h) => (h.amount as number) > 0);
 
   const degenHoldings = toDisplayHoldings(liveA.holdings);
@@ -944,47 +956,66 @@ export default function ArenaPage() {
               yet, and it has no timestamp to sort by. */}
           <div className="row gap-16 stack-sm" style={{ alignItems: 'stretch' }}>
             {[
-              { f: degenF, live: liveA, side: 'a' as const, corner: 'RED CORNER', tick: 0 },
-              { f: whaleF, live: liveB, side: 'b' as const, corner: 'BLUE CORNER', tick: 2 },
-            ].map(({ f, live, side, corner, tick }) => (
-              <div
-                key={side}
-                className="col gap-6 flex-1"
-                style={{
-                  minWidth: 0, padding: '14px 16px',
-                  borderLeft: `2px solid var(--fighter-${side})`,
-                  background: `linear-gradient(180deg, var(--fighter-${side}-soft), transparent 70%)`,
-                }}
-              >
-                <div className="row gap-8 ai-c jc-sb">
-                  <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
-                    <Dot variant={side} pulse={live.thinking} />
-                    <span className="label-tiny" style={{ color: `var(--fighter-${side})`, whiteSpace: 'nowrap' }}>
-                      {f.name} {live.thinking ? 'DECIDING…' : live.lastAction ? 'ACTED' : 'WAITING'}
+              { f: degenF, live: liveA, side: 'a' as const, corner: 'RED CORNER', tick: 0, fid: fighterAIndex },
+              { f: whaleF, live: liveB, side: 'b' as const, corner: 'BLUE CORNER', tick: 2, fid: fighterBIndex },
+            ].map(({ f, live, side, corner, tick, fid }) => (
+              // TWO CONTAINERS, not one holding the other. What a fighter is doing
+              // NOW and what it has already done are different questions, asked at
+              // different moments — a spectator glances at the first constantly and
+              // reads the second once. Nesting the history inside the live card made
+              // one tall box whose top half was mostly empty, and buried the live
+              // line above a list that scrolls.
+              <div key={side} className="col gap-12 flex-1" style={{ minWidth: 0 }}>
+                {/* NOW */}
+                <div
+                  className="col gap-6"
+                  style={{
+                    minWidth: 0, padding: '14px 16px',
+                    borderLeft: `2px solid var(--fighter-${side})`,
+                    background: `linear-gradient(180deg, var(--fighter-${side}-soft), transparent 70%)`,
+                  }}
+                >
+                  <div className="row gap-8 ai-c jc-sb">
+                    <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
+                      <Dot variant={side} pulse={live.thinking} />
+                      <span className="label-tiny" style={{ color: `var(--fighter-${side})`, whiteSpace: 'nowrap' }}>
+                        {f.name} {live.thinking ? 'DECIDING…' : live.lastAction ? 'ACTED' : 'WAITING'}
+                      </span>
                     </span>
-                  </span>
-                  <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>{corner}</span>
+                    <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>{corner}</span>
+                  </div>
+                  <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55 }}>
+                    {live.thinking ? (
+                      <ThinkingTicker fighterId={f.id} startIndex={tick} />
+                    ) : live.lastAction ? (
+                      <MoveText move={live.lastAction} />
+                    ) : (
+                      <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
+                    )}
+                  </div>
                 </div>
-                <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55, minHeight: 44 }}>
-                  {live.thinking ? (
-                    <ThinkingTicker fighterId={f.id} startIndex={tick} />
-                  ) : live.lastAction ? (
-                    <MoveText move={live.lastAction} />
-                  ) : (
-                    <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
-                  )}
+
+                {/* WHAT IT HAS ALREADY DONE */}
+                <div
+                  className="col gap-6"
+                  style={{
+                    minWidth: 0, padding: '12px 0',
+                    borderLeft: `2px solid var(--fighter-${side})`,
+                    background: 'var(--bg-card-2)',
+                  }}
+                >
+                  <span className="label-tiny" style={{ padding: '0 16px' }}>EARLIER</span>
+                  <FighterTimeline
+                    fighterId={fid}
+                    side={side}
+                    story={story}
+                    marginSeen={marginSeen}
+                    liquidations={liquidations}
+                  />
                 </div>
               </div>
             ))}
           </div>
-
-          <FightTimeline
-            story={story}
-            marginSeen={marginSeen}
-            liquidations={liquidations}
-            nameOf={(fid) => (duel && fid === duel.fighterA ? degenF.name : whaleF.name)}
-            sideOf={(fid) => (duel && fid === duel.fighterA ? 'a' : 'b')}
-          />
 
           {marginSeen.length > 0 && (
             <span className="t-mono t-xs t-faint">
