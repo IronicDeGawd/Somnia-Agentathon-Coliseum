@@ -123,6 +123,38 @@ contract PerpAccountRegistry {
     ///         contract exists to prevent. Cheap guard, expensive bug.
     bool internal releasing;
 
+    /// @notice Minimum `gasleft()` `forceClose` demands before it will even attempt
+    ///         the rescue order, so a starved inner frame refuses loudly instead of
+    ///         burning the whole transaction on a doomed attempt.
+    ///
+    ///         Sized for the UNHEALTHY path, not the healthy one: a healthy oracle
+    ///         read replayed clean at ~807,158 total gas, but the deepest frame
+    ///         observed live out-of-gassed with 917,354 already forwarded to it — so
+    ///         807k is not a safe floor. 2,000,000 is the figure `AccountProbe`'s own
+    ///         honest-revert estimation actually converged on for the identical
+    ///         calldata (2,032,114 requested, 688,713 used), which is the only figure
+    ///         measured against this exact failure rather than guessed at. NOT
+    ///         proven sufficient for every possible degradation: the 2026-08-19
+    ///         oracle fault was transient and mid-block, its root cause is unknown,
+    ///         and a worse or longer-lived degradation could still exceed this.
+    ///         Overridable by the owner rather than a hard constant for exactly that
+    ///         reason.
+    uint256 public rescueGasFloor = 2_000_000;
+
+    /// @notice Floor beneath which `setRescueGasFloor` refuses, so the owner cannot
+    ///         accidentally turn the guard into a no-op.
+    ///
+    ///         Set from the same measurements as the default above, not from taste:
+    ///         the healthy rescue path replayed clean at ~807,000 total gas, and the
+    ///         deepest frame observed live during the actual failure out-of-gassed
+    ///         with 917,354 already forwarded to it — meaning a floor at or below
+    ///         that number could pass the outer check and still hand the inner frame
+    ///         less than the amount that already failed. 1,000,000 is the smallest
+    ///         round figure clearly above that measured failure point, leaving room
+    ///         for the gas the outer check itself consumes before the inner call
+    ///         even starts.
+    uint256 public constant MIN_RESCUE_GAS_FLOOR = 1_000_000;
+
     error NotOwner();
     error NotArena();
     error NotDesk();
@@ -139,6 +171,8 @@ contract PerpAccountRegistry {
     error DuplicateMarket(address market);
     error DeskNotBoundHere(address desk);
     error CannotSweepCollateral();
+    error InsufficientGasForRescue(uint256 have, uint256 want);
+    error RescueGasFloorTooLow(uint256 attempted, uint256 minimum);
 
     event DesksRegistered(address[] desks);
     event AccountsAdded(uint256 count, uint256 free);
@@ -545,6 +579,13 @@ contract PerpAccountRegistry {
             return false;
         }
 
+        // The (ok, orderId) this returns is deliberately unchecked. A partial IOC
+        // fill can report ok=true while size is still left behind, so trusting that
+        // flag would be trusting the venue's word over what actually happened. The
+        // bank re-read below is the authoritative source of truth, not this return
+        // value — do not "tidy" this into `if (!ok) return false`, that would
+        // reintroduce a subtler version of the swallowed-failure bug already fixed
+        // here.
         PerpAccount(account).trade(
             market, isBid, 0, price, quantity,
             uint64(block.timestamp + 3600) * 1_000_000_000,
@@ -596,6 +637,15 @@ contract PerpAccountRegistry {
     ///         book recovers. It is owner-only, and it can only ever trade an account
     ///         this registry owns, so the authority it grants is over the house's own
     ///         collateral and nothing else.
+    ///         Uses `PerpAccount.tradeStrict`, not the tolerant `trade` every other
+    ///         caller here uses. Measured 2026-08-19: routed through `trade`'s bare
+    ///         `try/catch`, a starved oracle read inside the pool out-of-gassed
+    ///         silently while the outer call reported success — `eth_estimateGas`
+    ///         cannot see a failure a catch already swallowed, so it never sizes
+    ///         enough gas to survive it. `tradeStrict` has no catch, so that failure
+    ///         reaches here as a real revert instead, and the gas floor below refuses
+    ///         up front rather than burning a transaction on an attempt already too
+    ///         starved to succeed.
     function forceClose(
         address account,
         address market,
@@ -603,7 +653,8 @@ contract PerpAccountRegistry {
         uint256 price,
         uint256 quantity
     ) external onlyOwner returns (bool ok, uint128 orderId) {
-        (ok, orderId) = PerpAccount(account).trade(
+        if (gasleft() < rescueGasFloor) revert InsufficientGasForRescue(gasleft(), rescueGasFloor);
+        (ok, orderId) = PerpAccount(account).tradeStrict(
             // Carry the fight's identity if the account still has one, so a rescue
             // fill is attributable in the log like any other.
             market, isBid, uint64(leaseTag[account]),
@@ -612,6 +663,13 @@ contract PerpAccountRegistry {
             ORDER_TYPE_IOC
         );
         emit ForceClosed(account, market, isBid, price, quantity, ok);
+    }
+
+    /// @notice Move the gas floor `forceClose` demands. See its own storage doc for
+    ///         where the default comes from and what it does not prove.
+    function setRescueGasFloor(uint256 floor) external onlyOwner {
+        if (floor < MIN_RESCUE_GAS_FLOOR) revert RescueGasFloorTooLow(floor, MIN_RESCUE_GAS_FLOOR);
+        rescueGasFloor = floor;
     }
 
     /// @notice Take back whatever collateral the bank will release from an account,

@@ -99,6 +99,47 @@ contract PerpAccount {
         }
     }
 
+    /// @notice Place an order as this account, STRICTLY — used only by the owner's
+    ///         `forceClose` rescue, never by a desk or by wind-down.
+    ///
+    ///         Measured 2026-08-19: the deployed pool's oracle price-resolution path
+    ///         can silently burn far more gas than a healthy read costs (one observed
+    ///         static read alone consumed 960,593 gas against a normal cost of
+    ///         25,394 — a 37x blowup), and under EIP-150 the 63/64 rule starves that
+    ///         inner frame whenever the outer call's own gas limit was sized by
+    ///         estimation against a bare `try/catch` — because the catch reports
+    ///         success regardless, `eth_estimateGas` converges on a limit that is
+    ///         just barely enough to REACH the swallowed failure, never enough to
+    ///         survive it. Three live `forceClose` attempts ran at 96.4%-99.3% of
+    ///         their limit with `ok=false` and no revert: a transaction succeeding
+    ///         while eating its whole limit, with the failure hidden, is exactly what
+    ///         a swallowed internal out-of-gas looks like.
+    ///
+    ///         This function has no catch, so a revert OR an out-of-gas below it
+    ///         propagates instead of being reported as a clean refusal. That turns a
+    ///         silent, gas-poisoned failure into an honest one `eth_estimateGas` can
+    ///         actually size for — exactly what `contracts/probe/AccountProbe.sol`
+    ///         demonstrated live: same calldata, a `revert` instead of a catch, and
+    ///         estimation gave it a 2,032,114 gas limit that closed the position
+    ///         cleanly using 688,713.
+    ///
+    ///         Never used by `trade` above. That function's tolerance is deliberate
+    ///         and load-bearing for the live-fight and wind-down paths — see its own
+    ///         doc comment — and must not be touched.
+    function tradeStrict(
+        address pool,
+        bool    isBid,
+        uint64  userData,
+        uint256 price,
+        uint256 quantity,
+        uint64  expireTimestampNs,
+        uint8   orderType
+    ) external onlyRegistry returns (bool ok, uint128 orderId) {
+        return IPerpPool(pool).placeOrder(
+            isBid, userData, price, quantity, expireTimestampNs, orderType, 0, address(0), 0
+        );
+    }
+
     /// @notice Take margin back out and hand it to the registry.
     /// @dev    Withdrawal is REFUSED while a position is open if it would break
     ///         initial margin (`InsufficientMarginAfterWithdrawal`, confirmed live),
