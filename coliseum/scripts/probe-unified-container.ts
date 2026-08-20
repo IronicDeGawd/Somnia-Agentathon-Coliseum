@@ -59,7 +59,7 @@ const PROBE_ABI = parseAbi([
 const CONTAINER_ABI = parseAbi([
   "function trade(address,address,uint256,bool,uint64,uint256,uint256,uint64,uint8,uint256) returns (bool,uint128)",
   "function fundMargin(address,address,uint256)",
-  "function settle(address,address,uint256,uint64,uint8) returns (bool,uint128)",
+  "function settle(address,address,uint256,uint64,uint8,uint256) returns (bool,uint128)",
   "function recoverToken(address) returns (uint256)",
   "function recoverNative() returns (uint256)",
   "function owner() view returns (address)",
@@ -198,8 +198,18 @@ async function main() {
     }[];
     if (levels.length === 0) return null;
     const THROUGH = BigInt(50);
-    let price = isBid ? levels[0].price + THROUGH * tick : levels[0].price - THROUGH * tick;
+    // Crossing DOWN by fifty ticks goes negative on a cheap market, which aborts a
+    // staged run instead of reporting what the book looks like. Cross as far as the
+    // book allows and no further, and never below one tick.
+    let price: bigint;
+    if (isBid) {
+      price = levels[0].price + THROUGH * tick;
+    } else {
+      const step = THROUGH * tick;
+      price = levels[0].price > step ? levels[0].price - step : tick;
+    }
     price = (price / tick) * tick;
+    if (price < tick) price = tick;
     return { price, best: levels[0] };
   }
 
@@ -429,12 +439,14 @@ async function main() {
       const bal = await pub.getBalance({ address: container });
       const cross = await crossPrice(v.pool, v.tick, false);
       if (!cross) { console.log("nobody bidding right now — nothing to settle against"); return; }
-      const lines = [`container.settle(venue=${v.pool}, asset=address(0), price=${formatUnits(cross.price, 18)}) — sells the WHOLE native balance (currently ${formatUnits(bal, 18)})`];
+      const lines = [`container.settle(venue=${v.pool}, asset=address(0), price=${formatUnits(cross.price, 18)}) — sells up to the book's ${formatUnits(cross.best.quantity, 18)} of a ${formatUnits(bal, 18)} balance`];
       if (!mustConfirm(lines)) return;
       const u0 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
       const h = await op.writeContract({
         address: container, abi: CONTAINER_ABI, functionName: "settle",
-        args: [v.pool, "0x0000000000000000000000000000000000000000", cross.price, await expireNs(), 1],
+        // Capped to the resting depth: an all-or-nothing order bigger than the book
+        // cancels the whole sale, so settling a large holding is several calls.
+        args: [v.pool, "0x0000000000000000000000000000000000000000", cross.price, await expireNs(), 1, cross.best.quantity],
       });
       const r = await waitOk(h);
       const c1 = await pub.getBalance({ address: container });
@@ -452,12 +464,12 @@ async function main() {
     if (b0 === BigInt(0)) { console.log("container holds no base asset — run STAGE=buy first, or STAGE=settle ASSET=native"); return; }
     const cross = await crossPrice(v.pool, v.tick, false);
     if (!cross) { console.log("nobody bidding right now — nothing to settle against"); return; }
-    const lines = [`container.settle(venue=${v.pool}, asset=base=${v.base}, price=${formatUnits(cross.price, 18)}) — sells the WHOLE base balance (currently ${formatUnits(b0, v.dec)})`];
+    const lines = [`container.settle(venue=${v.pool}, asset=base=${v.base}, price=${formatUnits(cross.price, 18)}) — sells up to the book's ${formatUnits(cross.best.quantity, v.dec)} of a ${formatUnits(b0, v.dec)} balance`];
     if (!mustConfirm(lines)) return;
     const u0 = (await pub.readContract({ address: usdso, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
     const h = await op.writeContract({
       address: container, abi: CONTAINER_ABI, functionName: "settle",
-      args: [v.pool, v.base, cross.price, await expireNs(), 1],
+      args: [v.pool, v.base, cross.price, await expireNs(), 1, cross.best.quantity],
     });
     const r = await waitOk(h);
     const b1 = (await pub.readContract({ address: v.base, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint;
@@ -623,13 +635,21 @@ async function main() {
   // ---------------------------------------------------------------- recover
   if (stage === "recover") {
     const v = await venueOf(m.external.poolWeth as `0x${string}`);
+    // Each token's OWN decimals. Printing an 8-decimal asset as though it had 18
+    // asks the operator to authorise a value-moving transaction against a figure
+    // wrong by ten orders of magnitude — in the one place the confirmation exists
+    // to make the numbers legible.
     const tokenBalances = await Promise.all(
-      [usdso, v.base].map(async (t) => ({ t, bal: (await pub.readContract({ address: t, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint })),
+      [usdso, v.base].map(async (t) => ({
+        t,
+        bal: (await pub.readContract({ address: t, abi: ERC20, functionName: "balanceOf", args: [container] })) as bigint,
+        dec: Number(await pub.readContract({ address: t, abi: ERC20, functionName: "decimals" })),
+      })),
     );
     const nativeBal = await pub.getBalance({ address: container });
     const lines: string[] = [];
-    for (const { t, bal } of tokenBalances) {
-      if (bal > BigInt(0)) lines.push(`container.${impl === "probe" ? "sweep" : "recoverToken"}(${t}) — moves ${formatUnits(bal, 18)}`);
+    for (const { t, bal, dec } of tokenBalances) {
+      if (bal > BigInt(0)) lines.push(`container.${impl === "probe" ? "sweep" : "recoverToken"}(${t}) — moves ${formatUnits(bal, dec)}`);
     }
     if (nativeBal > BigInt(0)) lines.push(`container.${impl === "probe" ? "sweepNative" : "recoverNative"}() — moves ${formatUnits(nativeBal, 18)} native coin`);
     if (lines.length === 0) { console.log("nothing to recover — container is empty"); return; }

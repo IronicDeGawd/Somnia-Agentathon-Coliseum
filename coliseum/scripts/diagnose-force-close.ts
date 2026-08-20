@@ -38,7 +38,21 @@ import path from "path";
 
 const DEFAULT_ACCOUNT = "0x24347a01bBD9e60fcD7b5469e672e6749ece9b15" as `0x${string}`;
 const DEFAULT_DUEL = 55n;
-const PROBE_STATE = path.join(__dirname, "..", "..", "context", ".probe-container");
+// The probe splits its state by implementation, and the DEFAULT one it writes is
+// the production container, not the throwaway probe. Reading only the probe's file
+// meant the contrast section silently reported "never deployed" after every normal
+// run — a diagnostic quietly skipping the comparison it exists to draw.
+const STATE_DIR = path.join(__dirname, "..", "..", "context");
+const STATE_FILES = [".trading-container", ".probe-container"];
+function readContainerState(): { file: string; address: `0x${string}` } | null {
+  for (const f of STATE_FILES) {
+    const full = path.join(STATE_DIR, f);
+    if (!fs.existsSync(full)) continue;
+    const v = fs.readFileSync(full, "utf-8").trim();
+    if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { file: f, address: v as `0x${string}` };
+  }
+  return null;
+}
 
 const REG_ABI = parseAbi([
   "function accountOf(uint256,uint8) view returns (address)",
@@ -189,8 +203,19 @@ async function main() {
     if (levels.length === 0) { console.log(`${label}: nobody on the other side right now — cannot test`); return; }
     const tick = state.obp[0];
     const THROUGH = 50n;
-    let price = closeIsBid ? levels[0].price + THROUGH * tick : levels[0].price - THROUGH * tick;
+    // Crossing DOWN by fifty ticks goes negative on a cheap market, and the encode
+    // that follows sits outside the try below — so the whole diagnostic aborted
+    // instead of reporting the market state it was run to report. Cross as far as
+    // the book allows and no further, and stay at one tick minimum.
+    let price: bigint;
+    if (closeIsBid) {
+      price = levels[0].price + THROUGH * tick;
+    } else {
+      const step = THROUGH * tick;
+      price = levels[0].price > step ? levels[0].price - step : tick;
+    }
     price = (price / tick) * tick;
+    if (price < tick) price = tick;
     const block = await pub.getBlock();
     const expireNs = (block.timestamp + 3600n) * 1_000_000_000n;
 
@@ -211,20 +236,25 @@ async function main() {
   await decisiveCall(account, BigInt(rTag as bigint), "leased account, live");
 
   // ── 2. Same call from the probe container, for contrast ────────────────────
-  const probeAddr = (fs.existsSync(PROBE_STATE) ? fs.readFileSync(PROBE_STATE, "utf-8").trim() : "") as `0x${string}`;
+  const found0 = readContainerState();
+  const probeAddr = (found0?.address ?? "") as `0x${string}`;
   if (probeAddr) {
-    console.log();
-    const probeState = await report("probe container", probeAddr);
+    console.log(`\n(contrasting against ${found0!.file})`);
+    const probeState = await report("container", probeAddr);
     if (probeState.pos[0] === 0n) {
       console.log(`probe container holds no position on ${desk.market} — nothing to contrast here, skipping rather than inventing an order.`);
     } else {
-      const savedState = state;
+      // A shallow COPY, not a reference. Assigning `state` to a name and then
+      // mutating `state` mutates both, so the restore below wrote the probe's own
+      // numbers back over themselves. Harmless only while nothing reads `state`
+      // afterwards, and silently wrong the moment anything does.
+      const savedState = { ...state };
       Object.assign(state, probeState); // decisiveCall reads off `state` — swap in the probe's numbers for its own call
       await decisiveCall(probeAddr, 0n, "probe container, live");
       Object.assign(state, savedState);
     }
   } else {
-    console.log("\nno context/.probe-container on disk — probe container was never deployed this session, skipping contrast.");
+    console.log(`\nno container state on disk (looked for ${STATE_FILES.join(", ")}) — none deployed this session, skipping contrast.`);
   }
 
   // ── HISTORICAL REPLAY — the real forceClose attempts, traced ────────────────
@@ -232,7 +262,12 @@ async function main() {
   const span = BigInt(process.env.SPAN || 300000);
   const head = await pub.getBlockNumber();
   const found: { blockNumber: bigint; hash: `0x${string}`; ok: boolean; price: bigint; quantity: bigint }[] = [];
-  for (let b = head - span; b < head; b += 1000n) {
+  // Clamp: on a chain shorter than the span this underflowed to a negative block,
+  // every request then failed, every failure was swallowed, and the tool concluded
+  // "no events found" — the single most misleading thing a search can say.
+  const from = head > span ? head - span : 0n;
+  let skipped = 0;
+  for (let b = from; b < head; b += 1000n) {
     const to = b + 999n > head ? head : b + 999n;
     try {
       const logs = await pub.getLogs({ address: reg, event: FORCE_CLOSED, args: { account }, fromBlock: b, toBlock: to });
@@ -240,8 +275,13 @@ async function main() {
         const a = l.args as { ok: boolean; price: bigint; quantity: bigint };
         found.push({ blockNumber: l.blockNumber!, hash: l.transactionHash!, ok: a.ok, price: a.price, quantity: a.quantity });
       }
-    } catch { /* an RPC-refused chunk is skipped, not fatal */ }
+    } catch {
+      // Counted and reported. A silently dropped range turns an incomplete search
+      // into an apparently complete one, which is how this failed before.
+      skipped++;
+    }
   }
+  if (skipped > 0) console.log(`  !! ${skipped} block range(s) could not be read — this search is INCOMPLETE`);
   if (found.length === 0) {
     console.log(`no ForceClosed events for this account in the last ${span} blocks — widen SPAN or point ACCOUNT at one that has some.`);
   } else {

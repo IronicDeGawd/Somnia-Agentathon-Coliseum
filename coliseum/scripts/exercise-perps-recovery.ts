@@ -18,6 +18,12 @@
 //
 // forceclose FLATTENS A FIGHTER MID-FIGHT and will distort that duel's result.
 // Only point it at a throwaway fight.
+//
+// NOTE ON RETRIES: there are none any more, deliberately. The rescue path used to
+// swallow its own failures, so this script retried blind to see anything at all.
+// The failure it was hiding was gas starvation, and because the outer call still
+// reported success the estimator sized every retry to fail as well. It now asks
+// first, sends once, and stops with the reason on a failure.
 // ============================================================================
 import hre from "hardhat";
 import { formatUnits, parseAbi } from "viem";
@@ -115,21 +121,41 @@ async function main() {
         console.log(`  forceClose ${closeIsBid ? "BUY" : "SELL"} ${formatUnits(qty, mk.dec)} at ${formatUnits(price, 18)}`);
 
         // Ask first whether the venue would take it. forceClose does NOT revert on a
-        // refused order — it records ok=false — so without this a cancelled order and
-        // a filled one look identical from the receipt.
-        // forceClose does NOT revert when the venue declines — it records the refusal
-        // and returns. So a receipt saying "success" proves only that the call ran.
-        // The flag in the recorded event is the only honest answer, and it is the
-        // LAST word of that event's data.
-        let r: any = null; let hash: any = null; let filled = false;
-        for (let attempt = 1; attempt <= 4 && !filled; attempt++) {
-          hash = await op.writeContract({ address: reg, abi: REG_ABI, functionName: "forceClose", args: [acct, mk.market, closeIsBid, price, qty] });
-          r = await pub.waitForTransactionReceipt({ hash });
-          const ev = r.logs.find((l: any) => l.address.toLowerCase() === reg.toLowerCase());
-          const okFlag = ev ? BigInt("0x" + ev.data.slice(2).slice(-64)) !== BigInt(0) : false;
-          filled = okFlag;
-          console.log(`  attempt ${attempt}: tx ${hash} gas=${r.gasUsed} — the venue ${okFlag ? "TOOK it" : "declined"}`);
+        // THE RESCUE PATH NOW SURFACES ITS OWN FAILURES, and this loop was written
+        // for the version that did not. It used to send blind, read the flag out of
+        // the recorded event, and retry — because a refusal was reported rather than
+        // raised, and the retries were the only way to see anything at all.
+        //
+        // That silence was the bug. What actually happened on 2026-08-19 was the
+        // order running out of working allowance deep inside a price lookup; the
+        // layer above caught it without looking and called it a venue refusal. And
+        // because the outer call still "succeeded", the tool that sizes the next
+        // allowance learned the wrong lesson and starved every retry — so retrying
+        // was not merely useless, it was guaranteed useless.
+        //
+        // A failure now propagates. So: ask first and report what comes back, send
+        // ONCE, and let a real failure reach the operator with its reason intact
+        // rather than burning four transactions to hide it.
+        let r: any = null; let hash: any = null;
+        try {
+          const sim = await pub.simulateContract({
+            address: reg, abi: REG_ABI, functionName: "forceClose",
+            args: [acct, mk.market, closeIsBid, price, qty], account: op.account,
+          });
+          console.log(`  the venue would ${(sim.result as readonly unknown[])[0] ? "TAKE" : "REFUSE"} this order`);
+        } catch (e: any) {
+          // Not swallowed. A starved or reverting rescue says so here, which is the
+          // whole point of the change that broke this loop.
+          console.log(`  the rescue would FAIL: ${(e.shortMessage ?? e.message ?? String(e)).split("\n")[0]}`);
+          console.log(`  not sending. Diagnose with scripts/diagnose-force-close.ts before retrying.`);
+          return;
         }
+        hash = await op.writeContract({ address: reg, abi: REG_ABI, functionName: "forceClose", args: [acct, mk.market, closeIsBid, price, qty] });
+        r = await pub.waitForTransactionReceipt({ hash });
+        if (r.status !== "success") { console.log(`  tx ${hash} REVERTED`); return; }
+        const ev = r.logs.find((l: any) => l.address.toLowerCase() === reg.toLowerCase());
+        const okFlag = ev ? BigInt("0x" + ev.data.slice(2).slice(-64)) !== BigInt(0) : false;
+        console.log(`  tx ${hash} gas=${r.gasUsed} — the venue ${okFlag ? "TOOK it" : "declined"}`);
 
         // The fighter is still playing while this runs, so a position read the
         // instant after the rescue can already include a fresh buy of its own.
