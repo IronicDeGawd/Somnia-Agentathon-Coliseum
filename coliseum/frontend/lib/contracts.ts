@@ -50,6 +50,22 @@ export const CONTRACT_ADDRESSES = {
   // number across all three of its markets, so the per-market breakdown — what is
   // actually held, long or short, and at what entry — can only be read here.
   MarginBank: '0xdd4A14A2763FDa39b9759D2D4150DB0e0f085C4E' as `0x${string}`,
+  // Which accounts a perps fight rented, and to whom. The engine below reports a
+  // liquidation against an ACCOUNT, and the pool of accounts is reused across
+  // fights, so an address alone means nothing without the fight it was leased for.
+  PerpRegistry: '0x48f8e381d06d94b6bac7621029780caa271f428a' as `0x${string}`,
+  // WHERE A LIQUIDATION IS ACTUALLY RECORDED, and the only reason a finished fight
+  // can show one at all. A margin state is a live calculation that nothing writes
+  // down, and the link from a fighter to its rented account is deleted at the final
+  // bell — so after the bell the registry answers "healthy" forever, whatever
+  // happened. But a liquidation is something the venue DOES, and this is where it
+  // says so: `AccountLiquidated` is indexed by account and carries the margin status
+  // before and after, permanently.
+  //
+  // Pinned from the protocol's own testnet manifest
+  // (somnia-chain/somnia-dex-protocol, deployments/testnet/perps-protocol.json)
+  // rather than discovered: the margin bank exposes no getter for it.
+  LiquidationEngine: '0xe01ef816783DC5f95B1982cacF9d0E3DB1bC2f28' as `0x${string}`,
   SwapFallback: '0x7c42d20f694ba89ae0fcd6d951841e99133db487' as `0x${string}`,
   DuelHistory: '0x11Ac9B65b05dfb1406618Bda649b410B8e8F7108' as `0x${string}`,
 };
