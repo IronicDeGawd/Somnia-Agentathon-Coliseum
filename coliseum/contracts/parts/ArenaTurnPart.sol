@@ -356,10 +356,16 @@ contract ArenaTurnPart is ArenaStorage {
                 _reject(pool, fighterId, duelId, isBid, price, 0, 1, "no quote balance");
                 return (false, 0);
             }
-            uint256 minCost = (meta.minQuantity * price) / baseUnit;
-            uint256 vaultQuote = ISpotPool(pool).getWithdrawableBalance(address(this), USDSO);
-            if (vaultQuote < minCost) {
-                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "vault below min cost");
+            // The same question the offer gate asked, answered by the same code.
+            // Asking it differently here is what produced a refusal on every buy
+            // after the gate was widened: the gate counted this contract's own
+            // balance and this check still looked only at the venue's deposit.
+            //
+            // Written as one call with no locals on purpose — this function is one
+            // local away from Solidity's stack limit, so the two variables that used
+            // to be here are a cost as well as a duplication.
+            if (!ArenaUtils.canFundBuy(pool, USDSO, (meta.minQuantity * price) / baseUnit)) {
+                _reject(pool, fighterId, duelId, isBid, price, 0, 1, "cannot fund min cost");
                 return (false, 0);
             }
             desired = meta.minQuantity;

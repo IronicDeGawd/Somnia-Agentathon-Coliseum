@@ -404,7 +404,7 @@ library ArenaUtils {
         // Whatever causes that gap, a fighter should not pay for it with its turn.
         return (
             bal.quoteTokenAmount >= minCost
-                && _vaultHolds(pool, usdso, minCost)
+                && canFundBuy(pool, usdso, minCost)
                 && _hasSize(pool, false),
             bal.baseTokenAmount >= meta.minQuantity
                 && _canDeliverBase(pool, meta.minQuantity)
@@ -412,7 +412,13 @@ library ArenaUtils {
         );
     }
 
-    /// @dev Can this Arena pay for one smallest buy — from EITHER pot?
+    /// @notice Can this Arena pay for one smallest buy — from EITHER pot?
+    ///
+    ///         Deliberately not private: the turn path asks the SAME question again
+    ///         before it places the order, and the two answers must come from one
+    ///         piece of code. They did not, and that is how a widened offer gate
+    ///         still produced "vault below min cost" on every buy — the gate had
+    ///         learned about the second pot and the executor had not.
     ///
     ///      There are two, and the venue will take from both. What was DEPOSITED with
     ///      the pool is one; this contract's OWN balance is the other. Measured
@@ -432,7 +438,7 @@ library ArenaUtils {
     ///      safe. A pool that cannot answer for its deposit is treated as holding
     ///      nothing there rather than as fatal, so an unreadable venue costs a fighter
     ///      one option instead of its turn.
-    function _vaultHolds(address pool, address token, uint256 need) internal view returns (bool) {
+    function canFundBuy(address pool, address token, uint256 need) internal view returns (bool) {
         uint256 deposited;
         try ISpotPool(pool).getWithdrawableBalance(address(this), token) returns (uint256 avail) {
             deposited = avail;
