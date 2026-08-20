@@ -335,7 +335,7 @@ somniaforge-agentathon/
 │   │   ├── FighterRegistry.sol     # the six fighter prompts
 │   │   └── lib/                    # ArenaTypes (structs, MarketKind) · ArenaUtils (deposits, prompts)
 │   ├── scripts/                    # deploy, operate, and drive fights — see context/structure.md
-│   ├── test/                       # 199 passing Hardhat tests
+│   ├── test/                       # 404 passing Hardhat tests
 │   ├── frontend/                   # Next.js 15 + wagmi + RainbowKit
 │   └── deployments/somnia.json     # live addresses (gitignored)
 ├── sandbox/                        # early primitive validation — kept for reference, not built on
@@ -347,7 +347,7 @@ somniaforge-agentathon/
 
 ```bash
 pnpm install
-cd coliseum && pnpm exec hardhat test              # 199 passing
+cd coliseum && pnpm exec hardhat test              # 404 passing
 
 # Put two throwaway players through the real queue. One wallet per player —
 # transactions from one address are ordered, so a shared wallet serialises
@@ -373,6 +373,36 @@ pnpm exec hardhat run scripts/rewire-parts.ts --network somnia        # refuses 
 
 A duel's *result* hides refused moves. `duel-tape.ts` is the only way to see them — one fight looked
 like an ordinary draw with three of five moves silently rejected.
+
+## Deploying the front end
+
+There is no git checkout on the box, and no CI. A deploy is three steps, and the
+gotchas below are each a real outage or a wasted hour.
+
+```bash
+KEY=~/.ssh/coliseum-parakram.pem            # the INSTANCE key pair, not the one in ~/.ssh/config
+BOX=ubuntu@13.207.115.250                   # no elastic IP — a restart changes this
+
+scp -i $KEY <changed file> $BOX:/home/ubuntu/app/coliseum/<same path>
+ssh -i $KEY $BOX 'cd ~/app/coliseum/frontend && pnpm run build'
+ssh -i $KEY $BOX 'pm2 restart coliseum-frontend'
+```
+
+- **Copy the changed files. Never `rsync --delete` over `frontend/`.** It removes `frontend/logs/`,
+  the process manager then refuses to start, and the public site 502s — measured at about four
+  minutes. Recovery is `pm2 delete` then `pm2 start ecosystem.config.js --only coliseum-frontend`,
+  because pm2 will list a process it simultaneously claims not to find.
+- **The address in `~/.ssh/config` goes stale.** The instance carries no elastic IP, so a restart
+  moves it. A dead address times out exactly like a closed firewall, which is how one problem hid
+  behind another for a day. Confirm with
+  `aws ec2 describe-instances --region ap-south-1 --query 'Reservations[].Instances[].{name:Tags[?Key==\`Name\`]|[0].Value,ip:PublicIpAddress}'`.
+- **Port 22 is normally shut.** The security group allows only 80 and 443, from Cloudflare's ranges.
+  Open it to a single address for the deploy and revoke it afterwards — never to `0.0.0.0/0`:
+  `aws ec2 authorize-security-group-ingress --group-id sg-06eb3df0510b6933f --protocol tcp --port 22 --cidr <your-ip>/32 --region ap-south-1`
+- **The build fits, but only just** — 3.8 GB of memory with 2 GB of swap, two cores. It takes a
+  couple of minutes; do not run two at once.
+- Six processes run there: the watcher, the question binder, the seeder, the simulated market maker,
+  the house matchmaker, and the front end. Only the last one restarts for a UI change.
 
 ## Stack
 
