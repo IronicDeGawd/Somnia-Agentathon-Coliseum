@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { formatUnits, parseAbiItem } from 'viem';
+import { fmtAmountRaw, fmtExactRaw } from '@/lib/format';
 import { useAccount, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useSettleBets } from '@/hooks/useSettleBets';
@@ -31,46 +32,24 @@ interface SettlePanelProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Money, at whatever width shows it.
+ *
+ * The widening ladder this used to hold now lives in lib/format.ts, because it was
+ * needed in more than one place and only ever applied here — which is how duel 74
+ * ended up half-fixed, its difference visible in the settlement card below while
+ * the two headline figures at the top of the same page still rounded it away.
+ *
+ * The optional fixed width is kept: a couple of lines here want a plain two
+ * decimals regardless, and saying so explicitly beats a second formatter.
+ */
 function formatUsdso(raw: bigint, decimals?: number): string {
-  const n = Number(formatUnits(raw, 18));
-  if (decimals !== undefined) return n.toFixed(decimals);
-  if (n === 0) return '0.00';
-  // ENOUGH DIGITS TO SEE THE NUMBER, not a fixed two.
-  //
-  // A single sub-cent threshold is not enough. Duel 74 was won by 0.0000008 —
-  // both portfolios printed "$0.03" and the margin printed "+0.0000", so a real
-  // result read as a draw the arena had got wrong. It had not: the chain declares a
-  // draw only on EXACT equality, and these differed. It was the display that could
-  // not show it.
-  //
-  // So the precision follows the magnitude: keep widening until the number stops
-  // rounding to nothing, and never let a non-zero value print as zero.
-  for (const d of [2, 4, 6, 8]) {
-    if (Math.abs(n) >= 0.5 / 10 ** d) return n.toFixed(d);
-  }
-  return n > 0 ? '<0.00000001' : '>-0.00000001';
+  if (decimals !== undefined) return Number(formatUnits(raw, 18)).toFixed(decimals);
+  return fmtAmountRaw(raw);
 }
 
-/**
- * The number exactly as the chain holds it, trailing zeros trimmed.
- *
- * THE SETTLEMENT CARD IS WHERE THE RESULT IS JUSTIFIED, so it does not round.
- * Duel 74 was won by 0.000000800524579414 — rounded to a readable width both
- * fighters printed the same figure and the margin printed zero, and a correct
- * result read as a draw the arena had botched. It had not: a draw here means
- * EXACTLY equal, to the wei, and these were not.
- *
- * The tape above still rounds, because that is a scoreboard being scanned. This
- * one line is the evidence, and evidence does not round.
- */
-function formatUsdsoExact(raw: bigint): string {
-  const s = formatUnits(raw, 18);
-  if (!s.includes('.')) return `${s}.00`;
-  const trimmed = s.replace(/0+$/, '');
-  // Keep at least two decimals so a whole number still reads as money.
-  const [whole, frac = ''] = trimmed.split('.');
-  return `${whole}.${frac.padEnd(2, '0')}`;
-}
+/** The exact figure, for the one line that justifies the result. See lib/format. */
+const formatUsdsoExact = fmtExactRaw;
 
 // ─── Matchmaker Claim Section ─────────────────────────────────────────────────
 
