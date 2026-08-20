@@ -468,35 +468,44 @@ library ArenaUtils {
         return held > escrowed && held - escrowed >= need;
     }
 
+    /// @notice The reserve of the chain's own coin this contract will never trade
+    ///         away, because that balance is also what pays for the fighters'
+    ///         thinking.
+    ///
+    ///         Measured: a round of a fight costs about 0.243 coin in inference, so a
+    ///         fifteen-round fight burns roughly 3.6, and six fights can run at once.
+    ///         Thirty leaves room for every one of them plus a wide margin.
+    ///
+    ///         Above this line the coin is inventory a fighter may sell. At or below
+    ///         it, it is fuel and the sale is simply not offered — which is a lost
+    ///         option for one fighter, against fighters that cannot think at all.
+    uint256 internal constant FUEL_RESERVE = 30e18;
+
     /// @dev Can this Arena actually deliver one smallest sell?
     ///
     ///      Deliberately NOT the pool-side balance, which is always zero for the base
     ///      asset. A venue takes the quote for a buy out of what was deposited to it,
     ///      but it DELIVERS a fill to the Arena's own wallet — so the tokens a sell
     ///      has to hand over sit in this contract's ERC-20 balance, not in any vault.
-    ///      Measured live: the Arena's wallet held 0.002 of the WETH base after two
-    ///      filled buys while the pool reported nothing for it.
     ///
-    ///      A base asset with no code is the NATIVE coin, and selling that means sending
-    ///      value with the order, which this contract does not do. Offering it spends a
-    ///      turn on an order the venue must refuse, so it is refused here instead.
+    ///      A base asset with no code is the chain's own COIN, and selling that means
+    ///      sending value with the order.
     ///
-    ///      THAT IS A DECISION, NOT AN OMISSION, and it is deliberately not "fixed":
-    ///        - Nothing needs the sell. A non-perps fighter is scored as its cash plus
-    ///          its holdings valued at the mark, so a fighter that bought the coin and
-    ///          cannot sell it is valued exactly as if it had. See the scoring loop in
-    ///          ArenaDuelPart.
-    ///        - It does not strand the fighter either. Each active pool is credited its
-    ///          own quote balance at duel start, so spending this slot's cash leaves the
-    ///          other two slots untouched.
-    ///        - The alternative costs more than it returns. Sending native value would
-    ///          spend this contract's own coin balance, which is ALSO the fuel that pays
-    ///          for every fighter's turn — a coupling that has already deadlocked the
-    ///          keeper once. Letting a fighter trade the fuel is worse than letting it
-    ///          hold one asset in one direction.
+    ///      THAT USED TO BE REFUSED OUTRIGHT, and the reason was real: the only coin
+    ///      this contract holds is the same coin that buys the fighters' reasoning, so
+    ///      a busy trading day could quietly stop them deciding anything — and that
+    ///      coupling had already deadlocked the keeper once. A fighter losing one
+    ///      option was the cheaper failure.
     ///
-    ///      So the cost is narrow and understood: a fighter cannot reverse one of its
-    ///      three slots. Revisit only if a fight is ever actually decided by it.
+    ///      What changed is that the coin now has an income. The fuel pot converts
+    ///      entry fees into it and tops this contract up, so the balance is replenished
+    ///      from revenue rather than by hand. The coupling is bounded instead of
+    ///      open-ended, and a reserve is enough to keep the two uses apart: above the
+    ///      line it is inventory, at or below it, it is fuel.
+    ///
+    ///      Verified on chain before this was opened up: a contract CAN sell this
+    ///      market by sending coin with the order — one coin out, 0.0956 stablecoin
+    ///      in, tx 0x3b803fcc…. So this is a policy change, not a new mechanism.
     ///
     ///      The base token is asked of the pool rather than stored, so a re-pointed pool
     ///      cannot leave this reading a stale token's balance.
@@ -504,7 +513,14 @@ library ArenaUtils {
         try ISpotPool(pool).getPoolParams() returns (
             address baseToken, address, uint256, uint256, uint256, uint256, uint256
         ) {
-            if (baseToken == address(0) || baseToken.code.length == 0) return false;
+            if (baseToken == address(0)) return false;
+            if (baseToken.code.length == 0) {
+                // The chain's own coin. Only what sits ABOVE the fuel reserve is
+                // sellable, so a fighter can never trade away the ability to think.
+                uint256 coin = address(this).balance;
+                if (coin <= FUEL_RESERVE) return false;
+                return coin - FUEL_RESERVE >= need;
+            }
             try IERC20Minimal(baseToken).balanceOf(address(this)) returns (uint256 held) {
                 return held >= need;
             } catch { return false; }

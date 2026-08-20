@@ -166,3 +166,25 @@ describe("Arena — selling held assets when a fight ends", function () {
     expect(await publicClient.getBalance({ address: arena.address })).to.be.greaterThan(0n);
   });
 });
+
+/**
+ * NOT TESTED HERE, AND SAID PLAINLY: selling the chain's own coin.
+ *
+ * Three attempts at covering it from the mock were removed rather than kept. Reaching
+ * that path needs a fighter to be holding some coin first, which needs a buy on that
+ * market, which needs pool metadata the mock captures at deployment and cannot then
+ * change — so no action on a native market is ever offered here, and every assertion
+ * about it passed whether the code was right or wrong. One of them still passed with
+ * the fuel reserve deleted, which is exactly the shape of test that claims coverage
+ * it does not have.
+ *
+ * It is proven on the live market instead, which has real parameters:
+ *   - a contract CAN sell this market by sending coin with the order — one coin out,
+ *     0.0956 stablecoin in (tx 0x3b803fcc…)
+ *   - and through the Arena itself once deployed; see the duel tape for a SellSOMI
+ *     that placed an order rather than being coerced to Hold.
+ *
+ * If the mock ever learns to re-read its own parameters, the honest tests are: the
+ * sale is offered above the reserve, refused at or below it, and the venue's coin
+ * balance rises by the order's size.
+ */
