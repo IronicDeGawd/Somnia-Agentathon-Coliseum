@@ -139,6 +139,11 @@ interface DuelCreatorProps {
   // When set, the tier is fixed (e.g. joining a specific waiting opponent) —
   // the round selector is hidden and only the fighter is chosen.
   lockedTurns?: TurnOption;
+  // The market has to be fixed alongside it. A locked creator DISABLES the
+  // market picker, so opening it locked to nine rounds while the market still
+  // said EVENTS left no way to reach the spot line the user had clicked — a
+  // different game, at a different deposit, with no visible way back.
+  lockedMarket?: MarketKind;
 }
 
 // Inner: re-created when fighter/turns change so hooks get stable args
@@ -734,18 +739,25 @@ function QueueInner({
   );
 }
 
-export function DuelCreator({ onMatchFound, lockedTurns }: DuelCreatorProps) {
+export function DuelCreator({ onMatchFound, lockedTurns, lockedMarket }: DuelCreatorProps) {
   const [fighter, setFighter] = useState(0);
   const [turns, setTurns] = useState<TurnOption>(lockedTurns ?? 6);
   // Events is the default: it is the affordable game, and the one every tier is
   // offered on.
-  const [market, setMarket] = useState<MarketKind>(MarketKind.Events);
+  const [market, setMarket] = useState<MarketKind>(lockedMarket ?? MarketKind.Events);
 
   // Sync the tier when the user opens a different locked tier while the
   // creator is already mounted (e.g. clicking JOIN on another card).
   useEffect(() => {
     if (lockedTurns != null) setTurns(lockedTurns);
   }, [lockedTurns]);
+
+  // Same for the market, and for the same reason: the creator stays mounted
+  // between clicks, so a second click on a different market's chip has to move
+  // it or the form keeps the first choice.
+  useEffect(() => {
+    if (lockedMarket != null) setMarket(lockedMarket);
+  }, [lockedMarket]);
 
   const handleMarketChange = (m: MarketKind) => {
     if (m === MarketKind.Practice && !SIM_MARKET_ENABLED) return;

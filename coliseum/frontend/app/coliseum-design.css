@@ -845,6 +845,59 @@ button.sect-head {
   align-items: start;
 }
 
+/* ─── QUEUE TIER CHIPS (lobby § 02) ───
+   One market gets one card; its lengths are these chips. auto-fit rather than a
+   fixed four so a market with three tiers fills its row instead of leaving a
+   gap, and so a phone wraps them rather than squeezing four into 320px. */
+/* FLEX, NOT GRID, and the reason is worth recording. A grid of
+   `repeat(auto-fit, minmax(108px, 150px))` counts how many columns fit using the
+   MAX, so on a 296px-wide card two 150px chips plus the gap came to 308 and it
+   dropped to a single column — every market became a tall single-file stack on a
+   phone. Flex wrapping shrinks the chips to fit instead: two per row at about
+   144px each on a phone, capped at 150px on a desktop so a two-length market
+   like spot does not get chips three times the size of events'. */
+.queue-tiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.queue-tiers > .queue-tier {
+  flex: 1 1 100px;
+  max-width: 150px;
+}
+
+.queue-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.queue-tier:hover {
+  background: rgba(255, 255, 255, 0.03);
+  transform: translateY(-1px);
+}
+
+/* A visible focus ring, because these are the page's main controls and a
+   keyboard user has twelve of them to move through. */
+.queue-tier:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-tier { transition: none; }
+  .queue-tier:hover { transform: none; }
+}
+
 /* ─── STANDINGS TABLE (lobby § 03) ───
    Desktop: 5-col grid. Mobile (≤520px): collapse each row to a stacked card so
    the RECORD / TOTAL PNL columns can't be silently clipped off-screen. */
