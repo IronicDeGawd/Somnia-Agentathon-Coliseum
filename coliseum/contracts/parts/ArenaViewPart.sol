@@ -118,7 +118,8 @@ contract ArenaViewPart is ArenaStorage {
         prompt = ArenaUtils.buildMarketSummary(
             duelId, fighterId, duels[duelId],
             mp[0], mp[1], mp[2], USDSO,
-            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
+            fighterBalances, poolMeta, duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots,
+            duelMaxStepBps, poolLabel, poolIsPerp
         );
         allowed = ArenaUtils.actionNames(ArenaUtils.legalActions(
             duelId, fighterId, duels[duelId], mp[0], mp[1], mp[2], USDSO, fighterBalances, poolMeta, poolIsPerp

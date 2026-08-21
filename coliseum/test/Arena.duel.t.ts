@@ -259,6 +259,17 @@ describe("Arena — Duel lifecycle", function () {
     expect(prompt, "and what one trade costs against it").to.match(
       /smallest trade here is 0\.0100 SOMI, costing 1\.0000 USDso/,
     );
+
+    // AND that it is in a contest at all. Nothing used to say so: the prompt gave a
+    // score against the fighter's own starting figure and never mentioned an
+    // opponent, so staying flat looked free. Measured live on duel 89 — twelve Holds
+    // from twelve moves, with seven affordable actions on the table the whole time.
+    expect(prompt, "a fighter must know it is being scored against someone").to.match(
+      /scored against the other fighter/,
+    );
+    expect(prompt, "and what doing nothing guarantees").to.match(
+      /never takes a position cannot win/,
+    );
   });
 
   // A book with no two-sided liquidity has no mid price, and the old wording would

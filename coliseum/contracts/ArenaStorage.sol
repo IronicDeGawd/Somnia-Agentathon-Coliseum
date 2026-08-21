@@ -273,6 +273,27 @@ abstract contract ArenaStorage {
     ///         perp-desk mapping, which would have moved that mapping's slot.
     address public fuelPot;
 
+    /// @notice The largest single-turn move any one market has made in this fight,
+    ///         in basis points.
+    ///
+    ///         WHY A RANK AND NOT ANOTHER PRICE. The prompt already carries three
+    ///         levels — now, last turn, and the open — and a fighter still could not
+    ///         act on them, because a raw step is uncalibrated. Measured 2026-08-21,
+    ///         duel 89: swings of 5.6, 9.4 and 23.4 basis points across a whole
+    ///         six-round fight, and twelve Holds from twelve moves. Four basis points
+    ///         is noise; the trouble is that nothing said whether four was small.
+    ///
+    ///         Keeping the largest step so far turns the question into a comparison
+    ///         the contract can make honestly: this turn either is or is not the
+    ///         biggest thing that has happened in this fight. That is a statement a
+    ///         model can act on without being told what "big" means for a market it
+    ///         has never seen.
+    ///
+    ///         APPENDED AT THE VERY END, after every other mapping and after
+    ///         `fuelPot`, for the reason recorded above: this is the storage layout
+    ///         of a router that is never redeployed.
+    mapping(uint256 => mapping(address => uint256)) internal duelMaxStepBps;
+
     // ─── Shared behaviour ─────────────────────────────────────────────────────
 
     modifier onlyOwner() {

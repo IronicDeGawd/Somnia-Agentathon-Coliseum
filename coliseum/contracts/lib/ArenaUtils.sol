@@ -186,6 +186,46 @@ library ArenaUtils {
     // "flat": the word bands call anything under fifty basis points flat and the
     // largest move in any turn was seven.
 
+    /// @notice How this turn's move compares with the biggest one of the fight.
+    ///
+    ///         THE POINT IS CALIBRATION, not precision. A fighter shown "2359.58, was
+    ///         2358.51 last turn" has to work out that this is four basis points, and
+    ///         then decide whether four is a lot — which it cannot know for a market
+    ///         it has never traded. Measured 2026-08-21, duel 89: three markets moved
+    ///         5.6, 9.4 and 23.4 basis points across a whole six-round fight, and both
+    ///         fighters held every single turn.
+    ///
+    ///         Saying "the biggest move of the fight so far" needs no outside
+    ///         knowledge. It is also honest about being relative: the biggest move of
+    ///         a still fight is still small, and the sentence does not pretend
+    ///         otherwise.
+    ///
+    ///         Silent when there is nothing to say. A market that has not moved gets
+    ///         no clause at all, because inventing emphasis where there is none is how
+    ///         a fighter is talked into trading noise.
+    ///         PUBLIC so it can be tested directly. Driving two real turns through
+    ///         the reactivity path in a unit test is a great deal of machinery for a
+    ///         pure string function, and the wording is the part that changes how a
+    ///         fighter behaves — so it is the part that wants pinning.
+    function stepRankWord(uint256 cur, uint256 prev, uint256 maxStepBps)
+        public pure returns (string memory)
+    {
+        if (prev == 0 || cur == 0) return "";
+        uint256 step = cur > prev ? cur - prev : prev - cur;
+        uint256 bps = (step * 10000) / prev;
+        if (bps == 0) return "";
+
+        bool up = cur > prev;
+        // `maxStepBps` already includes this turn — it is written before the prompt is
+        // built — so matching it means this turn set the high-water mark.
+        if (maxStepBps > 0 && bps >= maxStepBps) {
+            return up
+                ? " That is the largest move of the fight so far, and upward."
+                : " That is the largest move of the fight so far, and downward.";
+        }
+        return "";
+    }
+
     /// @notice A whole number as its decimal digits.
     function uToStr(uint256 v) internal pure returns (string memory) {
         if (v == 0) return "0";
@@ -249,21 +289,6 @@ library ArenaUtils {
         return "many";
     }
 
-    /// @notice Describe a price move in words. Thresholds are the same basis-point
-    ///         bands the prompt tournament was scored against (half a percent, one
-    ///         and a half, three), so measured behaviour carries over unchanged.
-    function moveWord(uint256 cur, uint256 prev) internal pure returns (string memory) {
-        // Turn one has no prior snapshot, so there is genuinely no move to report.
-        // Saying "flat" there would be a claim the contract cannot support.
-        if (prev == 0 || cur == 0) return "has just opened, with no move to read yet";
-        bool up = cur > prev;
-        uint256 bps = up ? (cur - prev) * 10000 / prev : (prev - cur) * 10000 / prev;
-        if (bps < 50)  return "is flat";
-        if (bps < 150) return up ? "is up slightly" : "is down slightly";
-        if (bps < 300) return up ? "is up" : "is down";
-        return up ? "is up sharply" : "is down sharply";
-    }
-
     /// @notice Describe where a prediction is priced, in words. The mark of a
     ///         binary contract is its probability — a number between zero and one —
     ///         so calling it a price and reporting a percentage move would be two
@@ -279,8 +304,15 @@ library ArenaUtils {
         return "is priced as very likely";
     }
 
-    /// @notice The same basis-point bands as `moveWord`, said as odds shifting
-    ///         rather than a price rising.
+    /// @notice Odds shifting rather than a price rising, on the basis-point bands the
+    ///         prompt tournament was scored against (half a percent, one and a half,
+    ///         three) — so measured behaviour carries over unchanged.
+    ///
+    ///         Still live: events is the one market where these bands fire, because a
+    ///         prediction's mark IS a probability and a three-point shift in odds is
+    ///         three hundred basis points. The price-flavoured twin was deleted in
+    ///         2026-08 once spot and perps moved to exact figures and left it with no
+    ///         callers at all.
     function oddsMoveWord(uint256 cur, uint256 prev) internal pure returns (string memory) {
         if (prev == 0 || cur == 0) return "with no earlier reading to compare";
         bool toYes = cur > prev;
@@ -704,6 +736,7 @@ library ArenaUtils {
         mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
         mapping(uint256 => mapping(address => uint256)) storage prevMarkSnapshots,
         mapping(uint256 => mapping(address => uint256)) storage openMarkSnapshots,
+        mapping(uint256 => mapping(address => uint256)) storage maxStepBps,
         mapping(address => bytes8) storage poolLabel,
         mapping(address => bool) storage poolIsPerp
     ) public view returns (string memory) {
@@ -721,6 +754,33 @@ library ArenaUtils {
             ". Your last action was ", actionName(duel.lastAction[lastSlot], v), "."
         );
 
+        // ─── The fighter is in a CONTEST, which nothing used to tell it ──────────
+        //
+        // Measured 2026-08-21: a perps fight produced twelve Holds from twelve moves
+        // while seven actions were offered and every one affordable. The markets had
+        // moved 5.6, 9.4 and 23.4 basis points across the whole fight, so there was no
+        // thesis to be had — and, crucially, no reason to believe that mattered. The
+        // prompt reported a score against the fighter's OWN starting figure and never
+        // mentioned that another fighter exists, or that a fight is won by out-scoring
+        // it. Staying flat looked free.
+        //
+        // The rule is stated rather than the opponent's live score being read. The
+        // Arena values a portfolio at `finalizeDuel`, not per turn, so quoting a real
+        // opponent figure here would mean a fresh valuation of three markets mid-turn —
+        // paid for on every prompt, of every fighter, forever. The sentence below is
+        // true without any of that, and it carries the part that changes a decision:
+        // doing nothing cannot win.
+        //
+        // Said for every market, not just perps. A spot or events fighter has its own
+        // reason to act — an empty inventory, or a stated probability — so this matters
+        // less there, but it is no less true, and a fighter that knows it is being
+        // scored against someone is better placed on any of them.
+        summary = string.concat(
+            summary,
+            " You are scored against the other fighter, and a book that never takes a"
+            " position cannot win a fight."
+        );
+
         // On perps the fighter's own standing is a number and belongs in the prompt
         // once, not per slot: one account backs all three markets.
         if (v.perp[0]) {
@@ -733,7 +793,8 @@ library ArenaUtils {
             if (duel.poolMask & bits[i] == 0) continue;
             summary = string.concat(summary, " ", holdingLine(
                 i, v.label[i], v.perp[i], pools[i], duelId, fighterId,
-                fighterBalances, poolMeta, markSnapshots, prevMarkSnapshots, openMarkSnapshots
+                fighterBalances, poolMeta, markSnapshots, prevMarkSnapshots, openMarkSnapshots,
+                maxStepBps
             ));
         }
 
@@ -770,7 +831,8 @@ library ArenaUtils {
         mapping(address => ArenaTypes.PoolMeta) storage poolMeta,
         mapping(uint256 => mapping(address => uint256)) storage markSnapshots,
         mapping(uint256 => mapping(address => uint256)) storage prevMarkSnapshots,
-        mapping(uint256 => mapping(address => uint256)) storage openMarkSnapshots
+        mapping(uint256 => mapping(address => uint256)) storage openMarkSnapshots,
+        mapping(uint256 => mapping(address => uint256)) storage maxStepBps
     ) internal view returns (string memory) {
         ArenaTypes.PoolBalance memory bal  = fighterBalances[pool][duelId][fighterId];
         ArenaTypes.PoolMeta    memory meta = poolMeta[pool];
@@ -782,9 +844,15 @@ library ArenaUtils {
         bool holds = meta.minQuantity > 0 && bal.baseTokenAmount >= meta.minQuantity;
 
         if (perp) {
-            return perpLine(
-                label, pool, duelId, fighterId, cur, prev,
-                openMarkSnapshots[duelId][pool], meta.baseDecimals
+            return string.concat(
+                perpLine(
+                    label, pool, duelId, fighterId, cur, prev,
+                    openMarkSnapshots[duelId][pool], meta.baseDecimals
+                ),
+                // The rank sits AFTER the position and the margin cost, so the fighter
+                // reads what it holds and what a lot costs before being told whether
+                // anything actually happened this turn.
+                stepRankWord(cur, prev, maxStepBps[duelId][pool])
             );
         }
 
@@ -796,7 +864,10 @@ library ArenaUtils {
         }
 
         string memory asset = slot == 0 ? "WETH" : (slot == 1 ? "WBTC" : "SOMI");
-        return spotLine(asset, cur, prev, openMarkSnapshots[duelId][pool], bal, meta);
+        return string.concat(
+            spotLine(asset, cur, prev, openMarkSnapshots[duelId][pool], bal, meta),
+            stepRankWord(cur, prev, maxStepBps[duelId][pool])
+        );
     }
 
     /// @notice One spot slot, in the numbers a trader actually decides on.

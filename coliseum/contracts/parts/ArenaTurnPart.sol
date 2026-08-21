@@ -98,8 +98,22 @@ contract ArenaTurnPart is ArenaStorage {
             if (mp > 0) {
                 // Carry the prior snapshot forward so the market summary can show
                 // the move since last turn, then record this turn's price.
-                duelPrevMarkSnapshots[duelId][pools[i]] = duelMarkSnapshots[duelId][pools[i]];
+                uint256 was = duelMarkSnapshots[duelId][pools[i]];
+                duelPrevMarkSnapshots[duelId][pools[i]] = was;
                 duelMarkSnapshots[duelId][pools[i]] = mp;
+
+                // Remember the biggest single-turn move this market has made, so the
+                // prompt can say whether THIS turn is the biggest thing that has
+                // happened rather than quoting a basis-point figure nobody can
+                // calibrate. Written here because this is the only place that sees
+                // both prices; the first turn has no prior mark and so no step.
+                if (was > 0) {
+                    uint256 step = mp > was ? mp - was : was - mp;
+                    uint256 stepBps = (step * 10000) / was;
+                    if (stepBps > duelMaxStepBps[duelId][pools[i]]) {
+                        duelMaxStepBps[duelId][pools[i]] = stepBps;
+                    }
+                }
                 // The opening price is written once and then left alone. A perp mark
                 // barely moves across one turn, so it is the distance from HERE that
                 // tells a fighter whether a market is trending or just wobbling.
@@ -146,7 +160,8 @@ contract ArenaTurnPart is ArenaStorage {
             duelId, fighterId, duels[duelId],
             mPools[0], mPools[1], mPools[2], USDSO,
             fighterBalances, poolMeta,
-            duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots, poolLabel, poolIsPerp
+            duelMarkSnapshots, duelPrevMarkSnapshots, duelOpenMarkSnapshots,
+            duelMaxStepBps, poolLabel, poolIsPerp
         );
         // Ask by NAME, constrained to the actions this fighter can execute.
         //
