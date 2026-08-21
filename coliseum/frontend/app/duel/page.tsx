@@ -16,7 +16,7 @@ import { usePerpMarkets } from '@/hooks/usePerpMarkets';
 import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
-import { ROSTER, fighterIndexToId, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
+import { fighterIndexToId, FIGHTER_VISUAL_MAP, fighterNameOf } from '@/lib/fighters';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
 
@@ -85,8 +85,8 @@ export default function LobbyPage() {
   const fighterBIndex = duel?.fighterB ?? 1;
   const fighterAId = fighterIndexToId(fighterAIndex);
   const fighterBId = fighterIndexToId(fighterBIndex);
-  const fighterAName = ROSTER.find(r => r.id === fighterAId)?.name ?? `FIGHTER #${fighterAIndex}`;
-  const fighterBName = ROSTER.find(r => r.id === fighterBId)?.name ?? `FIGHTER #${fighterBIndex}`;
+  const fighterAName = fighterNameOf(fighterAIndex);
+  const fighterBName = fighterNameOf(fighterBIndex);
 
   // Real on-chain stats for the hero strip. Purse = both duelists' staked pot
   // (initialUsdsoPerFighter × 2). Odds = live Bookmaker spectator odds (fighter A %).
@@ -382,7 +382,7 @@ export default function LobbyPage() {
             const key = queueKey(turns, market);
             const slot = queueSlots[key];
             const fighterName = slot
-              ? (ROSTER.find(r => r.id === fighterIndexToId(slot.fighter))?.name ?? `FIGHTER #${slot.fighter}`)
+              ? fighterNameOf(slot.fighter)
               : null;
             const fighterHex = slot
               ? (FIGHTER_VISUAL_MAP[slot.fighter]?.hex ?? 'var(--text-dim)')
@@ -633,9 +633,7 @@ export default function LobbyPage() {
             </div>
           ) : (
             myBets.map((b) => {
-              const fighterId = fighterIndexToId(b.fighterId);
-              const rosterEntry = ROSTER.find((r) => r.id === fighterId);
-              const fighterName = rosterEntry?.name ?? `FIGHTER #${b.fighterId}`;
+              const fighterName = fighterNameOf(b.fighterId);
               const stakeUsd = parseFloat(formatUnits(b.stake, 18)).toFixed(2);
               const oddsPct = (b.oddsBps / 100).toFixed(0);
               return (

@@ -13,7 +13,7 @@ import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
 import { useDuelSlots } from '@/hooks/useDuelSlots';
-import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
+import { FIGHTERS, FIGHTER_VISUAL_MAP, fighterNameOf, fighterColorOf } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { clockOf } from '@/lib/blockTime';
@@ -32,63 +32,7 @@ const DUEL_RESOLVED_EVENT = parseAbiItem(
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ResultPage() {
-  const router = useRouter();
-  const params = useParams();
-  const rawId = String(params?.id ?? '0');
-  const duelId = BigInt(rawId || '0');
-
-  const { address: userAddress } = useAccount();
-  const publicClient = usePublicClient();
-
-  // ── On-chain duel state ───────────────────────────────────────────────────
-  const { duel, isLoading, currentTurn } = useDuelState(duelId);
-
-  // Read the full Arena tuple to get fighterA / fighterB indexes.
-  const { data: duelRaw } = useReadContract({
-    address: CONTRACT_ADDRESSES.Arena,
-    abi: ABIS.Arena,
-    functionName: 'duels',
-    args: [duelId],
-    query: { enabled: duelId > BigInt(0) },
-  });
-
-  const fighterAIndex = duelRaw ? Number(duelRaw[0]) : undefined;
-  const fighterBIndex = duelRaw ? Number(duelRaw[1]) : undefined;
-
-  // ── Move-by-move transcript (FighterMove / FighterMoveFailed events) ───────
-  const duelStartBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : undefined;
-  const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
-  const duelLastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
-  const duelSlots = useDuelSlots(duelId);
-
-  // WHICH GAME THIS WAS. The page showed a winner, a portfolio and a move tape and
-  // never once said whether the fight was coins, predictions or perpetuals — so a
-  // tape reading "BUY SIMPOOLWETH" was the only clue, and only to someone who
-  // already knew the codebase.
-  //
-  // Read off what the fight actually traded rather than from anything stored: a
-  // perp slot makes it perps, a labelled question makes it predictions, and the
-  // simulated flag separates the practice ring from the real coin books.
-  const marketName = duelSlots === undefined
-    ? null
-    : duelSlots.some((sl) => sl.isPerp)
-      ? 'PERPETUALS'
-      : duelSlots.some((sl) => sl.label && sl.label.length > 0)
-        ? 'PREDICTIONS'
-        : duel?.simulated
-          ? 'PRACTICE RING'
-          : 'SPOT COINS';
-  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
-  // The permanent half of the margin story. Readable for a fight finished months
-  // ago, because the venue records what it did; see components/shared/MarginRow.
-  const liquidations = useLiquidations(duelId, duelStartBlock, duelTurns, duelLastTurnBlock);
-
-  const fighterNameOf = (fid: number): string => {
-    const v = FIGHTER_VISUAL_MAP[fid];
-    return v ? (FIGHTERS[v.id]?.name ?? `FIGHTER #${fid}`) : `FIGHTER #${fid}`;
-  };
-  /**
+/**
  * The fight as a scorecard: one row per round, one column per fighter.
  *
  * It was a flat list of thirty lines, alternating fighters, each repeating the
@@ -152,7 +96,7 @@ function TapeScorecard({
               key={fid}
               style={{
                 textAlign: 'left', padding: '6px 16px', borderBottom: border,
-                color: fighterHexOf(fid), letterSpacing: '0.04em', fontWeight: 400,
+                color: fighterColorOf(fid), letterSpacing: '0.04em', fontWeight: 400,
                 whiteSpace: 'nowrap',
               }}
             >
@@ -205,7 +149,58 @@ function TapeScorecard({
   );
 }
 
-const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
+export default function ResultPage() {
+  const router = useRouter();
+  const params = useParams();
+  const rawId = String(params?.id ?? '0');
+  const duelId = BigInt(rawId || '0');
+
+  const { address: userAddress } = useAccount();
+  const publicClient = usePublicClient();
+
+  // ── On-chain duel state ───────────────────────────────────────────────────
+  const { duel, isLoading, currentTurn } = useDuelState(duelId);
+
+  // Read the full Arena tuple to get fighterA / fighterB indexes.
+  const { data: duelRaw } = useReadContract({
+    address: CONTRACT_ADDRESSES.Arena,
+    abi: ABIS.Arena,
+    functionName: 'duels',
+    args: [duelId],
+    query: { enabled: duelId > BigInt(0) },
+  });
+
+  const fighterAIndex = duelRaw ? Number(duelRaw[0]) : undefined;
+  const fighterBIndex = duelRaw ? Number(duelRaw[1]) : undefined;
+
+  // ── Move-by-move transcript (FighterMove / FighterMoveFailed events) ───────
+  const duelStartBlock = duelRaw ? (duelRaw[3] as unknown as bigint) : undefined;
+  const duelTurns = duelRaw ? Number(duelRaw[6]) : 3;
+  const duelLastTurnBlock = duelRaw ? (duelRaw[4] as unknown as bigint) : undefined;
+  const duelSlots = useDuelSlots(duelId);
+
+  // WHICH GAME THIS WAS. The page showed a winner, a portfolio and a move tape and
+  // never once said whether the fight was coins, predictions or perpetuals — so a
+  // tape reading "BUY SIMPOOLWETH" was the only clue, and only to someone who
+  // already knew the codebase.
+  //
+  // Read off what the fight actually traded rather than from anything stored: a
+  // perp slot makes it perps, a labelled question makes it predictions, and the
+  // simulated flag separates the practice ring from the real coin books.
+  const marketName = duelSlots === undefined
+    ? null
+    : duelSlots.some((sl) => sl.isPerp)
+      ? 'PERPETUALS'
+      : duelSlots.some((sl) => sl.label && sl.label.length > 0)
+        ? 'PREDICTIONS'
+        : duel?.simulated
+          ? 'PRACTICE RING'
+          : 'SPOT COINS';
+  const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
+  // The permanent half of the margin story. Readable for a fight finished months
+  // ago, because the venue records what it did; see components/shared/MarginRow.
+  const liquidations = useLiquidations(duelId, duelStartBlock, duelTurns, duelLastTurnBlock);
+
 
   // ── Matchmaker check (PvP duel detection) ─────────────────────────────────
   const { data: matchData } = useReadContract({
@@ -597,7 +592,7 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
                     }}
                   >
                     {isDraw
-                      ? (FIGHTERS[drawAVisual?.id ?? 'degen']?.name ?? '—')
+                      ? (fighterAIndex !== undefined ? fighterNameOf(fighterAIndex) : '—')
                       : winnerKnown
                         ? (winnerFighter?.name ?? '—')
                         : '—'}
@@ -651,7 +646,7 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
                     }}
                   >
                     {isDraw
-                      ? (FIGHTERS[drawBVisual?.id ?? 'whale']?.name ?? '—')
+                      ? (fighterBIndex !== undefined ? fighterNameOf(fighterBIndex) : '—')
                       : winnerKnown
                         ? (loserFighter?.name ?? '—')
                         : '—'}
@@ -697,8 +692,8 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
           duelId={duelId}
           isCreator={isCreator}
           matchmakerDuel={isMatchmakerDuel}
-          winnerName={isDraw ? FIGHTERS[drawAVisual?.id ?? 'degen']?.name : winnerFighter?.name}
-          loserName={isDraw ? FIGHTERS[drawBVisual?.id ?? 'whale']?.name : loserFighter?.name}
+          winnerName={isDraw && fighterAIndex !== undefined ? fighterNameOf(fighterAIndex) : winnerFighter?.name}
+          loserName={isDraw && fighterBIndex !== undefined ? fighterNameOf(fighterBIndex) : loserFighter?.name}
           winnerColor={isDraw ? (drawAVisual?.hex ?? 'var(--gold)') : winnerHex}
           loserColor={isDraw ? (drawBVisual?.hex ?? 'var(--text-dim)') : loserFighter?.hex}
         />

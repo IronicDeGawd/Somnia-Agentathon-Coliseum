@@ -218,3 +218,31 @@ export function fighterIdToIndex(id: string): number {
   const entry = Object.entries(FIGHTER_VISUAL_MAP).find(([, v]) => v.id === id);
   return entry ? Number(entry[0]) : -1;
 }
+
+/**
+ * A fighter's ring name, from the index the contracts speak in.
+ *
+ * ONE LOOKUP, because there were four. The result page, the lobby's bet ledger
+ * and two components each walked from a numeric index to a display name their own
+ * way — via `FIGHTER_VISUAL_MAP` into `FIGHTERS`, or via `fighterIndexToId` into a
+ * `ROSTER.find`, or straight out of a private copy of the table. Same answer, four
+ * chances to disagree about an unknown index.
+ *
+ * An index nobody recognises returns a name that still identifies it, rather than
+ * defaulting to a real fighter — displaying "THE DEGEN" for an index we cannot
+ * resolve would attribute someone's moves to the wrong agent.
+ */
+export function fighterNameOf(index: number): string {
+  const id = FIGHTER_VISUAL_MAP[index]?.id;
+  return (id ? FIGHTERS[id]?.name : undefined) ?? `FIGHTER #${index}`;
+}
+
+/**
+ * A fighter's colour, from the same index.
+ *
+ * Falls back to the plain text colour rather than to a corner colour: an
+ * unresolved fighter should look neutral, not like the red corner.
+ */
+export function fighterColorOf(index: number): string {
+  return FIGHTER_VISUAL_MAP[index]?.hex ?? 'var(--text)';
+}
