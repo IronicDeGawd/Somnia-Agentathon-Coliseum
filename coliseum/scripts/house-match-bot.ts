@@ -70,10 +70,17 @@ const MM_ABI = [
 // is two REAL players already paired and waiting; we trigger it as a public good.
 const ALL_TIERS: (3 | 6 | 9 | 15)[] = [3, 6, 9, 15];
 
-/** Mirrors ArenaTypes.MarketKind. */
-const SPOT = 0, PRACTICE = 1, EVENTS = 2;
-const MARKET_NAME: Record<number, string> = { 0: "spot", 1: "practice", 2: "events" };
-const ALL_MARKETS: number[] = [SPOT, PRACTICE, EVENTS];
+/**
+ * Mirrors ArenaTypes.MarketKind.
+ *
+ * PERPS WAS MISSING ENTIRELY — not merely absent from the default config, but with
+ * no branch in the parser below, so `HOUSE_MARKETS=perps` was silently discarded.
+ * A quarter of the arena therefore had no house opponent and no explanation: a
+ * player queueing on perps waited for an opponent who could never arrive.
+ */
+const SPOT = 0, PRACTICE = 1, EVENTS = 2, PERPS = 3;
+const MARKET_NAME: Record<number, string> = { 0: "spot", 1: "practice", 2: "events", 3: "perps" };
+const ALL_MARKETS: number[] = [SPOT, PRACTICE, EVENTS, PERPS];
 
 // keccak256("MatchStarted(uint256,address,address,uint8,uint8,uint16)") — the
 // first three parameters are indexed, so topics[1] carries the duel id.
@@ -115,17 +122,38 @@ async function main() {
   // "events" is the affordable game and the default the house plays; "spot" is the
   // real-coin game, whose long tiers cost far more than the demo bankroll.
   // "mixed" is the old name for events, still accepted so a running config keeps working.
-  const markets = (process.env.HOUSE_MARKETS ?? "practice,events").split(",").map((s) => s.trim().toLowerCase());
+  const markets = (process.env.HOUSE_MARKETS ?? "practice,events,spot,perps").split(",").map((s) => s.trim().toLowerCase());
   const marketFlags: number[] = [];
   if (markets.includes("practice") || markets.includes("sim")) marketFlags.push(PRACTICE);
   if (markets.includes("events") || markets.includes("mixed")) marketFlags.push(EVENTS);
   if (markets.includes("spot") || markets.includes("real")) marketFlags.push(SPOT);
-  // Default to tier 6 + 9. Tier 3 is dropped because it trades SOMI only, so both
-  // fighters face one choice per turn and the duel converges to a near-tie. Real
-  // tiers 9/15 need 91/151 USDso per side — beyond the demo bankroll, so the house
-  // logs and skips those; the sim market's 9 is affordable. Override with
-  // HOUSE_TIERS if you ever fund a larger bankroll.
-  const tiers = (process.env.HOUSE_TIERS ?? "6,9").split(",").map((s) => Number(s.trim()) as 3 | 6 | 9 | 15);
+  if (markets.includes("perps") || markets.includes("perp")) marketFlags.push(PERPS);
+  if (marketFlags.length === 0) throw new Error(`HOUSE_MARKETS matched no known market: "${markets.join(",")}"`);
+  /**
+   * Every tier, by default.
+   *
+   * It used to be 6 and 9 only, for two reasons that no longer hold together. The
+   * expensive ones were excluded on cost — but the affordability check below
+   * already skips a line the bankroll cannot cover and says so, which is a better
+   * guard than a hardcoded list that goes stale the moment the wallet is topped up.
+   *
+   * Tier 3 was excluded for a real design reason worth keeping in mind: on SPOT at
+   * three rounds the market narrows to SOMI alone, so both fighters face a single
+   * option each turn and the fight converges on a near-tie. That is a poor fight,
+   * but a poor fight beats an empty queue nobody explains — and on events, perps
+   * and practice, tier 3 trades all three slots and is perfectly good.
+   */
+  const tiers = (process.env.HOUSE_TIERS ?? "3,6,9,15").split(",").map((s) => Number(s.trim()) as 3 | 6 | 9 | 15);
+
+  /**
+   * Held back from the bankroll, so one expensive fight cannot starve the cheap ones.
+   *
+   * Spot at fifteen rounds costs 188.70 a side. Without a reserve the bot would
+   * happily commit almost everything to a single such fight and then decline every
+   * 0.51 events queue for the rest of the day — spending its whole purpose on one
+   * game. The reserve is what it always keeps for the lines it mainly exists to fill.
+   */
+  const reserve = BigInt(Math.round(Number(process.env.HOUSE_RESERVE ?? "10") * 1e6)) * BigInt(1e12);
   const graceMs = Number(process.env.HOUSE_GRACE_S ?? "15") * 1000;
   const tickMs = Number(process.env.HOUSE_TICK_MS ?? "5000");
 
@@ -145,7 +173,7 @@ async function main() {
 
   log(`house-match-bot starting`);
   log(`  house wallet: ${HOUSE}`);
-  log(`  markets: ${markets.join(",")}  tiers: ${tiers.join(",")}  grace: ${graceMs / 1000}s  tick: ${tickMs}ms`);
+  log(`  markets: ${markets.join(",")}  tiers: ${tiers.join(",")}  grace: ${graceMs / 1000}s  tick: ${tickMs}ms  reserve: ${fmtU(reserve)} USDso`);
   log(`  Matchmaker ${MM}  Arena ${ARENA}  fighters ${fighterCount}`);
   {
     const bal = await pub.readContract({ address: USDSO, abi: ERC20_ABI, functionName: "balanceOf", args: [HOUSE] }) as bigint;
@@ -164,7 +192,29 @@ async function main() {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 
+  /**
+   * Say something even when there is nothing to do.
+   *
+   * This bot logs on start and when it fills a slot, and nothing in between — so
+   * after a quiet night the only evidence it is alive is the process manager
+   * saying "online", which it would also say about a wedged loop. Fifteen hours of
+   * silence looked exactly like a crash and had to be reasoned about from wallet
+   * balances instead. A line every ten minutes makes the difference visible.
+   */
+  const heartbeatEvery = Math.max(1, Math.round(Number(process.env.HOUSE_HEARTBEAT_S ?? "600") * 1000 / tickMs));
+  let ticks = 0;
+
   while (running) {
+    if (ticks % heartbeatEvery === 0) {
+      try {
+        const bal = await pub.readContract({ address: USDSO, abi: ERC20_ABI, functionName: "balanceOf", args: [HOUSE] }) as bigint;
+        log(`alive — watching ${marketFlags.length} market(s) × ${tiers.length} tier(s), bankroll ${fmtU(bal)} USDso`);
+      } catch {
+        // A heartbeat is diagnostics. It must never be the thing that stops the bot.
+        log(`alive — watching ${marketFlags.length} market(s) × ${tiers.length} tier(s), bankroll unavailable this tick`);
+      }
+    }
+    ticks += 1;
     try {
       // ── Pass 0: ring the bell for any waiting pair ──────────────────────────
       // Two players who queued while every ring was busy are parked in the tier's
@@ -224,7 +274,10 @@ async function main() {
 
           const half = await pub.readContract({ address: MM, abi: MM_ABI, functionName: "halfDeposit", args: [turns, sim] }) as bigint;
           const bal = await pub.readContract({ address: USDSO, abi: ERC20_ABI, functionName: "balanceOf", args: [HOUSE] }) as bigint;
-          if (bal < half) { log(`${key}: skip — need ${fmtU(half)} USDso, house has ${fmtU(bal)} (top up to cover this tier)`); continue; }
+          if (bal < half + reserve) {
+            log(`${key}: skip — needs ${fmtU(half)} USDso plus a ${fmtU(reserve)} reserve, house has ${fmtU(bal)}`);
+            continue;
+          }
 
           if (!allowanceOk) {
             const allow = await pub.readContract({ address: USDSO, abi: ERC20_ABI, functionName: "allowance", args: [HOUSE, MM] }) as bigint;
