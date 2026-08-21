@@ -1025,29 +1025,43 @@ export default function ArenaPage() {
                     unrelated fragments. */}
                 <div
                   className={`col gap-6 tint-${side} tint-down`}
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
                   style={{ minWidth: 0, padding: '14px 16px' }}
                 >
-                  <div className="row gap-8 ai-c jc-sb">
-                    <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
-                      <Dot variant={side} pulse={live.thinking} />
-                      <span className="label-tiny" style={{ color: `var(--fighter-${side})`, whiteSpace: 'nowrap' }}>
-                        {f.name} {live.thinking ? 'DECIDING…' : live.lastAction ? 'ACTED' : 'WAITING'}
+                  {/* ANNOUNCED: the fighter's state and its move, read as one thing.
+                      Deliberately does NOT enclose the thinking ticker below. The
+                      ticker's phrase changes every 1.7 seconds and this region is
+                      atomic, so keeping it inside meant a mutation every 1.7s in a
+                      region that re-reads itself whole — the same flood as before,
+                      just wearing a smaller collar. Hiding the ticker from assistive
+                      tech is not enough on its own to be sure of that across
+                      screen readers; keeping it out of the region is. */}
+                  <div className="col gap-6" role="status" aria-live="polite" aria-atomic="true">
+                    <div className="row gap-8 ai-c jc-sb">
+                      <span className="row gap-8 ai-c" style={{ minWidth: 0 }}>
+                        <Dot variant={side} pulse={live.thinking} />
+                        <span className="label-tiny" style={{ color: `var(--fighter-${side})`, whiteSpace: 'nowrap' }}>
+                          {f.name} {live.thinking ? 'DECIDING…' : live.lastAction ? 'ACTED' : 'WAITING'}
+                        </span>
                       </span>
-                    </span>
-                    <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>{corner}</span>
-                  </div>
-                  <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55 }}>
-                    {live.thinking ? (
-                      <ThinkingTicker fighterId={f.id} startIndex={tick} />
-                    ) : live.lastAction ? (
-                      <MoveText move={live.lastAction} />
-                    ) : (
-                      <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
+                      <span className="t-mono t-xs t-faint" style={{ letterSpacing: '0.18em' }}>{corner}</span>
+                    </div>
+                    {!live.thinking && (
+                      <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55 }}>
+                        {live.lastAction ? (
+                          <MoveText move={live.lastAction} />
+                        ) : (
+                          <span className="t-dim">{'> '}<span style={{ opacity: 0.5 }}>No move recorded yet</span></span>
+                        )}
+                      </div>
                     )}
                   </div>
+                  {/* Outside the region above. Occupies the same visual slot as the
+                      move, since a fighter is either deciding or has decided. */}
+                  {live.thinking && (
+                    <div className="t-mono t-sm" style={{ color: 'var(--text)', lineHeight: 1.55 }}>
+                      <ThinkingTicker fighterId={f.id} startIndex={tick} />
+                    </div>
+                  )}
                 </div>
 
                 {/* WHAT IT HAS ALREADY DONE */}

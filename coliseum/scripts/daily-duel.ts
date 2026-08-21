@@ -48,17 +48,42 @@ function fmtU(v: bigint, decimals = 18): string {
 // Constants
 // ---------------------------------------------------------------------------
 
-const TURNS = 3;
-// Run the daily duel on the practice market (livelier book → visible PnL).
-// The Matchmaker/Arena key every queue/deposit by (turns, market), so this has
-// to be the same value everywhere below or the two house players never pair.
-// 0 spot coins, 1 practice, 2 events.
-const MARKET = 1;
-const TOTAL_CALLBACKS = TURNS * 2; // 6
+/**
+ * Which market and how long, from the environment.
+ *
+ * These were fixed at practice/3 when there was one fixture a day. There are now
+ * three, on different markets and at different lengths, so a single hardcoded pair
+ * cannot serve them. Defaults are the old values, so an unset environment behaves
+ * exactly as before.
+ *
+ * The Matchmaker and the Arena key every queue and every deposit by (turns,
+ * market), so both players must present the SAME pair or they never meet — which
+ * is why these are read once, here, and passed everywhere rather than re-derived.
+ */
+const MARKET_NAMES: Record<number, string> = { 0: "spot", 1: "practice", 2: "events", 3: "perps" };
+const MARKET = Number(process.env.DUEL_MARKET ?? "1");
+const TURNS = Number(process.env.DUEL_TURNS ?? "3");
+if (!MARKET_NAMES[MARKET]) throw new Error(`DUEL_MARKET must be 0 spot, 1 practice, 2 events or 3 perps — got ${MARKET}`);
+if (![3, 6, 9, 15].includes(TURNS)) throw new Error(`DUEL_TURNS must be 3, 6, 9 or 15 — got ${TURNS}`);
+
+const TOTAL_CALLBACKS = TURNS * 2;
 const TURN_INTERVAL_BLOCKS = 600;
 const EMERGENCY_FINALIZE_BLOCKS = 1000;
 const POLL_INTERVAL_MS = 10_000; // 10 s
-const WALL_CLOCK_CAP_MS = 10 * 60 * 1000; // 10 min overall cap
+
+/**
+ * How long to wait before giving up — DERIVED, not a fixed ten minutes.
+ *
+ * A turn is 600 blocks and a block is about 101ms, so a round takes roughly a
+ * minute and a fifteen-round fight cannot finish inside ten. The old constant was
+ * sized for the only tier this script ever ran, and a longer fixture would have
+ * been abandoned mid-fight while it was still progressing normally — leaving a
+ * live duel nobody was driving.
+ *
+ * 90s a round gives half again over the nominal cadence, which absorbs a stall,
+ * plus five minutes of fixed overhead for queueing, funding and settlement.
+ */
+const WALL_CLOCK_CAP_MS = TURNS * 90_000 + 5 * 60_000;
 
 // ---------------------------------------------------------------------------
 // ABIs (minimal — only what this script calls)
@@ -234,6 +259,24 @@ const DUEL_HISTORY_ABI = [
     stateMutability: "view",
     inputs: [],
     outputs: [{ type: "uint256" }],
+  },
+  {
+    // Per-fighter appearances, which is what decides who fights today. `duels` is
+    // the count this fixture reads; the rest of the struct is the leaderboard's.
+    name: "leaderboard",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{
+      type: "tuple[]",
+      components: [
+        { name: "wins", type: "uint32" },
+        { name: "losses", type: "uint32" },
+        { name: "draws", type: "uint32" },
+        { name: "duels", type: "uint32" },
+        { name: "cumulativePnl", type: "int256" },
+      ],
+    }],
   },
 ] as const;
 
@@ -502,26 +545,66 @@ async function main() {
   // -- Step 2: Pick fighters -------------------------------------------------
   log("--- FIGHTER SELECTION ---");
 
-  let totalDuelsCount = BigInt(0);
+  /**
+   * THE TWO LEAST-PLAYED FIGHTERS, not the next pair in a cycle.
+   *
+   * Rotating on the total duel count was fair in principle and useless in
+   * practice. Measured at 87 duels: the Whale had fought 80 and the Degen 81,
+   * while the other four had thirteen fights between them — 93% of all slots to
+   * two of six. The volume came from the matrix runs and the browser tests, which
+   * always pick fighters 0 and 1, and a fixture that merely stops adding to the
+   * imbalance would take months to level it.
+   *
+   * Choosing by appearances actively corrects it: the two rarest fighters play,
+   * so every run pulls the distribution flatter, and once it IS flat this
+   * degenerates into a rotation on its own.
+   *
+   * There is a second reason to stop counting total duels. The old code treated a
+   * failed history read as "zero duels so far", and zero always selects fighters 0
+   * and 1 — so the fallback for losing the count was to pick exactly the two
+   * fighters that were already over-represented. Now a failed read spreads the
+   * choice across the roster by day instead.
+   */
+  let fighterA = 0;
+  let fighterB = 1;
+  let selectionBasis = "fallback";
+
   if (historyAddr) {
     try {
-      totalDuelsCount = (await publicClient.readContract({
+      const board = (await publicClient.readContract({
         address: historyAddr,
         abi: DUEL_HISTORY_ABI,
-        functionName: "totalDuels",
-      })) as bigint;
+        functionName: "leaderboard",
+      })) as readonly { duels: number }[];
+
+      if (board.length >= 2) {
+        // Fewest fights first; index breaks a tie so the choice is reproducible
+        // and two fresh fighters are met in roster order rather than at random.
+        const ranked = board
+          .map((r, index) => ({ index, duels: Number(r.duels) }))
+          .sort((a, b) => (a.duels - b.duels) || (a.index - b.index));
+        fighterA = ranked[0].index;
+        fighterB = ranked[1].index;
+        selectionBasis = `least-played (${ranked.map((r) => `#${r.index}:${r.duels}`).join(" ")})`;
+      }
     } catch (e) {
-      log(`DuelHistory.totalDuels() read failed (non-fatal): ${e}`);
+      log(`DuelHistory.leaderboard() read failed (non-fatal): ${e}`);
     }
   }
 
-  const idx = Number(totalDuelsCount % BigInt(6));
-  const fighterA = idx % 6;
-  let fighterB = (idx + 1) % 6;
-  if (fighterB === fighterA) fighterB = (fighterA + 1) % 6;
+  if (selectionBasis === "fallback") {
+    // No history to go on. Spread by day-of-year rather than defaulting to 0 and 1,
+    // which is what made the imbalance self-reinforcing.
+    const day = Math.floor(Date.now() / 86_400_000);
+    fighterA = day % 6;
+    fighterB = (fighterA + 1) % 6;
+    selectionBasis = `day rotation (day ${day})`;
+  }
+
+  log(`fighter selection: ${selectionBasis}`);
 
   log(
-    `totalDuels=${totalDuelsCount}  fighterA=${fighterA}  fighterB=${fighterB}`
+    `market=${MARKET_NAMES[MARKET]}  turns=${TURNS}  fighterA=${fighterA}  fighterB=${fighterB}`
   );
 
   // -- Step 3: P1 approve + queue -------------------------------------------
