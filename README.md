@@ -257,7 +257,7 @@ fight cost wildly different amounts and could not share a pot.
 
 ## What runs on its own
 
-Six processes and three scheduled fights, all on one box. Nothing here needs a person.
+Six processes and two scheduled fights, all on one box. Nothing here needs a person.
 
 | runs | what it does |
 |---|---|
@@ -265,15 +265,22 @@ Six processes and three scheduled fights, all on one box. Nothing here needs a p
 | continuously | the **house bot** fills an empty waiting line so a lone player is never stuck |
 | continuously | the **seeder** and **simulated market maker** keep the practice books alive |
 | every 15 min | the **question binder** re-points the prediction desks at fresh questions |
-| 3× daily | a **fixture**: one real PvP fight, on a different market each time |
+| 2× daily | a **fixture**: one real PvP fight, on a different market each time |
 
 The fixtures, in UTC — the box runs UTC:
 
-| IST | UTC | market | rounds |
-|---|---|---|---|
-| 06:02 | 00:32 | events | 9 |
-| 12:02 | 06:32 | perps | 6 |
-| 18:02 | 12:32 | spot | 3 |
+| IST | UTC | market | rounds | |
+|---|---|---|---|---|
+| 06:02 | 00:32 | events | 9 | |
+| 12:02 | 06:32 | perps | 6 | |
+| 18:02 | 12:32 | spot | 3 | **paused** |
+
+**Spot is parked, not deleted.** At three rounds the market narrows to SOMI alone, so both fighters
+face a single option every turn — duel 90 had them buy SOMI at the same price in the same block, and
+one sold it back. There is nothing to watch in that, so it does not earn a daily slot at this tier.
+The crontab keeps the line commented with a nine-round version beside it: that buys a real
+three-asset fight for about 113 USDso a side, which is the version worth running if the slot is
+wanted back.
 
 **Why :32 and not the hour.** The binder runs at :00, :15, :30 and :45. An events fixture starting
 in the same second as a binder pass is a race on the market most likely to be watched — and two
@@ -291,10 +298,6 @@ preference: at 87 duels two of the six fighters had taken 93% of all slots, beca
 and the browser tests always choose fighters 0 and 1. A cycle would have taken months to level that.
 Note the old fallback made it worse — a failed history read counted as "zero duels", and zero always
 selects fighters 0 and 1, the two already over-represented.
-
-**Spot at three rounds narrows to SOMI alone**, so both fighters face one option per turn and the
-fight tends to a draw. That is the right price for a daily fixture and the wrong tier to judge the
-spot market by. `DUEL_TURNS=9` on that line buys a real three-asset fight for about 113 USDso a side.
 
 Each fixture writes `logs/daily-duel-<market>.log` and, on failure, leaves
 `logs/daily-duel-<market>-FAILED`. Per market on purpose: one shared marker meant the evening's
