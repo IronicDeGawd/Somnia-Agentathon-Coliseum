@@ -223,7 +223,7 @@ the scoreboard showed a draw rather than a fault — the same disguise the spot 
 deleting the only exit strands house money, and 4.23 USDso already sits in a superseded Arena for
 exactly that reason.
 
-## Three games, not one
+## Four games, not one
 
 A fight's deposit has to cover both fighters placing the smallest possible order on every active
 market, every round. On real coin books that is brutal: one minimum WBTC order costs a few dollars,
@@ -232,24 +232,73 @@ so a nine-round fight needed about **150 USDso** and the long tiers sat unplayed
 A **prediction question** fixes this. Its price is a probability between 0 and 1, so its smallest
 order costs a fraction of a cent and — unlike a coin — that can never grow with the asset's price.
 
-So there are three markets, and they coexist rather than replace each other. Every fight records its
+So there are four markets, and they coexist rather than replace each other. Every fight records its
 own three markets when it starts, so they run side by side without touching each other.
 
 | Market | What a fighter trades | Per side, 3 / 6 / 9 / 15 rounds |
 |---|---|---|
-| **EVENTS** | three live prediction questions | 0.51 · 0.70 · 0.90 · 1.29 |
+| **EVENTS** | three live prediction questions | 0.51 · 0.71 · 0.90 · 1.30 |
 | **PRACTICE** | mock order books, no real risk | 0.50 · 0.69 · 0.89 · 1.27 |
-| **SPOT** | real dreamDEX coin books | 0.84 · 15.56 · 95.36 · 158.72 |
+| **PERPS** | real assets on margin, either direction | 2.40 · 6.55 · 12.70 · 19.00 |
+| **SPOT** | real dreamDEX coin books | 0.88 · 19.12 · 113.34 · 188.70 |
 
-Measured live 2026-08-18, in USDso. The deposit is
+All four read live from `Matchmaker.halfDeposit` on 2026-08-21, in USDso. Spot has moved with its
+book since the last time these were written down — its long tiers are dearer than they were, which is
+worth re-reading before quoting a figure at anyone. The deposit is
 `(trading stake + platform fee) × 1.25`, split between the two players, where the fee is
 `0.5 + 0.1 × rounds` and the 25% is refundable headroom against price drift. On events and practice
 the **stake is now cents and the fee is the price** — which is the right shape, since the fee tracks
 real inference spend while the stake mostly comes back.
 
-Both real markets are offered at once. Nine waiting lines: events at every length, spot at 3/9/15,
-practice at 6/9. Two players match only if they picked the same line — a spot fight and an events
+Every market is offered at once, each with its own waiting lines: events and perps at every length,
+spot at 3/9/15, practice at 6/9. A house bot fills an empty line on any of them, at any tier it can
+afford while keeping a reserve back — it skips a line it cannot cover and says so in its log. Two players match only if they picked the same line — a spot fight and an events
 fight cost wildly different amounts and could not share a pot.
+
+## What runs on its own
+
+Six processes and three scheduled fights, all on one box. Nothing here needs a person.
+
+| runs | what it does |
+|---|---|
+| continuously | the **watcher** rings each turn, finalizes, settles bets and tends the desks |
+| continuously | the **house bot** fills an empty waiting line so a lone player is never stuck |
+| continuously | the **seeder** and **simulated market maker** keep the practice books alive |
+| every 15 min | the **question binder** re-points the prediction desks at fresh questions |
+| 3× daily | a **fixture**: one real PvP fight, on a different market each time |
+
+The fixtures, in UTC — the box runs UTC:
+
+| IST | UTC | market | rounds |
+|---|---|---|---|
+| 06:02 | 00:32 | events | 9 |
+| 12:02 | 06:32 | perps | 6 |
+| 18:02 | 12:32 | spot | 3 |
+
+**Why :32 and not the hour.** The binder runs at :00, :15, :30 and :45. An events fixture starting
+in the same second as a binder pass is a race on the market most likely to be watched — and two
+minutes of drift also puts the events fight just *after* a fresh bind, which is the best moment for
+it rather than merely a safe one.
+
+**Each fixture pauses the watcher and the house bot for its duration** — the watcher because it
+shares the deployer key and would race the fixture for nonces, the house bot because it would take
+the lonely slot before the second player arrived. They are resumed from a shell trap, so a run killed
+mid-fight cannot leave the arena with nobody ringing turns. That was a real hole: the resume used to
+sit on the line after the run and was simply skipped when the script died.
+
+**Fighters are picked by who has played least**, read from `DuelHistory`. This is a correction, not a
+preference: at 87 duels two of the six fighters had taken 93% of all slots, because the matrix runs
+and the browser tests always choose fighters 0 and 1. A cycle would have taken months to level that.
+Note the old fallback made it worse — a failed history read counted as "zero duels", and zero always
+selects fighters 0 and 1, the two already over-represented.
+
+**Spot at three rounds narrows to SOMI alone**, so both fighters face one option per turn and the
+fight tends to a draw. That is the right price for a daily fixture and the wrong tier to judge the
+spot market by. `DUEL_TURNS=9` on that line buys a real three-asset fight for about 113 USDso a side.
+
+Each fixture writes `logs/daily-duel-<market>.log` and, on failure, leaves
+`logs/daily-duel-<market>-FAILED`. Per market on purpose: one shared marker meant the evening's
+success erased the morning's failure.
 
 ## How a duel works
 
