@@ -17,6 +17,7 @@ import { LOBBY_MENU, MarketKind, MARKET_LABEL } from '@/lib/contracts';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
 import { fighterIndexToId, FIGHTER_VISUAL_MAP, fighterNameOf } from '@/lib/fighters';
+import { useDuelMarkets } from '@/hooks/useDuelMarkets';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
 
@@ -67,7 +68,16 @@ export default function LobbyPage() {
   const headline = liveDuels[0] ?? null;
   const activeDuelId = headline?.duelId ?? null;
   const duel = headline?.duel ?? null;
-  const otherDuels = liveDuels.slice(1);
+  // The lobby is an index, so it shows a handful and links to the rest. Keep this
+  // in step with the grid's column count: four fills two rows on a laptop.
+  const LOBBY_LIVE_LIMIT = 4;
+  const shownDuels = liveDuels.slice(0, LOBBY_LIVE_LIMIT);
+  const hiddenCount = Math.max(0, liveDuels.length - shownDuels.length);
+  // One batched read set for every card's market badge, deduped across fights —
+  // see useDuelMarkets for why this is not useDuelSlots per card.
+  const markets = useDuelMarkets(
+    shownDuels.map(({ duelId, duel: d }) => ({ duelId, simulated: d.simulated })),
+  );
   const { rows: leaderboardRows, isEmpty: leaderboardEmpty } = useLeaderboard();
   const { bets: myBets, isEmpty: betsEmpty, isLoading: betsLoading } = useMyBets();
   const { address: walletAddress } = useAccount();
@@ -258,52 +268,56 @@ export default function LobbyPage() {
           <span className="sect-head-title">LIVE NOW</span>
           <span className="sect-head-meta">
             {activeDuelId !== null && !isDuelLoading
-              ? `duel #${activeDuelIdStr} · round ${currentTurn}/${totalTurns}` +
-                (otherDuels.length > 0 ? ` · +${otherDuels.length} more live` : '')
+              ? liveDuels.length === 1
+                ? `duel #${activeDuelIdStr} · round ${currentTurn}/${totalTurns}`
+                : hiddenCount > 0
+                  ? `${liveDuels.length} fights running · showing ${shownDuels.length}`
+                  : `${liveDuels.length} fights running`
               : activeDuelId !== null
               ? 'loading…'
               : 'no active duel'}
           </span>
         </div>
 
-        {/* On-chain duel card when active */}
+        {/* THE LIVE SECTION IS A GRID, NOT A STACK.
+            It used to render one full-width card per fight, one under another, with
+            a WATCH button beneath each. That reads well for one fight and falls
+            apart past three: six concurrent fights pushed the queue board, the
+            standings and the creator entirely below the fold, and the arena can hold
+            six today with no ceiling on what a busier deployment would show.
+
+            So the lobby shows the FOUR most recent and hands the rest to a page of
+            their own. Four because it fills two tidy rows on a laptop and one on a
+            phone, and because a lobby is an index — the place you decide what to
+            watch, not the place you watch it. */}
         {activeDuelId !== null && !isDuelLoading && duel ? (
           <div className="col gap-16">
-            <DuelCard
-              duelId={activeDuelId}
-              fighterAIndex={duel.fighterA}
-              fighterBIndex={duel.fighterB}
-            />
-            <div className="row ai-c jc-c gap-12">
+            <div className="live-grid">
+              {shownDuels.map(({ duelId, duel: d }) => (
+                <DuelCard
+                  key={duelId.toString()}
+                  duelId={duelId}
+                  fighterAIndex={d.fighterA}
+                  fighterBIndex={d.fighterB}
+                  market={markets.get(duelId.toString())}
+                />
+              ))}
+            </div>
+
+            <div className="row ai-c jc-c gap-12" style={{ flexWrap: 'wrap' }}>
               <Link href={`/duel/${activeDuelIdStr}`}>
                 <BracketButton variant="primary">WATCH LIVE →</BracketButton>
               </Link>
+              {/* Only offered when there is genuinely more to see. A permanent
+                  "see all" on a lobby showing everything it has is a dead end. */}
+              {hiddenCount > 0 && (
+                <Link href="/duel/live">
+                  <BracketButton variant="ghost">
+                    ALL {liveDuels.length} LIVE FIGHTS →
+                  </BracketButton>
+                </Link>
+              )}
             </div>
-
-            {/* Every other duel running right now. The arena used to hold one
-                fight at a time; without this list the second and third are
-                live on chain but invisible here. */}
-            {otherDuels.length > 0 && (
-              <div className="col gap-12" style={{ paddingTop: 8 }}>
-                <span className="t-mono t-xs" style={{ letterSpacing: '0.28em', color: 'var(--text-faint)' }}>
-                  ALSO LIVE · {otherDuels.length}
-                </span>
-                {otherDuels.map(({ duelId, duel: d }) => (
-                  <div key={duelId.toString()} className="col gap-8">
-                    <DuelCard
-                      duelId={duelId}
-                      fighterAIndex={d.fighterA}
-                      fighterBIndex={d.fighterB}
-                    />
-                    <div className="row ai-c jc-c">
-                      <Link href={`/duel/${duelId.toString()}`}>
-                        <BracketButton variant="ghost">WATCH DUEL #{duelId.toString()} →</BracketButton>
-                      </Link>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {!hasCapacity && (
               <span className="t-mono t-xs t-dim" style={{ textAlign: 'center' }}>

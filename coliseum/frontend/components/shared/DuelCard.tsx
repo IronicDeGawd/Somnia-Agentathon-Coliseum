@@ -7,11 +7,18 @@ import { useFighters } from '@/hooks/useFighters';
 // The roster's colours have ONE home. This file kept its own copy of all six,
 // which is how a colour changes in one place and not another.
 import { FIGHTER_VISUAL_MAP } from '@/lib/fighters';
+import { MARKET_ACCENT, MARKET_GLYPH, type MarketName } from '@/lib/marketKind';
 
 interface DuelCardProps {
   duelId: bigint;
   fighterAIndex: number;
   fighterBIndex: number;
+  /**
+   * Which game this fight is playing. Absent while it is still being read, and the
+   * badge is then simply not drawn — an unlabelled card is better than a wrong one,
+   * and a spot fight mislabelled as practice would misrepresent real money as mock.
+   */
+  market?: MarketName;
 }
 
 
@@ -24,7 +31,7 @@ function getStatusLabel(status: number): string {
   }
 }
 
-export default function DuelCard({ duelId, fighterAIndex, fighterBIndex }: DuelCardProps) {
+export default function DuelCard({ duelId, fighterAIndex, fighterBIndex, market }: DuelCardProps) {
   const { duel, odds, totalBetsA, totalBetsB, currentTurn, isActive, isLoading } = useDuelState(duelId);
   const { fighters } = useFighters();
 
@@ -53,9 +60,34 @@ export default function DuelCard({ duelId, fighterAIndex, fighterBIndex }: DuelC
       <div className="card" style={{ cursor: 'pointer', transition: 'border-color 0.15s' }}>
         <div className="col gap-12 pad-16">
 
-          {/* Header row: Duel # + status chip */}
-          <div className="row ai-c jc-sb">
-            <span className="t-mono t-xs t-dim">DUEL #{duelId.toString()}</span>
+          {/* Header row: which game, the duel number, and whether it is running.
+              THE MARKET WAS MISSING ENTIRELY. Every card looked alike, so a card
+              could not tell you whether it was watching real coin books, a
+              prediction, a margin position or a mock — which is the single most
+              important thing about a fight, and the one thing the lobby's own
+              picker makes a point of. Coloured to match that picker, so the badge
+              and the button that starts that game agree. */}
+          <div className="row ai-c jc-sb" style={{ gap: 8 }}>
+            <span className="row ai-c" style={{ gap: 8, minWidth: 0 }}>
+              {market && (
+                <span
+                  className="t-mono t-xs t-up"
+                  style={{
+                    color: MARKET_ACCENT[market],
+                    border: `1px solid ${MARKET_ACCENT[market]}`,
+                    background: `color-mix(in srgb, ${MARKET_ACCENT[market]} 12%, transparent)`,
+                    padding: '1px 6px',
+                    borderRadius: 2,
+                    letterSpacing: '0.1em',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span aria-hidden="true">{MARKET_GLYPH[market]} </span>{market}
+                </span>
+              )}
+              <span className="t-mono t-xs t-dim" style={{ whiteSpace: 'nowrap' }}>#{duelId.toString()}</span>
+            </span>
             <span
               className={`chip${isActive ? ' chip-live' : ''}`}
               style={{ display: 'flex', alignItems: 'center', gap: '6px' }}

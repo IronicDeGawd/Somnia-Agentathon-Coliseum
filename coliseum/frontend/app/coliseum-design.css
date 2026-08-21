@@ -829,6 +829,22 @@ button.sect-head {
 .fade-in { animation: fadeIn 300ms ease both; opacity: 1; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ─── LIVE FIGHT GRID ───
+   Square-ish cards rather than full-width rows. One fight per row reads well and
+   stops reading well at three: six concurrent fights pushed everything else on the
+   lobby below the fold, and the arena holds six today with no ceiling on a busier
+   deployment.
+
+   `auto-fill` with a 260px floor rather than a fixed column count, so the same rule
+   serves the lobby's four and the all-live page's however-many: four across on a
+   wide screen, two on a tablet, one on a phone, with no breakpoint to maintain. */
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: clamp(12px, 2vw, 20px);
+  align-items: start;
+}
+
 /* ─── STANDINGS TABLE (lobby § 03) ───
    Desktop: 5-col grid. Mobile (≤520px): collapse each row to a stacked card so
    the RECORD / TOTAL PNL columns can't be silently clipped off-screen. */
