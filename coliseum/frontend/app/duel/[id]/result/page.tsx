@@ -13,19 +13,17 @@ import SettlePanel from '@/components/shared/SettlePanel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useDuelTranscript, type TranscriptEntry } from '@/hooks/useDuelTranscript';
 import { useDuelSlots } from '@/hooks/useDuelSlots';
-import { FIGHTERS, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
+import { FIGHTERS, FIGHTER_VISUAL_MAP, fighterNameOf, fighterColorOf } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, ABIS, BOOKMAKER_DEPLOY_BLOCK, DRAW_SLOT, DUEL_HISTORY_DEPLOYED } from '@/lib/contracts';
 import { getLogsChunked, duelToBlock } from '@/lib/logs';
 import { clockOf } from '@/lib/blockTime';
+import { MoveEntry } from '@/components/shared/MoveRow';
+import { LiquidationRow } from '@/components/shared/MarginRow';
+import { useLiquidations } from '@/hooks/useLiquidations';
+import { fmtUsdsoRaw } from '@/lib/format';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtUsdso(raw: bigint): string {
-  const n = Number(formatUnits(raw, 18));
-  // Sub-cent (but non-zero) values show 4 decimals so they don't read as "0.00".
-  const decimals = n > 0 && n < 0.01 ? 4 : 2;
-  return `$${n.toFixed(decimals)}`;
-}
 
 // DuelResolved event for backfill
 const DUEL_RESOLVED_EVENT = parseAbiItem(
@@ -33,6 +31,123 @@ const DUEL_RESOLVED_EVENT = parseAbiItem(
 );
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The fight as a scorecard: one row per round, one column per fighter.
+ *
+ * It was a flat list of thirty lines, alternating fighters, each repeating the
+ * round number — so comparing what the two of them did in the SAME round meant
+ * finding two lines that were neither adjacent nor in a predictable order. Here
+ * the round is the line, and the two fighters sit side by side on it: read across
+ * for a round, down a column for one fighter's whole fight.
+ *
+ * The COLUMN order is pinned to the duel's own fighter slots rather than to
+ * whoever the chain logged first, because the two moves in a round are mined in
+ * whatever order they land and a table whose sides swap partway is worse than no
+ * table at all.
+ */
+function TapeScorecard({
+  transcript,
+  fighterA,
+  fighterB,
+}: {
+  transcript: TranscriptEntry[];
+  fighterA?: number;
+  fighterB?: number;
+}) {
+  const rounds = Array.from(new Set(transcript.map((e) => e.round))).sort((x, y) => x - y);
+
+  // One time per ROUND, not per move. Both fighters' moves in a turn are mined in
+  // the same block, so they share a timestamp — measured on duel 84, where every
+  // round's pair carried the identical second. A column per fighter would print the
+  // same clock twice and say nothing.
+  const timeOf = (round: number) =>
+    transcript.find((e) => e.round === round && e.timestamp !== undefined)?.timestamp;
+
+  // Prefer the duel's own slots; fall back to first-appearance only when the duel
+  // has not loaded, so the table still renders rather than vanishing.
+  const seen = Array.from(new Set(transcript.map((e) => e.fighterId)));
+  const colIds = (fighterA !== undefined && fighterB !== undefined) ? [fighterA, fighterB] : seen;
+
+  const cell = (fid: number, round: number) =>
+    transcript.find((e) => e.fighterId === fid && e.round === round);
+
+  const border = '1px solid var(--border)';
+
+  return (
+    <table
+      className="t-mono t-sm"
+      style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}
+    >
+      <thead>
+        <tr>
+          {/* Named, not blank. These two columns had no header text at all, so a
+              screen reader reading a cell announced the value with no idea which
+              column it came from. The names are hidden visually because the
+              figures below them are self-evident to anyone who can see them. */}
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 76 }}>
+            <span className="sr-only">Time</span>
+          </th>
+          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 44 }}>
+            <span className="sr-only">Round</span>
+          </th>
+          {colIds.map((fid) => (
+            <th
+              key={fid}
+              style={{
+                textAlign: 'left', padding: '6px 16px', borderBottom: border,
+                color: fighterColorOf(fid), letterSpacing: '0.04em', fontWeight: 400,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {fighterNameOf(fid)}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rounds.map((r) => (
+          <tr key={r}>
+            <td
+              className="t-num t-xs t-faint"
+              style={{
+                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {clockOf(timeOf(r))}
+            </td>
+            <th
+              scope="row"
+              className="t-dim"
+              style={{
+                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
+                fontWeight: 400, whiteSpace: 'nowrap',
+              }}
+            >
+              R{r}
+            </th>
+            {colIds.map((fid) => (
+              <td
+                key={fid}
+                className="t-num"
+                style={{ padding: '8px 16px', borderTop: border, whiteSpace: 'nowrap' }}
+              >
+                {/* The same wording and the same direction colour the live page
+                    uses. This cell used to word a refusal its own way and print
+                    the move as flat text, so the colouring that tells a long from
+                    a short at a glance stopped working the moment a fight ended —
+                    which is exactly when a fight gets read most carefully. No `> `
+                    lead-in here: the column heading already says whose move it is. */}
+                <MoveEntry entry={cell(fid, r)} prefix={false} />
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 export default function ResultPage() {
   const router = useRouter();
@@ -82,121 +197,10 @@ export default function ResultPage() {
           ? 'PRACTICE RING'
           : 'SPOT COINS';
   const { entries: transcript } = useDuelTranscript(duelId, duelStartBlock, duelTurns, duelLastTurnBlock, duelSlots);
+  // The permanent half of the margin story. Readable for a fight finished months
+  // ago, because the venue records what it did; see components/shared/MarginRow.
+  const liquidations = useLiquidations(duelId, duelStartBlock, duelTurns, duelLastTurnBlock);
 
-  const fighterNameOf = (fid: number): string => {
-    const v = FIGHTER_VISUAL_MAP[fid];
-    return v ? (FIGHTERS[v.id]?.name ?? `FIGHTER #${fid}`) : `FIGHTER #${fid}`;
-  };
-  /**
- * The fight as a scorecard: one row per round, one column per fighter.
- *
- * It was a flat list of thirty lines, alternating fighters, each repeating the
- * round number — so comparing what the two of them did in the SAME round meant
- * finding two lines that were neither adjacent nor in a predictable order. Here
- * the round is the line, and the two fighters sit side by side on it: read across
- * for a round, down a column for one fighter's whole fight.
- *
- * The COLUMN order is pinned to the duel's own fighter slots rather than to
- * whoever the chain logged first, because the two moves in a round are mined in
- * whatever order they land and a table whose sides swap partway is worse than no
- * table at all.
- */
-function TapeScorecard({
-  transcript,
-  fighterA,
-  fighterB,
-}: {
-  transcript: TranscriptEntry[];
-  fighterA?: number;
-  fighterB?: number;
-}) {
-  const rounds = Array.from(new Set(transcript.map((e) => e.round))).sort((x, y) => x - y);
-
-  // One time per ROUND, not per move. Both fighters' moves in a turn are mined in
-  // the same block, so they share a timestamp — measured on duel 84, where every
-  // round's pair carried the identical second. A column per fighter would print the
-  // same clock twice and say nothing.
-  const timeOf = (round: number) =>
-    transcript.find((e) => e.round === round && e.timestamp !== undefined)?.timestamp;
-
-  // Prefer the duel's own slots; fall back to first-appearance only when the duel
-  // has not loaded, so the table still renders rather than vanishing.
-  const seen = Array.from(new Set(transcript.map((e) => e.fighterId)));
-  const colIds = (fighterA !== undefined && fighterB !== undefined) ? [fighterA, fighterB] : seen;
-
-  const cell = (fid: number, round: number) =>
-    transcript.find((e) => e.fighterId === fid && e.round === round);
-
-  const border = '1px solid var(--border)';
-
-  return (
-    <table
-      className="t-mono t-sm"
-      style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}
-    >
-      <thead>
-        <tr>
-          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 76 }} />
-          <th style={{ textAlign: 'left', padding: '6px 16px 6px 0', borderBottom: border, width: 44 }} />
-          {colIds.map((fid) => (
-            <th
-              key={fid}
-              style={{
-                textAlign: 'left', padding: '6px 16px', borderBottom: border,
-                color: fighterHexOf(fid), letterSpacing: '0.04em', fontWeight: 400,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {fighterNameOf(fid)}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rounds.map((r) => (
-          <tr key={r}>
-            <td
-              className="t-num t-xs t-faint"
-              style={{
-                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {clockOf(timeOf(r))}
-            </td>
-            <th
-              scope="row"
-              className="t-dim"
-              style={{
-                textAlign: 'left', padding: '8px 16px 8px 0', borderTop: border,
-                fontWeight: 400, whiteSpace: 'nowrap',
-              }}
-            >
-              R{r}
-            </th>
-            {colIds.map((fid) => {
-              const e = cell(fid, r);
-              return (
-                <td
-                  key={fid}
-                  className="t-num"
-                  style={{
-                    padding: '8px 16px', borderTop: border, whiteSpace: 'nowrap',
-                    color: !e || e.failed ? 'var(--text-faint)' : 'var(--text)',
-                  }}
-                >
-                  {!e ? '·' : e.failed ? `— ${e.reason || 'no move'}` : e.action}
-                </td>
-              );
-            })}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'var(--text)';
 
   // ── Matchmaker check (PvP duel detection) ─────────────────────────────────
   const { data: matchData } = useReadContract({
@@ -378,8 +382,8 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
   const leftValue  = isDraw ? resolvedValueA : winnerFinalValue;
   const rightValue = isDraw ? resolvedValueB : loserFinalValue;
 
-  const wValueDisplay = leftValue  !== null ? fmtUsdso(leftValue)  : '—';
-  const lValueDisplay = rightValue !== null ? fmtUsdso(rightValue) : '—';
+  const wValueDisplay = leftValue  !== null ? fmtUsdsoRaw(leftValue)  : '—';
+  const lValueDisplay = rightValue !== null ? fmtUsdsoRaw(rightValue) : '—';
 
   const turns = duel?.turns ?? 0;
 
@@ -588,7 +592,7 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
                     }}
                   >
                     {isDraw
-                      ? (FIGHTERS[drawAVisual?.id ?? 'degen']?.name ?? '—')
+                      ? (fighterAIndex !== undefined ? fighterNameOf(fighterAIndex) : '—')
                       : winnerKnown
                         ? (winnerFighter?.name ?? '—')
                         : '—'}
@@ -642,7 +646,7 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
                     }}
                   >
                     {isDraw
-                      ? (FIGHTERS[drawBVisual?.id ?? 'whale']?.name ?? '—')
+                      ? (fighterBIndex !== undefined ? fighterNameOf(fighterBIndex) : '—')
                       : winnerKnown
                         ? (loserFighter?.name ?? '—')
                         : '—'}
@@ -688,8 +692,8 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
           duelId={duelId}
           isCreator={isCreator}
           matchmakerDuel={isMatchmakerDuel}
-          winnerName={isDraw ? FIGHTERS[drawAVisual?.id ?? 'degen']?.name : winnerFighter?.name}
-          loserName={isDraw ? FIGHTERS[drawBVisual?.id ?? 'whale']?.name : loserFighter?.name}
+          winnerName={isDraw && fighterAIndex !== undefined ? fighterNameOf(fighterAIndex) : winnerFighter?.name}
+          loserName={isDraw && fighterBIndex !== undefined ? fighterNameOf(fighterBIndex) : loserFighter?.name}
           winnerColor={isDraw ? (drawAVisual?.hex ?? 'var(--gold)') : winnerHex}
           loserColor={isDraw ? (drawBVisual?.hex ?? 'var(--text-dim)') : loserFighter?.hex}
         />
@@ -710,6 +714,43 @@ const fighterHexOf = (fid: number): string => FIGHTER_VISUAL_MAP[fid]?.hex ?? 'v
               fighterB={duel?.fighterB}
             />
           </div>
+
+          {/* WHAT THE VENUE DID, for a fight that is already over.
+              
+              This page showed nothing of the kind until now, which had it exactly
+              backwards. A margin SIGHTING cannot be recovered after the bell — the
+              link from a fighter to its rented account is deleted, and the registry
+              answers "healthy" forever — so the live page is the only place one can
+              honestly appear. A LIQUIDATION is the opposite: the venue performs it
+              and records it, so it can be read back for any fight however old. It
+              was appearing only on the live page, where a fight has barely started
+              and is least likely to have been liquidated at all.
+
+              Rendered as its own block rather than as rows in the scorecard above,
+              because a liquidation happens at a block and not in a round, and
+              inventing a round for it would be a guess dressed as a fact.
+
+              Nothing renders when there is nothing to show. An empty result is the
+              expected result — no fighter of ours has ever been liquidated, and
+              measured across 150,000 blocks nor has anyone else on this venue — so
+              a standing "no liquidations" line would be noise on every fight ever
+              played. */}
+          {liquidations.length > 0 && (
+            <div className="card pad-24 col gap-8">
+              <span className="label-tiny">WHAT THE VENUE DID</span>
+              {liquidations.map((r) => (
+                <div key={`${r.block}-${r.stage}`} className="row ai-c t-mono t-sm" style={{ gap: 12 }}>
+                  <span className="t-num t-xs t-faint" style={{ width: 62, flexShrink: 0 }}>
+                    {clockOf(r.timestamp)}
+                  </span>
+                  <span className="t-dim" style={{ minWidth: 90, flexShrink: 0 }}>
+                    {fighterNameOf(r.fighterId)}
+                  </span>
+                  <LiquidationRow record={r} />
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
