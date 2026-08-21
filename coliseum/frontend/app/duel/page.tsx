@@ -37,20 +37,55 @@ const MARKET_ACCENT: Record<MarketKind, string> = {
   [MarketKind.Practice]: 'var(--market-practice)',
 };
 
+/** The order the markets are presented in: cheapest game first, mock last. */
+const MARKET_ORDER: MarketKind[] = [
+  MarketKind.Events,
+  MarketKind.Perps,
+  MarketKind.Spot,
+  MarketKind.Practice,
+];
+
+/** The same glyph each market carries in the picker and on a live card. */
+const MARKET_MARK: Record<MarketKind, string> = {
+  [MarketKind.Events]: '◆',
+  [MarketKind.Perps]: '◇',
+  [MarketKind.Spot]: '⚡',
+  [MarketKind.Practice]: '🧪',
+};
+
+/**
+ * One line saying what the market is, replacing the pool list that used to sit
+ * on every card. Events is absent on purpose — its questions change every
+ * fifteen minutes, so that line is read from the chain instead of written here.
+ */
+const MARKET_BLURB: Record<MarketKind, string> = {
+  [MarketKind.Events]: '',
+  [MarketKind.Perps]: 'margin desks — assets vary by length',
+  [MarketKind.Spot]: 'real order books — more coins the longer the fight',
+  [MarketKind.Practice]: 'mock books — no real money at stake',
+};
+
 export default function LobbyPage() {
   const router = useRouter();
   const [creatorExpanded, setCreatorExpanded] = useState(false);
   // When set, the creator opens with the tier fixed (joining a specific tier);
   // null means the generic creator with a selectable tier.
   const [lockedTurns, setLockedTurns] = useState<QueueTier | null>(null);
+  // The market has to be locked alongside the tier. Joining a nine-round SPOT
+  // line used to open the creator fixed at nine rounds but on whatever market
+  // was last selected — and the picker is disabled while locked, so there was no
+  // way back. The waiting line you clicked and the one you would have joined
+  // could be different games.
+  const [lockedMarket, setLockedMarket] = useState<MarketKind | null>(null);
   const creatorRef = useRef<HTMLElement>(null);
 
   // The "START A DUEL" buttons live at the top of the page, but the creator
   // form renders several sections down. Expanding alone gives no visible
   // feedback, so scroll the now-open form into view on the next paint.
   // Pass a tier to lock the round (JOIN on a card); omit it for the generic form.
-  const openCreator = useCallback((turns?: QueueTier) => {
+  const openCreator = useCallback((turns?: QueueTier, market?: MarketKind) => {
     setLockedTurns(turns ?? null);
+    setLockedMarket(market ?? null);
     setCreatorExpanded(true);
     requestAnimationFrame(() =>
       creatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
@@ -85,6 +120,40 @@ export default function LobbyPage() {
   const { questions: eventQuestions } = useEventQuestions();
   const { offers: perpOffers } = usePerpMarkets();
   const { slots: queueSlots, pendingCounts, isLoading: isQueueLoading } = useQueueState();
+
+  /** How many fighters are standing in a line right now, across all twelve. */
+  const waitingCount = Object.values(queueSlots).filter(Boolean).length;
+
+  /**
+   * What a given line actually trades. Used for a tier chip's tooltip — the
+   * detail that matters when comparing two lengths of the same market, and never
+   * when choosing between markets, which is why it is no longer on the face of
+   * the card.
+   *
+   * Perps is the only market whose assets differ BY LENGTH and change on their
+   * own: a market leaves the cheap tiers when its margin rises with open
+   * interest and walks back in when that eases, so each answer is read from the
+   * chain. Naming spot's coin books there would list three assets the fight will
+   * not touch. Events trades the same live questions at every length.
+   */
+  const poolLabelFor = useCallback((market: MarketKind, turns: QueueTier): string => {
+    if (market === MarketKind.Events) {
+      return eventQuestions.length ? eventQuestions.join(' · ') : 'live questions';
+    }
+    if (market === MarketKind.Perps) {
+      const offer = perpOffers.find((x) => x.turns === turns);
+      if (!offer) return 'reading…';
+      if (offer.unavailable) return 'not enough markets';
+      return offer.markets.length ? offer.markets.join(' · ') : 'chosen at start';
+    }
+    const SPOT_POOLS: Record<QueueTier, string> = {
+      3: 'SOMI',
+      6: 'SOMI · WETH',
+      9: 'SOMI · WETH · WBTC',
+      15: 'ALL POOLS',
+    };
+    return SPOT_POOLS[turns];
+  }, [eventQuestions, perpOffers]);
   // Live betting odds for the active duel (real Bookmaker pools, 0 = disabled).
   const { odds: liveOdds } = useDuelState(activeDuelId ?? BigInt(0));
 
@@ -356,133 +425,129 @@ export default function LobbyPage() {
       </section>
 
       {/* ── § 02 · QUEUE STATE ────────────────────────────────────── */}
+      {/* GROUPED BY MARKET, NOT ONE CARD PER LINE.
+          There are twelve waiting lines, and a card each carried seven things —
+          the tier, the market, an open/waiting chip, a queued-pairs count that
+          is almost always zero, the pool list, the length, and a status line
+          repeating what the chip already said. Eighty-four items to read before
+          picking one fight.
+
+          A market is the real choice — a prediction, a margin position, real
+          coin books, or a mock — and the round count is a detail within it. So
+          the market says itself once, at full size, and its lengths sit under it
+          as small chips. The pool list moves to the chip's tooltip: it matters
+          when comparing two tiers of the same market and never when choosing
+          between markets. The queued count appears only when it is not zero. */}
       <section className="shell-pad col gap-16" style={{ paddingTop: 16, paddingBottom: 40 }}>
         <div className="sect-head">
           <span className="sect-head-num">§ 02</span>
           <span className="sect-head-title">QUEUE STATE</span>
           <span className="sect-head-meta">
-            {isQueueLoading ? 'loading…' : 'matchmaker slots — join a tier to queue up'}
+            {isQueueLoading
+              ? 'loading…'
+              : waitingCount > 0
+              ? `${waitingCount} fighter${waitingCount === 1 ? '' : 's'} waiting for an opponent`
+              : 'nobody waiting — pick a market and be first'}
           </span>
         </div>
 
-        <div className="row gap-16" style={{ flexWrap: 'wrap' }}>
-          {LOBBY_MENU.map(({ turns: turnsRaw, market }) => {
-            const turns = turnsRaw as QueueTier;
-            // One card per WAITING LINE, not per round count: a nine-round spot
-            // player and a nine-round events player never match each other, so
-            // showing them as one card would promise a pairing that cannot happen.
-            // Events trades the same three questions at every length — only the
-            // number of turns differs — so the label does not vary by tier.
-            const TIER_POOL_LABELS: Record<QueueTier, string> = market === MarketKind.Events
-              ? (() => {
-                  const q = eventQuestions.length ? eventQuestions.join(' · ') : 'live questions';
-                  return { 3: q, 6: q, 9: q, 15: q };
-                })()
-              : market === MarketKind.Perps
-              // Perps is the one market whose assets differ BY TIER, and change on
-              // their own: a market leaves the cheap tiers when its margin rises
-              // with open interest, and walks back in when that eases. So each row
-              // is read from the chain, and a spot-book label here would name three
-              // assets the fight will not touch.
-              ? (() => {
-                  const named = (t: number) => {
-                    const o = perpOffers.find((x) => x.turns === t);
-                    if (!o) return 'reading…';
-                    if (o.unavailable) return 'not enough markets';
-                    return o.markets.length ? o.markets.join(' · ') : 'chosen at start';
-                  };
-                  return { 3: named(3), 6: named(6), 9: named(9), 15: named(15) };
-                })()
-              : { 3: 'SOMI', 6: 'SOMI · WETH', 9: 'SOMI · WETH · WBTC', 15: 'ALL POOLS' };
-            const key = queueKey(turns, market);
-            const slot = queueSlots[key];
-            const fighterName = slot
-              ? fighterNameOf(slot.fighter)
-              : null;
-            const fighterHex = slot
-              ? (FIGHTER_VISUAL_MAP[slot.fighter]?.hex ?? 'var(--text-dim)')
-              : null;
+        <div className="col gap-12">
+          {MARKET_ORDER.filter((m) => LOBBY_MENU.some((r) => r.market === m)).map((market) => {
+            const accent = MARKET_ACCENT[market];
+            const tiers = LOBBY_MENU
+              .filter((r) => r.market === market)
+              .map((r) => r.turns as QueueTier);
 
             return (
-              <div
-                key={key}
-                className="card pad-16 col gap-12 flex-1"
-                style={{ minWidth: 'min(100%, 200px)', flex: '1 1 200px' }}
-              >
-                {/* Tier label */}
-                <div className="row jc-sb ai-c">
-                  <span className="t-display t-up" style={{ fontSize: 18, letterSpacing: '0.08em', color: 'var(--text)' }}>
-                    {turns} ROUNDS
-                    <span
-                      className="t-mono t-xs"
-                      style={{
-                        marginLeft: 8,
-                        letterSpacing: '0.1em',
-                        color: MARKET_ACCENT[market],
-                      }}
-                    >
-                      {MARKET_LABEL[market]}
-                    </span>
-                  </span>
-                  {slot ? (
-                    <Chip variant="live"><Dot variant="a" pulse /> WAITING</Chip>
-                  ) : (
-                    <Chip variant="default">OPEN</Chip>
-                  )}
-                </div>
-
-                {/* Pairs already matched and waiting for a free ring. They start
-                    in arrival order as running duels finish. */}
-                <div className="row jc-sb ai-c">
-                  <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>QUEUED PAIRS</span>
-                  <span className="t-mono t-xs t-num" style={{ color: (pendingCounts[key] ?? 0) > 0 ? 'var(--text)' : 'var(--text-faint)' }}>
-                    {pendingCounts[key] ?? 0}
-                  </span>
-                </div>
-
-                {/* Pool label, and roughly how long this tier takes. The round
-                    count alone does not tell anybody whether they are committing
-                    to five minutes or twenty-five, and that is the question
-                    somebody asks before paying to enter. Hedged on purpose — see
-                    lib/fightLength.ts for why it can only ever be a range. */}
-                <div className="row jc-sb ai-c gap-8">
-                  <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>
-                    {TIER_POOL_LABELS[turns]}
-                  </span>
+              <div key={market} className="card pad-16 col gap-12">
+                {/* What this market IS, said once instead of once per tier.
+                    Left-aligned rather than pushed to opposite ends of the card:
+                    the second half describes the first, and nine hundred pixels
+                    of gap between them reads as two unrelated labels. */}
+                <div className="row ai-c gap-10" style={{ flexWrap: 'wrap' }}>
                   <span
-                    className="t-mono t-xs"
-                    style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap' }}
-                    title="Approximate — a round takes as long as the caretaker needs to move both fighters, and concurrent fights queue behind each other."
+                    className="t-display t-up"
+                    style={{ fontSize: 16, letterSpacing: '0.08em', color: accent }}
                   >
-                    {fightLengthLabel(turns)}
+                    <span aria-hidden="true">{MARKET_MARK[market]} </span>
+                    {MARKET_LABEL[market]}
+                  </span>
+                  <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.08em' }}>
+                    {market === MarketKind.Events
+                      ? (eventQuestions.length ? eventQuestions.join(' · ') : 'live questions')
+                      : MARKET_BLURB[market]}
                   </span>
                 </div>
 
-                <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
+                {/* One chip per length. Auto-fit so four sit in a row on a wide
+                    screen and wrap rather than shrink to nothing on a phone. */}
+                <div className="queue-tiers">
+                  {tiers.map((turns) => {
+                    const key = queueKey(turns, market);
+                    const slot = queueSlots[key];
+                    const pending = pendingCounts[key] ?? 0;
+                    const fighterName = slot ? fighterNameOf(slot.fighter) : null;
+                    const fighterHex = slot
+                      ? (FIGHTER_VISUAL_MAP[slot.fighter]?.hex ?? 'var(--text-dim)')
+                      : null;
+                    const pools = poolLabelFor(market, turns);
+                    const length = fightLengthLabel(turns);
 
-                {/* Status line */}
-                {slot ? (
-                  <div className="row ai-c gap-8">
-                    <span
-                      className="t-mono t-xs"
-                      style={{ color: fighterHex ?? 'var(--text)' }}
-                    >
-                      ● {fighterName}
-                    </span>
-                    <span className="t-mono t-xs t-dim">waiting for opponent</span>
-                  </div>
-                ) : (
-                  <span className="t-mono t-xs t-dim">no one waiting — be first</span>
-                )}
-
-                {/* JOIN button */}
-                <button
-                  className="bk bk-ghost"
-                  style={{ padding: '8px 16px', letterSpacing: '0.08em', marginTop: 4 }}
-                  onClick={() => openCreator(turns)}
-                >
-                  {slot ? 'JOIN →' : 'START →'}
-                </button>
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        className="queue-tier"
+                        onClick={() => openCreator(turns, market)}
+                        /* The tooltip carries what used to be a whole line of the
+                           card. Also spelled into the aria-label, because a title
+                           attribute is not reliably announced. */
+                        title={`${pools} · ${length}${pending > 0 ? ` · ${pending} pair${pending === 1 ? '' : 's'} queued` : ''}`}
+                        aria-label={
+                          `${slot ? 'Join' : 'Start'} the ${turns} round ${MARKET_LABEL[market].toLowerCase()} line. ` +
+                          `Roughly ${length.replace('~', '').replace('–', ' to ').replace(' MIN', ' minutes')}. ` +
+                          `${fighterName ? `${fighterName} is waiting for an opponent.` : 'Nobody waiting yet.'}`
+                        }
+                        style={{ borderColor: slot ? accent : 'var(--border)' }}
+                      >
+                        <span className="row ai-c gap-6">
+                          {/* A dot only when somebody is actually there. An
+                              always-present marker teaches the eye to ignore it. */}
+                          {slot && (
+                            <span
+                              className="dot pulse"
+                              style={{ background: fighterHex ?? accent }}
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span
+                            className="t-display"
+                            style={{ fontSize: 18, lineHeight: 1, color: slot ? accent : 'var(--text)' }}
+                          >
+                            {turns}R
+                          </span>
+                        </span>
+                        <span className="t-mono t-xs" style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                          {length}
+                        </span>
+                        {/* The third line is the only one that changes on its own,
+                            so it is the only one worth a colour. */}
+                        <span
+                          className="t-mono t-xs"
+                          style={{
+                            color: fighterHex ?? 'var(--text-faint)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxWidth: '100%',
+                          }}
+                        >
+                          {fighterName ? `${fighterName} waiting` : pending > 0 ? `${pending} queued` : 'open'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
@@ -502,7 +567,7 @@ export default function LobbyPage() {
           style={{ cursor: 'pointer' }}
           onClick={() => {
             // Header toggle opens the generic creator (selectable tier).
-            if (!creatorExpanded) setLockedTurns(null);
+            if (!creatorExpanded) { setLockedTurns(null); setLockedMarket(null); }
             setCreatorExpanded(v => !v);
           }}
         >
@@ -520,6 +585,7 @@ export default function LobbyPage() {
           <div id="duel-creator-panel">
             <DuelCreator
               lockedTurns={lockedTurns ?? undefined}
+              lockedMarket={lockedMarket ?? undefined}
               onMatchFound={(duelId) => {
                 setCreatorExpanded(false);
                 // Auto-enter the arena the moment the match starts on-chain, so the
