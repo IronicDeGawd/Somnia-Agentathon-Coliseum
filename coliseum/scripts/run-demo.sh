@@ -73,12 +73,12 @@ BATCH='[{"market":"EVENTS","turns":6,"pair":0},{"market":"PERPS","turns":6,"pair
 
 say "starting four fights — events 6r, perps 6r, practice 6r, spot 9r"
 : >"$RESULTS"
-# FIGHTER_OFFSET is passed only when it was actually given — exporting it empty
-# would pin the roster to its first pair.
-OFFSET_ENV=()
-[ -n "${FIGHTER_OFFSET:-}" ] && OFFSET_ENV=(FIGHTER_OFFSET="$FIGHTER_OFFSET")
+# Passed even when blank: the spec treats an empty FIGHTER_OFFSET as unset and falls
+# back to MIN_DUEL. Deliberately NOT an array — this runs on macOS bash 3.2, where
+# expanding an empty array under `set -u` is itself an unbound-variable error, which
+# is how the first run of this script started no fights at all.
 ( cd e2e && env MATRIX="$BATCH" WALLET_FILE="$WALLET_FILE" RESULT_FILE="$RESULTS" \
-    MIN_DUEL="$MIN_DUEL" BASE_URL="$BASE_URL" "${OFFSET_ENV[@]}" \
+    MIN_DUEL="$MIN_DUEL" BASE_URL="$BASE_URL" FIGHTER_OFFSET="${FIGHTER_OFFSET:-}" \
     npx playwright test tests/all-markets.spec.ts --workers=4 --reporter=list ) 2>&1 | tee -a "$LOG"
 RC=$?
 
