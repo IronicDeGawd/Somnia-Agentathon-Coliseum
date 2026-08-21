@@ -106,8 +106,13 @@ for n in "${!BATCHES[@]}"; do
   say "── batch $((n+1))/${#BATCHES[@]}  $BATCH  (min duel $MIN_DUEL)"
 
   BATCH_RESULTS=$(mktemp)
+  # FIGHTER_OFFSET is forwarded even when blank — the spec treats an empty value as
+  # unset and falls back to the duel floor, which is what rotates the cast between
+  # runs. Set it to pin an exact pairing, which is how a specific matchup gets
+  # re-run after a change (offset 2 is Quant against Contrarian, the two most
+  # patient personas and the pair that once held every turn).
   ( cd e2e && MATRIX="$BATCH" WALLET_FILE="$WALLET_FILE" RESULT_FILE="$BATCH_RESULTS" \
-      BASE_URL="$BASE_URL" MIN_DUEL="$MIN_DUEL" \
+      BASE_URL="$BASE_URL" MIN_DUEL="$MIN_DUEL" FIGHTER_OFFSET="${FIGHTER_OFFSET:-}" \
       pnpm exec playwright test all-markets --workers=2 ) >>"$LOG" 2>&1
   RC=$?
   cat "$BATCH_RESULTS" >>"$RESULTS" 2>/dev/null
