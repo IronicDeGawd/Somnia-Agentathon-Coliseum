@@ -319,9 +319,41 @@ success erased the morning's failure.
 5. **`Matchmaker.claimWinnings(duelId)`** pays the winner, or refunds both on a draw. The same call
    releases the escrow.
 
-Fighters are never shown a digit. A price echoed back by a model was once read as a move number and
-executed as the wrong trade, so a slot is described in words — *"odds edged toward yes"*, *"very
-likely"* — and never as a number.
+**What a fighter is told, and why it changed.**
+
+The rule used to be that a fighter is never shown a digit. A price echoed back by a model was once
+read as a move number and executed as the wrong trade, so slots were described in words — *"odds edged
+toward yes"*, *"very likely"* — and never as figures.
+
+That rule now holds for **events only**, and the reason it was relaxed matters more than the rule did.
+A prediction's mark IS a probability, so words carry it perfectly: a three-point shift in odds is three
+hundred basis points and the word bands fire. A coin book is different. It moves a few basis points in
+a sixty-second turn, so every spot slot read "flat" every turn — measured across three tiers, six
+fighters placed **four orders in total**, all in the same one asset. A fighter was never shown a reason
+to do anything.
+
+Spot and perps therefore carry exact figures. The original danger is closed by a different mechanism:
+the answer is matched against a **fixed allow-list of action names**, so a number in the prompt can
+only fail to match, which is recorded as a coercion and read as Hold. Visible, and never a trade
+nobody asked for.
+
+**Numbers alone were still not enough on perps**, and that took a second fix. Measured 2026-08-21:
+a six-round perps fight produced **twelve Holds from twelve moves** while seven actions were offered
+and every one was affordable. The three markets had moved 5.6, 9.4 and 23.4 basis points across the
+whole fight — there was no thesis to be had, and two things made that worse:
+
+- **Nothing said the fighter had an opponent.** It was given a score against its own starting figure
+  and nothing else, so staying flat looked free. Every market's prompt now says a fighter is scored
+  against the other one, and that a book which never takes a position cannot win a fight. Stated as a
+  rule rather than quoting a live opponent score: portfolios are valued at the final bell, so a real
+  figure would mean revaluing three markets inside every prompt of every turn.
+- **The move was absolute, so it could not be judged.** Four basis points means nothing without
+  knowing what a market usually does in a minute. The prompt now names *the largest move of the fight
+  so far, and its direction* — and says nothing when there is nothing to say, because emphasis has to
+  be scarce to mean anything. A fighter talked into trading noise pays the spread on purpose.
+
+Both were measured before they were deployed, on the real model with no Arena involved — see the
+prompt harness note under "Guards worth copying".
 
 ## Fighter personalities
 
@@ -387,7 +419,7 @@ somniaforge-agentathon/
 │   │   ├── FighterRegistry.sol     # the six fighter prompts
 │   │   └── lib/                    # ArenaTypes (structs, MarketKind) · ArenaUtils (deposits, prompts)
 │   ├── scripts/                    # deploy, operate, and drive fights — see context/structure.md
-│   ├── test/                       # 422 passing Hardhat tests
+│   ├── test/                       # 446 passing Hardhat tests
 │   ├── frontend/                   # Next.js 15 + wagmi + RainbowKit
 │   └── deployments/somnia.json     # live addresses (gitignored)
 ├── sandbox/                        # early primitive validation — kept for reference, not built on
@@ -399,7 +431,7 @@ somniaforge-agentathon/
 
 ```bash
 pnpm install
-cd coliseum && pnpm exec hardhat test              # 422 passing
+cd coliseum && pnpm exec hardhat test              # 446 passing
 
 # Put two throwaway players through the real queue. One wallet per player —
 # transactions from one address are ordered, so a shared wallet serialises
@@ -502,6 +534,18 @@ betting market, and `EventTreasury` — which exists only because testnet collat
 
 Each of these was bought with a real failure, not added defensively.
 
+- **Test a prompt where it costs nothing.** `ArenaUtils` is a linked library, so changing one string
+  means redeploying four parts and re-pointing the router — refused unless the arena is empty. So
+  wording is scored against the real on-chain model through a standalone probe with no Arena involved
+  (`scripts/perps-decisiveness.ts`), on two scenario families: quiet moves where holding is correct,
+  and one large move where acting is. A prompt has to separate the two; a variant that always trades
+  is not brave, it is paying the spread on noise. Measured over 32 requests with no variance, this
+  found something reading the code could not — the old perps wording had a **directional blind spot**,
+  shorting a falling market 4/4 and never once buying a rising one.
+- **A successful transaction is not a successful request.** The probe catches a reverting
+  `createRequest` and emits an event, so the outer call succeeds either way. The first version of that
+  harness logged "sent" for eight refusals and then reported a measured verdict on wording that had
+  never been tested. Read the failure event, and never let "no data" render as a result.
 - **Per-duel `recoverFunds`** — one duel's creator cannot drain another's funds.
 - **CEI ordering on recovery** — the recovered flag flips before any external call.
 - **`sweepToken(USDso, …)` blocked** — an owner can never take player deposits. This is load-bearing:
@@ -535,7 +579,9 @@ Each of these was bought with a real failure, not added defensively.
   answer an over-wide range with an *empty result* rather than an error, so silence and absence are
   indistinguishable. Measured on the margin desk: 5,000 blocks returned nothing while 1,000 returned
   260. Every scanner here states its window and says out loud when it found nothing. This one cost
-  three wrong conclusions in a single day before the rule was written down.
+  three wrong conclusions in a single day before the rule was written down — and the same class of
+  blank answer, from a mistyped getter name, once came one step from authorising a router rewire on a
+  reverted call.
 
 ## What a fight records, and what it cannot
 
