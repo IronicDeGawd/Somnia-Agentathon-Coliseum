@@ -111,6 +111,28 @@ export default function DuelCard({ duelId, fighterAIndex, fighterBIndex, market 
             </span>
           </div>
 
+          {/* The line between the corners.
+              A card of four stacked rows in one flat colour reads as a list entry
+              rather than a contest, and the matchup — the thing the card is about —
+              had nothing marking it off from the numbers below.
+
+              Not a plain divider: it runs from THIS fight's two fighter colours, so
+              the rule under a Degen/Whale card is a different rule from the one
+              under a Quant/Contrarian card. That motif is already the house's — the
+              brand underline and every section header use a corner-to-corner
+              gradient — so it belongs rather than being invented here.
+
+              Faded at both ends so it reads as a hairline drawn under the names, not
+              a band separating two halves of a table. */}
+          <div
+            aria-hidden="true"
+            style={{
+              height: 1,
+              background: `linear-gradient(90deg, transparent, ${hexA} 15%, ${hexB} 85%, transparent)`,
+              opacity: 0.55,
+            }}
+          />
+
           {/* THE BETTING LINE — the split of the pot, and only when there is one.
               This used to render the Bookmaker's `currentOdds`, which no code
               maintains: both setters are owner-only, so it reads [0, 0] for every
