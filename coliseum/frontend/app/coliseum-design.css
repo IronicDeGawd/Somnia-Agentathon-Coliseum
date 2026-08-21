@@ -834,11 +834,22 @@ button.sect-head {
    the RECORD / TOTAL PNL columns can't be silently clipped off-screen. */
 .standings-grid {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1.6fr) minmax(56px, 72px) minmax(64px, 84px) minmax(0, 1fr);
+  /* RECORD is a fixed 104px, not a 72px cap. A full record is eleven characters
+     ("37W-25L-18D") and at 12px mono that is about 79px, so the old maximum wrapped
+     it onto two lines — which broke the row's vertical rhythm and left the column
+     reading as two ragged half-records.
+
+     The name column was also the greediest thing in the row at 1.6fr, which pushed
+     every figure far to the right and left a wide empty gap after the fighter's
+     name. Narrowed so the data sits closer to what it describes; FORM absorbs the
+     slack, since a win-rate bar is the one thing here that genuinely wants width. */
+  grid-template-columns: 28px minmax(0, 0.9fr) 104px minmax(72px, 92px) minmax(80px, 1.6fr);
   column-gap: clamp(10px, 2vw, 20px);
   align-items: center;
   padding: 14px 0;
 }
+/* A record is one token. Never let it break, even if the column is squeezed. */
+.st-rec { white-space: nowrap; }
 
 /* ─── RESPONSIVE BREAKPOINTS ───
    The design layer previously had ZERO @media rules. Four tiers now, and the
