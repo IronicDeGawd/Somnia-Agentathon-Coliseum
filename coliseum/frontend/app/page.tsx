@@ -8,7 +8,7 @@ import { FighterAvatar } from '@/components/shared/FighterAvatar';
 import { BracketButton, Chip, Dot, Ticker } from '@/components/shared/OtherHUD';
 import { FIGHTERS, ROSTER, fighterIndexToId } from '@/lib/fighters';
 import { fmtUsd } from '@/lib/format';
-import { DRAW_SLOT } from '@/lib/contracts';
+import { DRAW_SLOT, CONTRACT_ADDRESSES } from '@/lib/contracts';
 import { useActiveDuel } from '@/hooks/useActiveDuel';
 import { useDuelState } from '@/hooks/useDuelState';
 import { useLeaderboard } from '@/hooks/useLeaderboard';
@@ -925,9 +925,44 @@ export default function LandingPage() {
             <a className="t-mono t-xs t-dim tap-44" href="#fight">TONIGHT</a>
             <a className="t-mono t-xs t-dim tap-44" href="#roster">ROSTER</a>
             <a className="t-mono t-xs t-dim tap-44" href="#ledger">LEDGER</a>
-            <a className="t-mono t-xs t-dim tap-44" href="#">CONTRACTS</a>
-            <a className="t-mono t-xs t-dim tap-44" href="#">DISCORD</a>
-            <a className="t-mono t-xs t-dim tap-44" href="#">GITHUB</a>
+            {/* All three of these were href="#" — they looked like links, moved
+                the cursor like links, and went nowhere. Every one now has a real
+                destination, and the two Discords are different rooms: Somnia is
+                the chain, dreamDEX is the venue every one of these fights
+                actually trades on. rel="noopener" on each, because a new tab
+                otherwise keeps a handle on the page that opened it. */}
+            <a
+              className="t-mono t-xs t-dim tap-44"
+              href={`https://explorer-v2.testnet.somnia.network/address/${CONTRACT_ADDRESSES.Arena}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              CONTRACTS
+            </a>
+            <a
+              className="t-mono t-xs t-dim tap-44"
+              href="https://discord.gg/somnia"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              DISCORD
+            </a>
+            <a
+              className="t-mono t-xs t-dim tap-44"
+              href="https://discord.gg/E9d2GH9Vs"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              DREAMDEX
+            </a>
+            <a
+              className="t-mono t-xs t-dim tap-44"
+              href="https://github.com/IronicDeGawd/Somnia-Agentathon-Coliseum"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GITHUB
+            </a>
           </div>
         </div>
       </footer>
