@@ -651,7 +651,8 @@ holds players' stakes — the distinction is what a contract holds, not who is a
 
 ## The test matrix — every tier, played on testnet
 
-Every tier the lobby offers, on every market, run end to end on 2026-08-20. Each fight is real — a real
+Every tier the lobby offers, on every market, run end to end on 2026-08-20 — with the four perps rows
+re-run on 2026-08-21 after the prompt change described below. Each fight is real — a real
 deposit, real orders on real markets, a real settled result and a page you can open — and each was
 started **from the site**, by a browser carrying its own wallet, then settled and claimed. All of them
 ran **The Degen** against **The Whale**.
@@ -667,10 +668,10 @@ makes the lobby click time out.
 | [77](https://coliseum.somniaforge.com/duel/77/result) | Events | 6 | 5 | **The Whale** | BTCUP ETHUP BTCHOUR |
 | [79](https://coliseum.somniaforge.com/duel/79/result) | Events | 9 | 11 | **The Degen** | BTCUP ETHUP BTCHOUR |
 | [76](https://coliseum.somniaforge.com/duel/76/result) | Events | 15 | 10 | **The Whale** | BTCUP ETHUP BTCHOUR |
-| [65](https://coliseum.somniaforge.com/duel/65/result) | Perps | 3 | 2 | **The Whale** | ETH SOL ADA |
-| [67](https://coliseum.somniaforge.com/duel/67/result) | Perps | 6 | 4 | **The Whale** | ADA XRP BNB |
-| [69](https://coliseum.somniaforge.com/duel/69/result) | Perps | 9 | 8 | **The Degen** | BNB ETH SOL |
-| [71](https://coliseum.somniaforge.com/duel/71/result) | Perps | 15 | 12 | **The Whale** | SOL ADA XRP |
+| [95](https://coliseum.somniaforge.com/duel/95/result) | Perps | 3 | 4 | draw | ETH SOL ADA |
+| [94](https://coliseum.somniaforge.com/duel/94/result) | Perps | 6 | 10 | **The Whale** | XRP BNB BTC |
+| [96](https://coliseum.somniaforge.com/duel/96/result) | Perps | 9 | 14 | **The Degen** | BTC ETH SOL |
+| [97](https://coliseum.somniaforge.com/duel/97/result) | Perps | 15 | 25 | **The Degen** | ETH SOL ADA |
 | [73](https://coliseum.somniaforge.com/duel/73/result) | Spot | 9 | 18 | **The Degen** | WETH WBTC SOMI |
 | [75](https://coliseum.somniaforge.com/duel/75/result) | Spot | 15 | 29 | **The Degen** | WETH WBTC SOMI |
 | [72](https://coliseum.somniaforge.com/duel/72/result) | Practice | 6 | 10 | **The Degen** | SIMPOOLWETH SIMPOOLWBTC SIMPOOLSOMI |
@@ -885,6 +886,35 @@ Reaching it took forcing the single-market tier, because three attempts to cover
 passed whether the code was right or wrong, and one still passed with the fuel reserve deleted. They
 were deleted rather than kept. **A test that passes with the fix removed is worse than no test**: it
 claims coverage it does not have, and that happened four times in one day.
+
+### What the prompt change did to perps
+
+The perps rows above were re-run on 2026-08-21 after the fighter's briefing changed — it is now told
+that it is scored against an opponent, and a move is described as *the largest of the fight so far*
+rather than as a bare figure. Same tiers, same two fighters, same venue:
+
+| Rounds | Orders before | Orders after |
+|---|---|---|
+| 3 | 2 | **4** |
+| 6 | 4 | **10** |
+| 9 | 8 | **14** |
+| 15 | 12 | **25** |
+| **total** | **26** | **53** |
+
+**Twice the activity at every tier**, with zero rejected, zero coerced and zero failed orders across
+all four fights — and the three-round fight still ended in a draw, so holding has not been trained out.
+
+Two things are worth being precise about, because the obvious reading of these numbers is too
+flattering. **Perps was never completely inert**: the older rows placed 2 to 12 orders, so the change
+roughly doubled activity rather than creating it from nothing. The genuinely dead fights were the two
+scheduled fixtures on the same day — **twelve moves and zero orders** — and those used the roster's most
+patient fighters rather than the Degen and the Whale. So the "no trades at all" case was a *quiet
+market and a passive persona together*, and only the first half of that is fixed here.
+
+The wording was chosen by measurement before it was deployed, not after: `scripts/perps-decisiveness.ts`
+scores a variant against the real model through a standalone probe, on quiet scenarios where holding is
+correct and live ones where acting is. Over 32 requests with no variance, the old briefing read a
+falling market 4/4 and a rising one 0/4 — a directional blind spot — while the new one read both.
 
 ## Where to read next
 
