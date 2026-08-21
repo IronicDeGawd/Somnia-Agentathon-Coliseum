@@ -470,7 +470,11 @@ function QueueInner({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
+            // auto-fit, not a fixed three: the panel is full width now, and
+            // three fixed columns would stretch each fighter card to about
+            // four hundred pixels. This gives six across when there is room
+            // and folds back to three, then two, as it narrows.
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
             gap: '8px',
           }}
         >

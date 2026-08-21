@@ -18,6 +18,7 @@ import { useLeaderboard } from '@/hooks/useLeaderboard';
 import { useMyBets } from '@/hooks/useMyBets';
 import { fighterIndexToId, FIGHTER_VISUAL_MAP, fighterNameOf } from '@/lib/fighters';
 import { useDuelMarkets } from '@/hooks/useDuelMarkets';
+import { fightLengthLabel } from '@/lib/fightLength';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
 
@@ -439,10 +440,23 @@ export default function LobbyPage() {
                   </span>
                 </div>
 
-                {/* Pool label */}
-                <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>
-                  {TIER_POOL_LABELS[turns]}
-                </span>
+                {/* Pool label, and roughly how long this tier takes. The round
+                    count alone does not tell anybody whether they are committing
+                    to five minutes or twenty-five, and that is the question
+                    somebody asks before paying to enter. Hedged on purpose — see
+                    lib/fightLength.ts for why it can only ever be a range. */}
+                <div className="row jc-sb ai-c gap-8">
+                  <span className="t-mono t-xs t-dim" style={{ letterSpacing: '0.12em' }}>
+                    {TIER_POOL_LABELS[turns]}
+                  </span>
+                  <span
+                    className="t-mono t-xs"
+                    style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap' }}
+                    title="Approximate — a round takes as long as the caretaker needs to move both fighters, and concurrent fights queue behind each other."
+                  >
+                    {fightLengthLabel(turns)}
+                  </span>
+                </div>
 
                 <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
 
@@ -497,8 +511,13 @@ export default function LobbyPage() {
           <span className="sect-head-meta">{creatorExpanded ? '▲ collapse' : '▼ expand to start a duel'}</span>
         </button>
 
+        {/* Full width, like every other section on this page. It used to be
+            capped at 520px, which left it hugging the left edge under a
+            full-width heading and read as a layout fault rather than a choice.
+            The panel's own grids are all auto-fit, so they spread rather than
+            stretch. */}
         {creatorExpanded && (
-          <div id="duel-creator-panel" style={{ maxWidth: 520 }}>
+          <div id="duel-creator-panel">
             <DuelCreator
               lockedTurns={lockedTurns ?? undefined}
               onMatchFound={(duelId) => {
