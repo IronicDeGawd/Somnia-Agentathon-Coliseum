@@ -97,11 +97,59 @@ async function queueAsPlayer(
   return { page, address: w.address, close: () => context.close() };
 }
 
-for (const e of MATRIX) {
+/**
+ * The roster, in the order the contracts index it.
+ *
+ * WHY THIS IS NOT TWO HARDCODED NAMES ANY MORE. It used to be `/DEGEN/` against
+ * `/WHALE/` for every fight, and that — not the daily fixture — is where the
+ * leaderboard's imbalance came from: measured at 87 duels, those two held 80 and 81
+ * appearances while the other four had thirteen between them, 93% of all slots to a
+ * third of the roster. The fixture was taught to pick the least-played fighters, and
+ * then a single four-fight matrix run pushed the two of them from 80/81 to 84/85 and
+ * undid a week of that.
+ */
+const ROSTER: RegExp[] = [
+  /DEGEN/, /WHALE/, /QUANT/, /DIAMOND/, /SCALPER/, /CONTRARIAN/,
+];
+
+/**
+ * Where this run starts in the roster.
+ *
+ * Defaults to the run's own duel floor, which `run-matrix.sh` already passes and
+ * which climbs every run — so consecutive runs pick different fighters with nobody
+ * having to remember to set anything, and a few runs cover the whole roster. Pin it
+ * with FIGHTER_OFFSET to reproduce an exact pairing when a fight needs re-running.
+ */
+// `??` falls through on null and undefined but NOT on an empty string, and a shell
+// that exports FIGHTER_OFFSET="" would otherwise pin every run to offset zero — the
+// exact hardcoding this replaced. Treat blank as absent.
+const firstSet = (...v: (string | undefined)[]) => v.find((x) => x !== undefined && x !== '') ?? '0';
+const OFFSET = Number(firstSet(process.env.FIGHTER_OFFSET, process.env.MIN_DUEL));
+
+/**
+ * The two fighters for one matrix entry. They must DIFFER — the arena rejects a
+ * fight between one fighter and itself — and consecutive entries are pushed two
+ * apart so the two fights in a batch do not use the same pair.
+ */
+function pairFor(index: number): [RegExp, RegExp] {
+  // Step by ONE and pair across the roster's half, rather than stepping by two and
+  // pairing neighbours. With six fighters and four fights — the demo shape — stepping
+  // by two puts the fourth fight back on the first fight's exact pair, while this
+  // gives (0,3) (1,4) (2,5) (3,0): all six on screen, and no pairing repeated.
+  const a = (OFFSET + index) % ROSTER.length;
+  const b = (a + ROSTER.length / 2) % ROSTER.length;
+  return [ROSTER[a], ROSTER[b]];
+}
+
+MATRIX.forEach((e, index) => {
   test(`${e.market} ${e.turns} rounds`, async ({ browser }) => {
     const a = e.pair * 2;
-    const p1 = await queueAsPlayer(browser, a, /DEGEN/, e.market, e.turns);
-    const p2 = await queueAsPlayer(browser, a + 1, /WHALE/, e.market, e.turns);
+    const [fighterA, fighterB] = pairFor(index);
+    // Named in the title line of the run so a result is traceable to a pairing
+    // without reading the chain back.
+    console.log(`  ${e.market} ${e.turns}r: ${fighterA.source} vs ${fighterB.source}`);
+    const p1 = await queueAsPlayer(browser, a, fighterA, e.market, e.turns);
+    const p2 = await queueAsPlayer(browser, a + 1, fighterB, e.market, e.turns);
 
     // Matching happens inside the second queue transaction, so the fight exists by
     // the time it returns and both pages should move to it on their own.
@@ -127,10 +175,14 @@ for (const e of MATRIX) {
 
     fs.appendFileSync(
       process.env.RESULT_FILE!,
-      JSON.stringify({ market: e.market, turns: e.turns, duelId, players: [p1.address, p2.address] }) + '\n',
+      JSON.stringify({
+        market: e.market, turns: e.turns, duelId,
+        players: [p1.address, p2.address],
+        fighters: [fighterA.source, fighterB.source],
+      }) + '\n',
     );
 
     await p1.close();
     await p2.close();
   });
-}
+});
