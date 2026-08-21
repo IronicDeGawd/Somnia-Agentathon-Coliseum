@@ -66,6 +66,21 @@ for i in 0 1 2 3; do
 done
 
 # ── The batches ────────────────────────────────────────────────────────────
+# Override to run a subset — one shell-quoted JSON batch per line, newline
+# separated. Used to re-confirm a single market after a prompt change without
+# paying for all twelve fights:
+#
+#   BATCHES_OVERRIDE='[{"market":"PERPS","turns":3,"pair":0},{"market":"PERPS","turns":6,"pair":1}]
+#   [{"market":"PERPS","turns":9,"pair":0},{"market":"PERPS","turns":15,"pair":1}]'
+#
+# Two fights on the SAME market are fine as long as the TIERS differ — a waiting
+# line is keyed on (tier, market), so different tiers cannot cross-pair.
+if [ -n "${BATCHES_OVERRIDE:-}" ]; then
+  BATCHES=()
+  while IFS= read -r line; do
+    [ -n "$line" ] && BATCHES+=("$line")
+  done <<< "$BATCHES_OVERRIDE"
+else
 BATCHES=(
   '[{"market":"EVENTS","turns":3,"pair":0},{"market":"PERPS","turns":3,"pair":1}]'
   '[{"market":"EVENTS","turns":6,"pair":0},{"market":"PERPS","turns":6,"pair":1}]'
@@ -74,6 +89,7 @@ BATCHES=(
   '[{"market":"SPOT","turns":9,"pair":0},{"market":"PRACTICE","turns":6,"pair":1}]'
   '[{"market":"SPOT","turns":15,"pair":0},{"market":"PRACTICE","turns":9,"pair":1}]'
 )
+fi
 
 # Reads one field out of the duels() tuple. Solidity OMITS the uint8[2] array, so
 # the tuple is 13 fields: 5=completedCallbacks, 6=turns, 8=status.
@@ -87,7 +103,7 @@ ALL_DUELS=""
 for n in "${!BATCHES[@]}"; do
   BATCH="${BATCHES[$n]}"
   MIN_DUEL=$(cast call "$ARENA" 'nextDuelId()(uint256)' --rpc-url "$RPC" | cut -d' ' -f1)
-  say "── batch $((n+1))/6  $BATCH  (min duel $MIN_DUEL)"
+  say "── batch $((n+1))/${#BATCHES[@]}  $BATCH  (min duel $MIN_DUEL)"
 
   BATCH_RESULTS=$(mktemp)
   ( cd e2e && MATRIX="$BATCH" WALLET_FILE="$WALLET_FILE" RESULT_FILE="$BATCH_RESULTS" \
