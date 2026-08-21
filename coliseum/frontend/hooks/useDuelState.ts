@@ -37,10 +37,20 @@ export interface DuelData {
 
 export interface UseDuelStateResult {
   duel: DuelData | null;
+  /**
+   * The Bookmaker's own odds field. Reads [0, 0] on every duel — nothing maintains
+   * it — so prefer `shareA`/`shareB`, which come from the stakes actually placed.
+   */
   odds: { degenBps: number; whaleBps: number } | null;
   totalBetsA: bigint;
   totalBetsB: bigint;
-  currentTurn: number;
+  /** False when the pot is empty, meaning there is no line to draw at all. */
+  hasBets: boolean;
+  /** Fighter A's share of the pot as a percentage; 50 when nothing is staked. */
+  shareA: number;
+  shareB: number;
+  /** Rounds completed — NOT callbacks, of which there are two per round. */
+  currentRound: number;
   isActive: boolean;
   isResolved: boolean;
   winnerSlot: number | null;
@@ -240,7 +250,40 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
       }
     : null;
 
-  const currentTurn  = duel?.currentTurn ?? 0;
+  /**
+   * THE BETTING LINE, DERIVED FROM THE BETS THEMSELVES.
+   *
+   * `currentOdds` on the Bookmaker is an owner-set oracle field and nothing
+   * maintains it: `initializeOdds` and `updateOdds` are both owner-only, so it
+   * reads [0, 0] for every duel on chain today — checked across fixtures, matrix
+   * fights and demo fights alike. Rendering it gave every card a line of "0% / 0%"
+   * and a bar with no width on either side.
+   *
+   * The pot IS the line here — this is a parimutuel book, so a side's share of the
+   * stakes is exactly its implied chance. Those totals are tallied from BetPlaced,
+   * so they are as live as the bets are.
+   *
+   * `hasBets` is separate on purpose. With an empty pot there is no line at all,
+   * and a caller must be able to say so rather than draw a 50/50 that nobody
+   * wagered on.
+   */
+  const pot = totalBetsA + totalBetsB;
+  const hasBets = pot > BigInt(0);
+  const shareA = hasBets ? Number((totalBetsA * BigInt(1000)) / pot) / 10 : 50;
+  const shareB = hasBets ? 100 - shareA : 50;
+
+  /**
+   * Rounds completed, not callbacks.
+   *
+   * `duels().completedCallbacks` counts ONE PER FIGHTER, so a nine-round fight ends
+   * at eighteen — and every consumer that printed it as a round showed "RND 18 / 9".
+   * Two of the three did. Divided here, once, so the mistake cannot be made again by
+   * whoever reads this next.
+   */
+  const currentRound = Math.min(
+    Math.ceil((duel?.currentTurn ?? 0) / 2),
+    duel?.turns ?? 0,
+  );
   const status       = duel?.status ?? 0;
   const isActive     = status === DUEL_STATUS_ACTIVE;
   const isResolved   = status === DUEL_STATUS_RESOLVED;
@@ -257,7 +300,10 @@ export function useDuelState(duelId: bigint): UseDuelStateResult {
     odds,
     totalBetsA,
     totalBetsB,
-    currentTurn,
+    hasBets,
+    shareA,
+    shareB,
+    currentRound,
     isActive,
     isResolved,
     winnerSlot,

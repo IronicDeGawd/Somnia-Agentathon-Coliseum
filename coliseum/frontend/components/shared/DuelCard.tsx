@@ -32,7 +32,7 @@ function getStatusLabel(status: number): string {
 }
 
 export default function DuelCard({ duelId, fighterAIndex, fighterBIndex, market }: DuelCardProps) {
-  const { duel, odds, totalBetsA, totalBetsB, currentTurn, isActive, isLoading } = useDuelState(duelId);
+  const { duel, totalBetsA, totalBetsB, hasBets, shareA, shareB, currentRound, isActive, isLoading } = useDuelState(duelId);
   const { fighters } = useFighters();
 
   const fighterA = fighters.find(f => f.index === fighterAIndex);
@@ -44,9 +44,6 @@ export default function DuelCard({ duelId, fighterAIndex, fighterBIndex, market 
   const totalTurns = duel?.turns ?? 0;
   const status = duel?.status ?? 0;
   const statusLabel = getStatusLabel(status);
-
-  const oddsAPct = odds ? Math.round(odds.degenBps / 100) : 50;
-  const oddsBPct = odds ? Math.round(odds.whaleBps / 100) : 50;
 
   const totalPot = totalBetsA + totalBetsB;
   const totalPotFormatted = formatUnits(totalPot, 18);
@@ -114,34 +111,54 @@ export default function DuelCard({ duelId, fighterAIndex, fighterBIndex, market 
             </span>
           </div>
 
-          {/* Odds bar */}
-          <div className="col gap-4">
-            <div
-              style={{
-                height: '4px',
-                borderRadius: '2px',
-                overflow: 'hidden',
-                background: 'var(--border)',
-                display: 'flex',
-              }}
-            >
-              <div style={{ width: `${oddsAPct}%`, background: hexA, transition: 'width 0.3s' }} />
-              <div style={{ width: `${oddsBPct}%`, background: hexB, transition: 'width 0.3s' }} />
+          {/* THE BETTING LINE — the split of the pot, and only when there is one.
+              This used to render the Bookmaker's `currentOdds`, which no code
+              maintains: both setters are owner-only, so it reads [0, 0] for every
+              duel on chain and every card showed "0% / 0%" above a bar with no
+              width on either side. Two zeroes are not a line; they are the absence
+              of one, and saying so is the honest version.
+
+              Where there ARE bets, the share of the pot IS the line — this is a
+              parimutuel book, so a side's share of the stakes is its implied
+              chance. No oracle needed. */}
+          {hasBets ? (
+            <div className="col gap-4">
+              <div
+                style={{
+                  height: '4px',
+                  borderRadius: '2px',
+                  overflow: 'hidden',
+                  background: 'var(--border)',
+                  display: 'flex',
+                }}
+              >
+                <div style={{ width: `${shareA}%`, background: hexA, transition: 'width 0.3s' }} />
+                <div style={{ width: `${shareB}%`, background: hexB, transition: 'width 0.3s' }} />
+              </div>
+              <div className="row jc-sb">
+                <span className="t-xs t-mono" style={{ color: hexA }}>{Math.round(shareA)}%</span>
+                <span className="t-xs t-mono" style={{ color: hexB }}>{Math.round(shareB)}%</span>
+              </div>
             </div>
-            <div className="row jc-sb">
-              <span className="t-xs t-mono" style={{ color: hexA }}>{oddsAPct}%</span>
-              <span className="t-xs t-mono" style={{ color: hexB }}>{oddsBPct}%</span>
-            </div>
-          </div>
+          ) : (
+            <span className="t-xs t-mono t-faint" style={{ letterSpacing: '0.12em' }}>
+              NO BETS YET
+            </span>
+          )}
 
           {/* Footer row: round progress + pot */}
           <div className="row ai-c jc-sb">
             <span className="t-xs t-dim t-mono">
-              {isLoading ? '—' : `RND ${currentTurn} / ${totalTurns}`}
+              {/* ROUNDS, not callbacks. There are two callbacks per round — one move
+                  per fighter — so this printed "RND 18 / 9" on a nine-round fight. */}
+              {isLoading ? '—' : `RND ${currentRound} / ${totalTurns}`}
             </span>
-            <span className="t-xs t-mono" style={{ color: 'var(--gold)' }}>
-              {potDisplay} <span className="t-faint">USDso</span>
-            </span>
+            {/* An empty pot is stated once, above, rather than twice as "0.00 USDso". */}
+            {hasBets && (
+              <span className="t-xs t-mono" style={{ color: 'var(--gold)' }}>
+                {potDisplay} <span className="t-faint">USDso</span>
+              </span>
+            )}
           </div>
 
         </div>

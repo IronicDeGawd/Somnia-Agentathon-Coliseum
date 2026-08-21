@@ -587,10 +587,12 @@ export default function ArenaPage() {
   // ── Chain state ──────────────────────────────────────────────────────────────
   const {
     duel,
-    odds,
     totalBetsA,
     totalBetsB,
-    currentTurn,
+    hasBets,
+    shareA,
+    shareB,
+    currentRound,
     isActive,
     isResolved,
     winnerSlot,
@@ -653,10 +655,12 @@ export default function ArenaPage() {
   }, [isResolved, rawId, router]);
 
   // ── Derived display values ───────────────────────────────────────────────────
-  // currentTurn is completedCallbacks (2 per round — one move per fighter), so
+  // The hook now returns ROUNDS, so there is nothing left to divide here — it used
+  // to receive callbacks and halve them, which is the conversion two other callers
+  // forgot. Kept as a name because the clock and the header both read it.
   // the human round number is ceil(callbacks / 2), capped at the duel's turns.
   const displayTurns = duel ? duel.turns : 0;
-  const displayRound = duel ? Math.min(Math.ceil(currentTurn / 2), displayTurns) : 0;
+  const displayRound = duel ? Math.min(currentRound, displayTurns) : 0;
   const duelActive   = isActive;
   const duelResolved = isResolved;
   const duelOver     = duelResolved;
@@ -670,9 +674,12 @@ export default function ArenaPage() {
   // regardless of who is actually fighting. Render a skeleton instead.
   const duelPending = !noDuel && !duel;
 
-  // Odds: chain BPS → percentage. Default to 50/50 if unavailable or no bets.
-  const noBets = totalBetsA === BigInt(0) && totalBetsB === BigInt(0);
-  const oddsDegenPct = (!odds || noBets) ? 50 : Math.round(odds.degenBps / 100);
+  // The line, from the pot rather than the Bookmaker's `currentOdds` — that field is
+  // owner-set, nothing maintains it, and it reads [0, 0] on every duel. This page was
+  // already falling back to an even split when the pot was empty, which is why it
+  // never showed the "0% / 0%" the cards did; it now uses the same derived share as
+  // everywhere else, so all three agree.
+  const oddsDegenPct = Math.round(shareA);
   const oddsWhalePct = 100 - oddsDegenPct;
 
   // Real fighter indexes from chain
@@ -1170,7 +1177,9 @@ export default function ArenaPage() {
               duelId={duelId}
               fighterAName={degenF.name}
               fighterBName={whaleF.name}
-              odds={odds}
+              hasBets={hasBets}
+              shareA={shareA}
+              shareB={shareB}
               totalBetsA={totalBetsA}
               totalBetsB={totalBetsB}
               isActive={isActive}

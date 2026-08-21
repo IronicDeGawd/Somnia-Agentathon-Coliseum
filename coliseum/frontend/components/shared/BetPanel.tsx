@@ -13,7 +13,11 @@ interface BetPanelProps {
   fighterBName: string;
   // Duel state is owned by the parent arena page (single useDuelState poll) and
   // passed down, so this panel does not spawn a second poller / event watcher.
-  odds: { degenBps: number; whaleBps: number } | null;
+  // NOT the Bookmaker's `currentOdds` — that field is owner-set, nothing maintains
+  // it, and it reads [0, 0] on every duel. The line is the share of the pot.
+  hasBets: boolean;
+  shareA: number;
+  shareB: number;
   totalBetsA: bigint;
   totalBetsB: bigint;
   isActive: boolean;
@@ -73,7 +77,9 @@ export default function BetPanel({
   duelId,
   fighterAName,
   fighterBName,
-  odds,
+  hasBets,
+  shareA,
+  shareB,
   totalBetsA,
   totalBetsB,
   isActive,
@@ -121,8 +127,13 @@ export default function BetPanel({
   }, []);
 
   // ── Derived display values ──────────────────────────────────────────────────
-  const oddsAPercent = odds ? (odds.degenBps / 100).toFixed(1) : '—';
-  const oddsBPercent = odds ? (odds.whaleBps  / 100).toFixed(1) : '—';
+  // THE LINE COMES FROM THE POT, not the Bookmaker's `currentOdds` field. Both of
+  // that field's setters are owner-only and nothing calls them, so it reads [0, 0]
+  // for every duel on chain — which showed a prospective bettor "0.0% / 0.0%" and a
+  // bar with no width, on the very screen where they are deciding what to stake.
+  // A parimutuel book's line IS the share of the stakes, so the pot is the truth.
+  const oddsAPercent = hasBets ? shareA.toFixed(1) : '—';
+  const oddsBPercent = hasBets ? shareB.toFixed(1) : '—';
 
   const totalPool    = totalBetsA + totalBetsB;
   const poolDisplay  = formatUSDso(totalPool);
@@ -176,12 +187,12 @@ export default function BetPanel({
             position: 'relative',
           }}
         >
-          {odds && (
+          {hasBets && (
             <div
               style={{
                 position: 'absolute',
                 inset: 0,
-                width: `${odds.degenBps / 100}%`,
+                width: `${shareA}%`,
                 background: 'var(--fighter-a)',
                 borderRadius: 3,
                 transition: 'width 0.4s ease',

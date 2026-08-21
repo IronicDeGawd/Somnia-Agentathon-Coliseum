@@ -10,9 +10,14 @@
 #
 #   bash scripts/run-demo.sh
 #
-# WHY EIGHT WALLETS. A wallet cannot be in two fights at once — transactions
-# from one address are ordered, so one address in two fights collides on its own
-# nonce. Four simultaneous fights therefore need eight.
+# WHY SIX WALLETS. A wallet cannot be in two fights at once — transactions from
+# one address are ordered, so one address in two fights collides on its own nonce.
+# Three simultaneous fights therefore need six.
+#
+# NO PRACTICE FIGHT. The practice market runs on mock books fed by a local market
+# maker, so a practice fight demonstrates the machinery against prices nobody is
+# quoting. The three real markets are the point: a prediction, a margin position,
+# and real coin books.
 #
 # WHY SPOT RUNS NINE ROUNDS AND NOT SIX. There is no six-round spot tier in the
 # lobby; it offers 9 and 15. (Three was removed on purpose — it activates a
@@ -27,7 +32,7 @@
 #
 # Env:
 #   BASE_URL         site under test (default the public site)
-#   WALLET_FILE      JSON from make-test-wallets — needs EIGHT wallets
+#   WALLET_FILE      JSON from make-test-wallets — needs SIX wallets
 #   FIGHTER_OFFSET   where in the roster to start (default: rotates by duel id)
 # ============================================================================
 set -uo pipefail
@@ -47,17 +52,17 @@ DEPLOYER_KEY=$(grep -E '^PRIVATE_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"'
 waddr() { python3 -c "import json;print(json.load(open('$WALLET_FILE'))[$1]['address'])"; }
 
 COUNT=$(python3 -c "import json;print(len(json.load(open('$WALLET_FILE'))))")
-if [ "$COUNT" -lt 8 ]; then
-  say "!! need EIGHT wallets for four simultaneous fights, found $COUNT"
-  say "   COUNT=8 STT_EACH=2 USDSO_EACH=400 WALLET_FILE=$WALLET_FILE \\"
+if [ "$COUNT" -lt 6 ]; then
+  say "!! need SIX wallets for three simultaneous fights, found $COUNT"
+  say "   COUNT=6 STT_EACH=2 USDSO_EACH=400 WALLET_FILE=$WALLET_FILE \\"
   say "     pnpm exec hardhat run scripts/make-test-wallets.ts --network somnia"
   exit 1
 fi
 
 # Spot at nine rounds costs ~113 USDso a side, so the check is worth doing before
 # a demo rather than discovering it from a button that reads INSUFFICIENT.
-say "checking the eight wallets can cover their fights"
-for i in 0 1 2 3 4 5 6 7; do
+say "checking the six wallets can cover their fights"
+for i in 0 1 2 3 4 5; do
   A=$(waddr $i)
   BAL=$(cast call "$USDSO" "balanceOf(address)(uint256)" "$A" --rpc-url "$RPC" 2>/dev/null | awk '{print $1}')
   STT=$(cast balance "$A" --rpc-url "$RPC" 2>/dev/null)
@@ -67,11 +72,11 @@ done
 MIN_DUEL=$(cast call "$ARENA" "nextDuelId()(uint256)" --rpc-url "$RPC" 2>/dev/null | awk '{print $1}')
 say "duels from $MIN_DUEL onward belong to this run"
 
-# One batch, four entries, one per market — so all four are live together.
-# Pair 0..3 maps to wallet pairs (0,1) (2,3) (4,5) (6,7).
-BATCH='[{"market":"EVENTS","turns":6,"pair":0},{"market":"PERPS","turns":6,"pair":1},{"market":"PRACTICE","turns":6,"pair":2},{"market":"SPOT","turns":9,"pair":3}]'
+# One batch, three entries, one per REAL market — so all three are live together.
+# Pair 0..2 maps to wallet pairs (0,1) (2,3) (4,5).
+BATCH='[{"market":"EVENTS","turns":6,"pair":0},{"market":"PERPS","turns":6,"pair":1},{"market":"SPOT","turns":9,"pair":2}]'
 
-say "starting four fights — events 6r, perps 6r, practice 6r, spot 9r"
+say "starting three fights — events 6r, perps 6r, spot 9r"
 : >"$RESULTS"
 # Passed even when blank: the spec treats an empty FIGHTER_OFFSET as unset and falls
 # back to MIN_DUEL. Deliberately NOT an array — this runs on macOS bash 3.2, where
@@ -79,7 +84,7 @@ say "starting four fights — events 6r, perps 6r, practice 6r, spot 9r"
 # is how the first run of this script started no fights at all.
 ( cd e2e && env MATRIX="$BATCH" WALLET_FILE="$WALLET_FILE" RESULT_FILE="$RESULTS" \
     MIN_DUEL="$MIN_DUEL" BASE_URL="$BASE_URL" FIGHTER_OFFSET="${FIGHTER_OFFSET:-}" \
-    npx playwright test tests/all-markets.spec.ts --workers=4 --reporter=list ) 2>&1 | tee -a "$LOG"
+    npx playwright test tests/all-markets.spec.ts --workers=3 --reporter=list ) 2>&1 | tee -a "$LOG"
 RC=$?
 
 say "── what is now live ──"

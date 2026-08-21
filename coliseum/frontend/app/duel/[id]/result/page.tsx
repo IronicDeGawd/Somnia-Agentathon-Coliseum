@@ -159,7 +159,7 @@ export default function ResultPage() {
   const publicClient = usePublicClient();
 
   // ── On-chain duel state ───────────────────────────────────────────────────
-  const { duel, isLoading, currentTurn } = useDuelState(duelId);
+  const { duel, isLoading, currentRound } = useDuelState(duelId);
 
   // Read the full Arena tuple to get fighterA / fighterB indexes.
   const { data: duelRaw } = useReadContract({
@@ -425,7 +425,7 @@ export default function ResultPage() {
             DUEL NOT RESOLVED YET
           </span>
           <span className="t-mono t-sm t-dim">
-            Round {currentTurn} of {turns} — check back after all turns complete and finalizeDuel is called.
+            Round {currentRound} of {turns} — check back after all turns complete and finalizeDuel is called.
           </span>
           <Link href={`/duel/${rawId}`}>
             <BracketButton>WATCH LIVE →</BracketButton>
@@ -540,7 +540,7 @@ export default function ResultPage() {
             <div className="col ai-c gap-2">
               <span className="eyebrow">TURNS COMPLETED</span>
               <span className="t-num text-win" style={{ fontSize: 32, whiteSpace: 'nowrap' }}>
-                {isResolved ? turns : currentTurn} / {turns}
+                {isResolved ? turns : currentRound} / {turns}
               </span>
             </div>
             <span style={{ height: 36, width: 1, background: 'var(--border)' }} />
