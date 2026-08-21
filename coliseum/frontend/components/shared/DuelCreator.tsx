@@ -14,6 +14,7 @@ import { ROSTER, FIGHTER_VISUAL_MAP } from '@/lib/fighters';
 import { CONTRACT_ADDRESSES, SIM_MARKET_ENABLED } from '@/lib/contracts';
 import { getWsClient } from '@/lib/wsClient';
 import { somniaTestnet } from '@/lib/chain';
+import { fightLengthLabel } from '@/lib/fightLength';
 
 const MATCH_STARTED_EVENT = parseAbiItem(
   'event MatchStarted(uint256 indexed duelId, address indexed playerA, address indexed playerB, uint8 fighterA, uint8 fighterB, uint16 turns)',
@@ -534,7 +535,7 @@ function QueueInner({
               className="t-up"
               style={{ color: 'var(--text-faint)', fontSize: '10px', letterSpacing: '0.04em' }}
             >
-              {TIER_POOLS[turns].join(' + ')}
+              {TIER_POOLS[turns].join(' + ')} · {fightLengthLabel(turns)}
             </span>
           </div>
         </div>
@@ -595,6 +596,22 @@ function QueueInner({
                   }}
                 >
                   {pools.join('+')}
+                </span>
+                {/* Roughly how long sitting through this tier takes. It belongs
+                    on the button that takes the deposit, because a round count
+                    alone does not tell anybody that. Hedged on purpose — see
+                    lib/fightLength.ts for why it can only ever be a range. */}
+                <span
+                  className="t-mono"
+                  style={{
+                    color: 'var(--text-faint)',
+                    fontSize: 'clamp(8px, 1.5vw, 9px)',
+                    lineHeight: 1.2,
+                    letterSpacing: '0.02em',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {fightLengthLabel(t)}
                 </span>
               </button>
             );
