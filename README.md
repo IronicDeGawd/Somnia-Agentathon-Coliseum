@@ -251,9 +251,19 @@ the **stake is now cents and the fee is the price** — which is the right shape
 real inference spend while the stake mostly comes back.
 
 Every market is offered at once, each with its own waiting lines: events and perps at every length,
-spot at 3/9/15, practice at 6/9. A house bot fills an empty line on any of them, at any tier it can
+spot at 9/15, practice at 6/9. (There is no three-round spot tier: it activates a single coin market, so
+both fighters face the identical one choice every turn and the fight converges to a tie.) A house bot fills an empty line on any of them, at any tier it can
 afford while keeping a reserve back — it skips a line it cannot cover and says so in its log. Two players match only if they picked the same line — a spot fight and an events
 fight cost wildly different amounts and could not share a pot.
+
+The lobby also prints roughly how long each line takes — `~5–10 MIN` and so on. Nothing schedules a
+round: one happens when the watcher notices a fight waiting, asks the model for both fighters' moves,
+and writes them back, and the round closes only once BOTH have moved. Concurrent fights queue behind
+each other because the watcher advances one at a time. The figure is therefore always a RANGE and always
+carries a tilde, built from one bracket — 50 to 100 seconds a round — measured on three concurrent
+fights each gaining a round across 75 seconds. If the pace ever drifts, retune the two constants at the
+top of `frontend/lib/fightLength.ts` rather than adding a second source for the same number; every
+figure on the lobby comes from those two.
 
 ## What runs on its own
 
@@ -419,7 +429,7 @@ somniaforge-agentathon/
 │   │   ├── FighterRegistry.sol     # the six fighter prompts
 │   │   └── lib/                    # ArenaTypes (structs, MarketKind) · ArenaUtils (deposits, prompts)
 │   ├── scripts/                    # deploy, operate, and drive fights — see context/structure.md
-│   ├── test/                       # 446 passing Hardhat tests
+│   ├── test/                       # 464 passing Hardhat tests
 │   ├── frontend/                   # Next.js 15 + wagmi + RainbowKit
 │   └── deployments/somnia.json     # live addresses (gitignored)
 ├── sandbox/                        # early primitive validation — kept for reference, not built on
@@ -431,7 +441,7 @@ somniaforge-agentathon/
 
 ```bash
 pnpm install
-cd coliseum && pnpm exec hardhat test              # 446 passing
+cd coliseum && pnpm exec hardhat test              # 464 passing
 
 # Put two throwaway players through the real queue. One wallet per player —
 # transactions from one address are ordered, so a shared wallet serialises
@@ -483,6 +493,11 @@ ssh -i $KEY $BOX 'pm2 restart coliseum-frontend'
 - **Port 22 is normally shut.** The security group allows only 80 and 443, from Cloudflare's ranges.
   Open it to a single address for the deploy and revoke it afterwards — never to `0.0.0.0/0`:
   `aws ec2 authorize-security-group-ingress --group-id sg-06eb3df0510b6933f --protocol tcp --port 22 --cidr <your-ip>/32 --region ap-south-1`
+- **`npm run lint` in `frontend/` runs out of memory and checks nothing** — it exits with
+  `Linter process terminated abnormally`, which is not a pass. Verify frontend work with
+  `npx tsc --noEmit` and `pnpm run build`, plus measuring the real DOM in a browser: a green build says
+  the code compiles, never that the layout is right. A CSS grid that silently collapsed to one column on
+  a phone passed every check except that one.
 - **The build fits, but only just** — 3.8 GB of memory with 2 GB of swap, two cores. It takes a
   couple of minutes; do not run two at once.
 - Six processes run there: the watcher, the question binder, the seeder, the simulated market maker,
