@@ -20,7 +20,7 @@ export const somniaTestnet = defineChain({
   blockExplorers: {
     default: {
       name: 'Somnia Shannon Explorer',
-      url: 'https://explorer-v2.testnet.somnia.network',
+      url: 'https://shannon-explorer.somnia.network',
     },
   },
   testnet: true,

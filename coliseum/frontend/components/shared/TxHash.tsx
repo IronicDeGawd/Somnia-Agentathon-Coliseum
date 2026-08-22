@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 
-const EXPLORER = 'https://explorer-v2.testnet.somnia.network/tx';
+const EXPLORER = 'https://shannon-explorer.somnia.network/tx';
 
 /**
  * A transaction hash the user can actually take with them: the truncated form

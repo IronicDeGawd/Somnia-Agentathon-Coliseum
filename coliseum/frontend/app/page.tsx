@@ -933,7 +933,7 @@ export default function LandingPage() {
                 otherwise keeps a handle on the page that opened it. */}
             <a
               className="t-mono t-xs t-dim tap-44"
-              href={`https://explorer-v2.testnet.somnia.network/address/${CONTRACT_ADDRESSES.Arena}`}
+              href={`https://shannon-explorer.somnia.network/address/${CONTRACT_ADDRESSES.Arena}`}
               target="_blank"
               rel="noopener noreferrer"
             >
